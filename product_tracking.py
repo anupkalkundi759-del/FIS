@@ -30,7 +30,6 @@ def show_product_tracking(conn, cur):
             pr.project_name,
             u.unit_name,
             h.house_no,
-            p.id AS product_instance_id,
 
             COALESCE(s.stage_name, 'Not Started') AS stage,
             COALESCE(t.status, 'Not Started') AS status,
@@ -82,7 +81,6 @@ def show_product_tracking(conn, cur):
     df = pd.DataFrame(data, columns=[
         "Product", "Type", "Orientation",
         "Project", "Unit", "House",
-        "product_instance_id",
         "Stage", "Status", "Timestamp"
     ])
 
@@ -90,7 +88,7 @@ def show_product_tracking(conn, cur):
         st.warning("No data found")
         return
 
-    # ================= TIME FIX (ROBUST) =================
+    # ================= TIME FIX =================
     df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce")
 
     try:
@@ -110,82 +108,4 @@ def show_product_tracking(conn, cur):
     }).fillna(0)
 
     # ================= DISPLAY =================
-    st.dataframe(df.drop(columns=["product_instance_id"]), use_container_width=True)
-
-    # ================= STAGE CONTROL =================
-    st.divider()
-    st.subheader("⚙️ Stage Control")
-
-    df["Label"] = df["Product"] + " | House " + df["House"].astype(str)
-    selected_label = st.selectbox("Select Product", df["Label"].unique())
-
-    selected_row = df[df["Label"] == selected_label].iloc[0]
-
-    product_instance_id = selected_row["product_instance_id"]
-
-    # ================= CURRENT STAGE =================
-    cur.execute("""
-        SELECT s.stage_name, s.sequence
-        FROM tracking_log t
-        JOIN stages s ON t.stage_id = s.stage_id
-        WHERE t.product_instance_id = %s
-        ORDER BY t.timestamp DESC
-        LIMIT 1
-    """, (product_instance_id,))
-
-    current = cur.fetchone()
-
-    if current:
-        current_stage, current_seq = current
-    else:
-        current_stage = "Not Started"
-        current_seq = None
-
-    st.info(f"📍 Current Stage: {current_stage}")
-
-    # ================= NEXT STAGE =================
-    if current_seq is None:
-        cur.execute("SELECT stage_name, sequence FROM stages ORDER BY sequence LIMIT 1")
-    else:
-        cur.execute("SELECT stage_name, sequence FROM stages WHERE sequence = %s", (current_seq + 1,))
-
-    next_stage = cur.fetchone()
-
-    # ================= MOVE =================
-    if next_stage:
-        next_stage_name, next_seq = next_stage
-
-        if st.button(f"➡ Move to {next_stage_name}"):
-
-            # Get stage_id
-            cur.execute("SELECT stage_id FROM stages WHERE stage_name=%s", (next_stage_name,))
-            stage_row = cur.fetchone()
-
-            if not stage_row:
-                st.error("Stage not found")
-                return
-
-            stage_id = stage_row[0]
-
-            # Prevent duplicate completion
-            cur.execute("""
-                SELECT 1 FROM tracking_log
-                WHERE product_instance_id=%s AND stage_id=%s AND status='Completed'
-            """, (product_instance_id, stage_id))
-
-            if cur.fetchone():
-                st.warning("⚠️ Already completed")
-                return
-
-            cur.execute("""
-                INSERT INTO tracking_log (product_instance_id, stage_id, status, timestamp)
-                VALUES (%s, %s, 'Completed', NOW())
-            """, (product_instance_id, stage_id))
-
-            conn.commit()
-
-            st.success(f"✅ Moved to {next_stage_name}")
-            st.rerun()
-
-    else:
-        st.success("✅ All stages completed")
+    st.dataframe(df, use_container_width=True)
