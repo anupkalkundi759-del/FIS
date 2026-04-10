@@ -38,9 +38,14 @@ def show_upload(conn, cur):
         df["house_no"] = df["house_no"].astype(str).str.strip()
         df["product_code"] = df["product_code"].astype(str).str.strip()
 
-        df["product_category"] = df.get("product_category", None)
-        df["orientation"] = df.get("orientation", None)
+        df["orientation"] = df.get("orientation", "").fillna("").astype(str).str.strip()
         df["quantity"] = pd.to_numeric(df.get("quantity", 1), errors="coerce").fillna(1).astype(int)
+
+        # 🔥 IMPORTANT: Create FULL PRODUCT CODE
+        df["full_code"] = df.apply(
+            lambda x: f"{x['product_code']} ({x['orientation']})" if x["orientation"] != "" else x["product_code"],
+            axis=1
+        )
 
         df = df.drop_duplicates()
 
@@ -50,9 +55,9 @@ def show_upload(conn, cur):
         project_set = set(df["project_name"])
         unit_set = set(zip(df["project_name"], df["unit_name"]))
         house_set = set(zip(df["project_name"], df["unit_name"], df["house_no"]))
-        product_set = set(df["product_code"])
+        product_set = set(df["full_code"])
 
-        # ================= INSERT PROJECTS =================
+        # ================= PROJECTS =================
         for p in project_set:
             cur.execute("""
                 INSERT INTO projects (project_name)
@@ -66,7 +71,7 @@ def show_upload(conn, cur):
         cur.execute("SELECT project_id, project_name FROM projects")
         project_map = {name: pid for pid, name in cur.fetchall()}
 
-        # ================= INSERT UNITS =================
+        # ================= UNITS =================
         for project_name, unit_name in unit_set:
             cur.execute("""
                 INSERT INTO units (project_id, unit_name)
@@ -80,7 +85,7 @@ def show_upload(conn, cur):
         cur.execute("SELECT unit_id, unit_name, project_id FROM units")
         unit_map = {(u, p): uid for uid, u, p in cur.fetchall()}
 
-        # ================= INSERT HOUSES =================
+        # ================= HOUSES =================
         for project_name, unit_name, house_no in house_set:
             unit_id = unit_map[(unit_name, project_map[project_name])]
 
@@ -97,15 +102,15 @@ def show_upload(conn, cur):
         house_map = {(h, u): hid for hid, h, u in cur.fetchall()}
 
         # ================= PRODUCT MASTER =================
-        for _, row in df.iterrows():
+        for full_code in product_set:
             cur.execute("""
-                INSERT INTO products_master (product_code, product_category, orientation)
-                VALUES (%s, %s, %s)
+                INSERT INTO products_master (product_code)
+                VALUES (%s)
                 ON CONFLICT (product_code) DO NOTHING
-            """, (row["product_code"], row["product_category"], row["orientation"]))
+            """, (full_code,))
         conn.commit()
 
-        progress.progress(55)
+        progress.progress(60)
 
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
@@ -113,16 +118,15 @@ def show_upload(conn, cur):
         # ================= PRODUCTS (EXPLODE QUANTITY) =================
         inserted_products = 0
         total_items = df["quantity"].sum()
-
         processed = 0
 
         for _, row in df.iterrows():
 
             unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
             house_id = house_map[(row["house_no"], unit_id)]
-            product_id = product_map[row["product_code"]]
+            product_id = product_map[row["full_code"]]
 
-            for i in range(row["quantity"]):  # 🔥 EXPLOSION
+            for i in range(row["quantity"]):
 
                 cur.execute("""
                     INSERT INTO products (house_id, product_id)
@@ -133,9 +137,8 @@ def show_upload(conn, cur):
                 inserted_products += 1
                 processed += 1
 
-                # progress update (smooth)
                 if processed % 50 == 0:
-                    percent = 55 + int((processed / total_items) * 40)
+                    percent = 60 + int((processed / total_items) * 35)
                     progress.progress(min(percent, 95))
 
         conn.commit()
@@ -149,15 +152,15 @@ def show_upload(conn, cur):
         st.success(f"""
 🚀 Upload Completed Successfully
 
-⏱ Total Time: {total_time} sec  
-📄 Excel Rows: {total_rows}  
+⏱ Time: {total_time} sec  
+📄 Excel Rows: {total_rows}
 
-📊 Data Summary:
+📊 Summary:
 - Projects: {len(project_set)}
 - Units: {len(unit_set)}
 - Houses: {len(house_set)}
 - Product Types: {len(product_set)}
-- Total Product Items (after quantity expansion): {inserted_products}
+- Total Product Items: {inserted_products}
 """)
 
-        st.info(f"⚡ Avg Speed: {round(inserted_products / total_time, 2)} items/sec")
+        st.info(f"⚡ Speed: {round(inserted_products / total_time, 2)} items/sec")
