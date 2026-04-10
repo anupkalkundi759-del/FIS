@@ -7,13 +7,19 @@ def show_upload(conn, cur):
         st.error("Access denied")
         st.stop()
 
-    st.subheader("Upload Project Setup Excel")
+    st.subheader("📤 Upload Project Setup Excel")
 
     file = st.file_uploader("Upload Excel", type=["xlsx"])
 
     if file:
 
         start_time = time.time()
+
+        status = st.empty()
+        progress = st.progress(0)
+
+        status.info("⏳ Uploading... Please wait")
+
         df = pd.read_excel(file, engine="openpyxl")
 
         # ================= CLEAN =================
@@ -38,21 +44,24 @@ def show_upload(conn, cur):
 
         df = df.drop_duplicates()
 
+        total_rows = len(df)
+
         # ================= COUNTS =================
-        project_count = len(df["project_name"].unique())
+        project_set = set(df["project_name"])
         unit_set = set(zip(df["project_name"], df["unit_name"]))
         house_set = set(zip(df["project_name"], df["unit_name"], df["house_no"]))
         product_set = set(df["product_code"])
-        product_link_set = set(zip(df["project_name"], df["unit_name"], df["house_no"], df["product_code"]))
 
         # ================= INSERT PROJECTS =================
-        for p in df["project_name"].unique():
+        for p in project_set:
             cur.execute("""
                 INSERT INTO projects (project_name)
                 VALUES (%s)
                 ON CONFLICT (project_name) DO NOTHING
             """, (p,))
         conn.commit()
+
+        progress.progress(10)
 
         cur.execute("SELECT project_id, project_name FROM projects")
         project_map = {name: pid for pid, name in cur.fetchall()}
@@ -65,6 +74,8 @@ def show_upload(conn, cur):
                 ON CONFLICT (project_id, unit_name) DO NOTHING
             """, (project_map[project_name], unit_name))
         conn.commit()
+
+        progress.progress(25)
 
         cur.execute("SELECT unit_id, unit_name, project_id FROM units")
         unit_map = {(u, p): uid for uid, u, p in cur.fetchall()}
@@ -80,6 +91,8 @@ def show_upload(conn, cur):
             """, (unit_id, house_no))
         conn.commit()
 
+        progress.progress(40)
+
         cur.execute("SELECT house_id, house_no, unit_id FROM houses")
         house_map = {(h, u): hid for hid, h, u in cur.fetchall()}
 
@@ -92,35 +105,59 @@ def show_upload(conn, cur):
             """, (row["product_code"], row["product_category"], row["orientation"]))
         conn.commit()
 
+        progress.progress(55)
+
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
 
-        # ================= PRODUCTS =================
-        for project_name, unit_name, house_no, product_code in product_link_set:
-            unit_id = unit_map[(unit_name, project_map[project_name])]
-            house_id = house_map[(house_no, unit_id)]
-            product_id = product_map[product_code]
+        # ================= PRODUCTS (EXPLODE QUANTITY) =================
+        inserted_products = 0
+        total_items = df["quantity"].sum()
 
-            cur.execute("""
-                INSERT INTO products (house_id, product_id, quantity)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (house_id, product_id) DO NOTHING
-            """, (house_id, product_id, 1))
+        processed = 0
+
+        for _, row in df.iterrows():
+
+            unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
+            house_id = house_map[(row["house_no"], unit_id)]
+            product_id = product_map[row["product_code"]]
+
+            for i in range(row["quantity"]):  # 🔥 EXPLOSION
+
+                cur.execute("""
+                    INSERT INTO products (house_id, product_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (house_id, product_id))
+
+                inserted_products += 1
+                processed += 1
+
+                # progress update (smooth)
+                if processed % 50 == 0:
+                    percent = 55 + int((processed / total_items) * 40)
+                    progress.progress(min(percent, 95))
+
         conn.commit()
+
+        progress.progress(100)
 
         total_time = round(time.time() - start_time, 2)
 
+        status.empty()
+
         st.success(f"""
-🚀 Upload Completed
+🚀 Upload Completed Successfully
 
-⏱ Time: {total_time} sec
+⏱ Total Time: {total_time} sec  
+📄 Excel Rows: {total_rows}  
 
-📊 Summary:
-- Projects: {project_count}
+📊 Data Summary:
+- Projects: {len(project_set)}
 - Units: {len(unit_set)}
 - Houses: {len(house_set)}
 - Product Types: {len(product_set)}
-- Product Links: {len(product_link_set)}
+- Total Product Items (after quantity expansion): {inserted_products}
 """)
 
-        st.dataframe(df.head())
+        st.info(f"⚡ Avg Speed: {round(inserted_products / total_time, 2)} items/sec")
