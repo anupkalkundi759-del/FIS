@@ -5,7 +5,7 @@ def show_product_tracking(conn, cur):
     st.title("🔎 Product Tracking")
 
     # ================= FILTERS =================
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4 = st.columns(4)
 
     cur.execute("SELECT DISTINCT project_name FROM projects")
     projects = ["All"] + [p[0] for p in cur.fetchall()]
@@ -20,13 +20,12 @@ def show_product_tracking(conn, cur):
     selected_unit = col2.selectbox("Unit", units)
     selected_house = col3.selectbox("House", houses)
     search = col4.text_input("Search Product")
-    limit = col5.selectbox("Rows", [50, 100, 200])
 
     # ================= QUERY =================
     query = """
         SELECT 
             pm.product_code,
-            pm.product_code AS type,
+            pm.product_category,
             p.orientation,
             pr.project_name,
             u.unit_name,
@@ -35,7 +34,7 @@ def show_product_tracking(conn, cur):
             COALESCE(s.stage_name, 'Not Started') AS stage,
             COALESCE(t.status, 'Not Started') AS status,
 
-            (t.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') AS ist_time
+            t.timestamp
 
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
@@ -74,8 +73,7 @@ def show_product_tracking(conn, cur):
         query += " AND pm.product_code ILIKE %s"
         params.append(f"%{search}%")
 
-    query += " ORDER BY pr.project_name, u.unit_name, h.house_no LIMIT %s"
-    params.append(limit)
+    query += " ORDER BY pr.project_name, u.unit_name, h.house_no"
 
     cur.execute(query, tuple(params))
     data = cur.fetchall()
@@ -84,8 +82,19 @@ def show_product_tracking(conn, cur):
     df = pd.DataFrame(data, columns=[
         "Product", "Type", "Orientation",
         "Project", "Unit", "House",
-        "Stage", "Status", "Date & Time"
+        "Stage", "Status", "Timestamp"
     ])
+
+    # ================= TIME CONVERSION =================
+    df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+
+    # Convert UTC → IST
+    df["Date & Time"] = df["Date & Time"].dt.tz_localize("UTC", nonexistent='NaT', ambiguous='NaT') \
+                                         .dt.tz_convert("Asia/Kolkata")
+
+    df["Date & Time"] = df["Date & Time"].astype(str).replace("NaT", "-")
+
+    df = df.drop(columns=["Timestamp"])
 
     # ================= PROGRESS =================
     df["Progress %"] = df["Status"].map({
@@ -94,7 +103,5 @@ def show_product_tracking(conn, cur):
         "Completed": 100
     }).fillna(0)
 
-    # ================= CLEAN =================
-    df["Date & Time"] = df["Date & Time"].astype(str).replace("None", "-")
-
+    # ================= DISPLAY =================
     st.dataframe(df, use_container_width=True)
