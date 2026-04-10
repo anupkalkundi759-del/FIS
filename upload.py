@@ -39,6 +39,9 @@ def show_upload(conn, cur):
         df["house_no"] = df["house_no"].astype(str).str.strip()
         df["product_code"] = df["product_code"].astype(str).str.strip()
 
+        # ✅ ADDED (ONLY THIS LINE)
+        df["product_category"] = df.get("product_category", "").fillna("").astype(str).str.strip()
+
         df["orientation"] = df.get("orientation", "").fillna("").astype(str).str.strip()
         df["quantity"] = pd.to_numeric(df.get("quantity", 1), errors="coerce").fillna(1).astype(int)
 
@@ -107,12 +110,16 @@ def show_upload(conn, cur):
         house_map = {(str(h).strip(), u): hid for hid, h, u in cur.fetchall()}
 
         # ================= PRODUCT MASTER =================
-        for full_code in product_set:
+        # 🔥 REPLACED BLOCK (ONLY CHANGE)
+        product_master_df = df[["full_code", "product_category"]].drop_duplicates()
+
+        for _, row in product_master_df.iterrows():
             cur.execute("""
-                INSERT INTO products_master (product_code)
-                VALUES (%s)
-                ON CONFLICT (product_code) DO NOTHING
-            """, (full_code,))
+                INSERT INTO products_master (product_code, product_category)
+                VALUES (%s, %s)
+                ON CONFLICT (product_code)
+                DO UPDATE SET product_category = EXCLUDED.product_category
+            """, (row["full_code"], row["product_category"]))
         conn.commit()
 
         progress.progress(60)
@@ -153,7 +160,6 @@ def show_upload(conn, cur):
                     inserted_products += 1
                     processed += 1
 
-                    # 🔥 LIVE ETA UPDATE
                     if processed % 20 == 0 or processed == total_items:
 
                         elapsed = time.time() - loop_start
