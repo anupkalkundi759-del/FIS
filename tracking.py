@@ -49,76 +49,53 @@ def show_tracking(conn, cur):
     selected_house_no = st.selectbox("Select House", list(house_dict.keys()))
     house_id = house_dict[selected_house_no]
 
-    # ================= PRODUCT LIST =================
+    # ================= PRODUCT INSTANCES =================
     cur.execute("""
         SELECT 
-            pm.product_id,
-            pm.product_code,
-            COUNT(p.id) AS total,
-            COUNT(DISTINCT t.product_instance_id) FILTER (WHERE t.status='Completed') AS completed
+            p.id,
+            pm.product_code
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
-        LEFT JOIN tracking_log t ON p.id = t.product_instance_id
         WHERE p.house_id = %s
-        GROUP BY pm.product_id, pm.product_code
-        ORDER BY pm.product_code
+        ORDER BY pm.product_code, p.id
     """, (house_id,))
+
     products = cur.fetchall()
 
     if not products:
         st.warning("No products found")
         return
 
-    product_dict = {
-        f"{p[1]} ({p[3]}/{p[2]})": p[0]
-        for p in products
-    }
+    # Allow duplicate names
+    labels = []
+    ids = []
 
-    selected_product_label = st.selectbox("Select Product", list(product_dict.keys()))
-    product_id = product_dict[selected_product_label]
+    for p in products:
+        labels.append(p[1])   # same name repeated
+        ids.append(p[0])      # internal ID
 
-    # ================= GET ALL INSTANCES =================
+    selected_index = st.selectbox(
+        "Select Product",
+        range(len(labels)),
+        format_func=lambda x: labels[x]
+    )
+
+    product_instance_id = ids[selected_index]
+
+    # ================= CURRENT STAGE =================
     cur.execute("""
-        SELECT p.id
-        FROM products p
-        WHERE p.house_id = %s AND p.product_id = %s
-        ORDER BY p.id
-    """, (house_id, product_id))
+        SELECT MAX(s.sequence)
+        FROM tracking_log t
+        JOIN stages s ON t.stage_id = s.stage_id
+        WHERE t.product_instance_id = %s
+    """, (product_instance_id,))
 
-    all_instances = cur.fetchall()
+    current_stage = cur.fetchone()[0]
 
-    # ================= FIND NEXT ACTIVE ITEM =================
-    product_instance_id = None
-    current_stage = None
-
-    cur.execute("SELECT MAX(sequence) FROM stages")
-    max_stage = cur.fetchone()[0]
-
-    for row in all_instances:
-        pid = row[0]
-
-        cur.execute("""
-            SELECT MAX(s.sequence)
-            FROM tracking_log t
-            JOIN stages s ON t.stage_id = s.stage_id
-            WHERE t.product_instance_id = %s
-        """, (pid,))
-        stage = cur.fetchone()[0]
-
-        if stage is None:
-            product_instance_id = pid
-            current_stage = None
-            break
-        elif stage < max_stage:
-            product_instance_id = pid
-            current_stage = stage
-            break
-
-    if not product_instance_id:
-        st.success("✅ All items completed")
-        return
-
-    st.info(f"Current Item Stage: {current_stage if current_stage else 'Not Started'}")
+    if current_stage is None:
+        st.info("Current Item Stage: Not Started")
+    else:
+        st.info(f"Current Item Stage: {current_stage}")
 
     # ================= STAGES =================
     cur.execute("SELECT stage_id, stage_name, sequence FROM stages ORDER BY sequence")
