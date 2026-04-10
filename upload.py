@@ -1,144 +1,128 @@
-def show_tracking(conn, cur):
+def show_upload(conn, cur):
     import streamlit as st
+    import pandas as pd
+    import time
 
-    st.title("🏭 Production Tracker")
+    if st.session_state.role != "admin":
+        st.error("Access denied")
+        st.stop()
 
-    # ================= PROJECT =================
-    cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
-    projects = cur.fetchall()
+    st.subheader("Upload Project Setup Excel")
 
-    if not projects:
-        st.warning("No projects found")
-        return
+    uploaded_file = st.file_uploader("Upload Excel", type=["xlsx"])
 
-    project_map = {p[1]: p[0] for p in projects}
-    selected_project = st.selectbox("Select Project", list(project_map.keys()))
-    project_id = project_map[selected_project]
+    if uploaded_file:
 
-    # ================= UNIT =================
-    cur.execute("""
-        SELECT unit_id, unit_name
-        FROM units
-        WHERE project_id=%s
-        ORDER BY unit_name
-    """, (project_id,))
-    units = cur.fetchall()
+        start_time = time.time()
+        status = st.empty()
+        status.info("⏳ Uploading... Please wait")
 
-    if not units:
-        st.warning("No units found")
-        return
+        df = pd.read_excel(uploaded_file)
+        df.columns = df.columns.str.strip().str.lower()
 
-    unit_map = {u[1]: u[0] for u in units}
-    selected_unit = st.selectbox("Select Unit", list(unit_map.keys()))
-    unit_id = unit_map[selected_unit]
+        required = ["project_name", "unit_name", "house_no", "product_code", "orientation", "quantity"]
+        for col in required:
+            if col not in df.columns:
+                st.error(f"Missing column: {col}")
+                st.stop()
 
-    # ================= HOUSE =================
-    cur.execute("""
-        SELECT house_id, house_no
-        FROM houses
-        WHERE unit_id=%s
-        ORDER BY house_no
-    """, (unit_id,))
-    houses = cur.fetchall()
+        df = df.fillna("")
+        df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(1).astype(int)
 
-    if not houses:
-        st.warning("No houses found")
-        return
+        # ================= ESTIMATION =================
+        total_rows = len(df)
+        total_items = df["quantity"].sum()
+        estimated_time = round(total_items * 0.002, 2)  # rough estimate
 
-    house_map = {h[1]: h[0] for h in houses}
-    selected_house = st.selectbox("Select House", list(house_map.keys()))
-    house_id = house_map[selected_house]
+        st.info(f"📊 Estimated Items: {total_items} | Estimated Time: ~{estimated_time}s")
 
-    # ================= PRODUCT LIST =================
-    cur.execute("""
-        SELECT 
-            pm.product_id,
-            pm.product_code,
-            COALESCE(p.orientation, 'NA') AS orientation,
-            COUNT(p.id) AS total,
-            COUNT(t.id) FILTER (WHERE t.status='Completed') AS completed
-        FROM products p
-        JOIN products_master pm ON p.product_id = pm.product_id
-        LEFT JOIN tracking_log t 
-            ON p.id = t.product_instance_id
-        WHERE p.house_id = %s
-        GROUP BY pm.product_id, pm.product_code, p.orientation
-        ORDER BY pm.product_code, p.orientation
-    """, (house_id,))
+        # ================= PROJECT =================
+        for p in df["project_name"].unique():
+            cur.execute("INSERT INTO projects (project_name) VALUES (%s) ON CONFLICT DO NOTHING", (p,))
+        conn.commit()
 
-    products = cur.fetchall()
+        cur.execute("SELECT project_id, project_name FROM projects")
+        project_map = {name: pid for pid, name in cur.fetchall()}
 
-    if not products:
-        st.warning("No products found for this house")
-        return
+        # ================= UNITS =================
+        for _, row in df.iterrows():
+            cur.execute("""
+                INSERT INTO units (project_id, unit_name)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (project_map[row["project_name"]], row["unit_name"]))
+        conn.commit()
 
-    # Dropdown label
-    product_map = {
-        f"{p[1]} ({p[2]}) ({p[4]}/{p[3]})": (p[0], p[2])
-        for p in products
-    }
+        cur.execute("SELECT unit_id, unit_name, project_id FROM units")
+        unit_map = {(u, p): uid for uid, u, p in cur.fetchall()}
 
-    selected_label = st.selectbox("Select Product", list(product_map.keys()))
-    product_id, orientation = product_map[selected_label]
+        # ================= HOUSES =================
+        for _, row in df.iterrows():
+            unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
+            cur.execute("""
+                INSERT INTO houses (unit_id, house_no)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (unit_id, row["house_no"]))
+        conn.commit()
 
-    # ================= GET NEXT ITEM =================
-    cur.execute("""
-        SELECT p.id
-        FROM products p
-        LEFT JOIN tracking_log t 
-            ON p.id = t.product_instance_id 
-            AND t.status = 'Completed'
-        WHERE p.house_id = %s
-        AND p.product_id = %s
-        AND COALESCE(p.orientation, 'NA') = %s
-        AND t.id IS NULL
-        LIMIT 1
-    """, (house_id, product_id, orientation))
+        cur.execute("SELECT house_id, house_no, unit_id FROM houses")
+        house_map = {(h, u): hid for hid, h, u in cur.fetchall()}
 
-    row = cur.fetchone()
+        # ================= PRODUCT MASTER =================
+        for p in df["product_code"].unique():
+            cur.execute("""
+                INSERT INTO products_master (product_code)
+                VALUES (%s)
+                ON CONFLICT DO NOTHING
+            """, (p,))
+        conn.commit()
 
-    if not row:
-        st.success("✅ All items completed for this product")
-        return
+        cur.execute("SELECT product_id, product_code FROM products_master")
+        product_map = {code: pid for pid, code in cur.fetchall()}
 
-    product_instance_id = row[0]
+        # ================= PRODUCTS (ITEM LEVEL) =================
+        inserted_items = 0
 
-    # ================= CURRENT STAGE =================
-    cur.execute("""
-        SELECT COALESCE(MAX(s.sequence), 0)
-        FROM tracking_log t
-        JOIN stages s ON t.stage_id = s.stage_id
-        WHERE t.product_instance_id = %s
-    """, (product_instance_id,))
+        for _, row in df.iterrows():
 
-    current_stage = cur.fetchone()[0]
-    st.info(f"Current Stage: {current_stage}")
+            unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
+            house_id = house_map[(row["house_no"], unit_id)]
+            product_id = product_map[row["product_code"]]
+            orientation = row["orientation"]
 
-    # ================= STAGE LIST =================
-    cur.execute("""
-        SELECT stage_id, stage_name, sequence
-        FROM stages
-        ORDER BY sequence
-    """)
-    stages = cur.fetchall()
+            for _ in range(row["quantity"]):
+                cur.execute("""
+                    INSERT INTO products (house_id, product_id, orientation)
+                    VALUES (%s, %s, %s)
+                """, (house_id, product_id, orientation))
 
-    stage_map = {s[1]: (s[0], s[2]) for s in stages}
-    selected_stage_name = st.selectbox("Select Stage", list(stage_map.keys()))
-    stage_id, selected_sequence = stage_map[selected_stage_name]
-
-    # ================= VALIDATION =================
-    if selected_sequence > current_stage + 1:
-        st.error("❌ Complete previous stage first")
-        return
-
-    status = st.selectbox("Status", ["Started", "In Progress", "Completed"])
-
-    # ================= SAVE =================
-    if st.button("Update Item"):
-        cur.execute("""
-            INSERT INTO tracking_log (product_instance_id, stage_id, status)
-            VALUES (%s, %s, %s)
-        """, (product_instance_id, stage_id, status))
+                inserted_items += 1
 
         conn.commit()
-        st.success("✅ Item updated successfully")
+
+        end_time = time.time()
+        total_time = round(end_time - start_time, 2)
+
+        # ================= COUNTS =================
+        project_count = df["project_name"].nunique()
+        unit_count = df["unit_name"].nunique()
+        house_count = df["house_no"].nunique()
+        product_types = df["product_code"].nunique()
+
+        status.empty()
+
+        st.success(f"""
+🚀 Upload Completed
+
+⏱ Time Taken: {total_time}s  
+📊 Estimated Time: ~{estimated_time}s  
+
+🏗 Projects: {project_count}  
+🏢 Units: {unit_count}  
+🏠 Houses: {house_count}  
+📦 Product Types: {product_types}  
+🔩 Total Items Created: {inserted_items}
+
+✅ System Ready for Tracking
+""")
