@@ -7,7 +7,7 @@ def show_upload(conn, cur):
         st.error("Access denied")
         st.stop()
 
-    st.subheader("📤 Upload Project Setup Excel")
+    st.title("📤 Upload Project Setup Excel")
 
     file = st.file_uploader("Upload Excel", type=["xlsx"])
 
@@ -17,6 +17,7 @@ def show_upload(conn, cur):
 
         status = st.empty()
         progress = st.progress(0)
+        eta_box = st.empty()
 
         status.info("⏳ Uploading... Please wait")
 
@@ -29,7 +30,7 @@ def show_upload(conn, cur):
         for col in required_cols:
             if col not in df.columns:
                 st.error(f"Missing column: {col}")
-                return
+                st.stop()
 
         df = df.dropna(subset=required_cols)
 
@@ -41,9 +42,9 @@ def show_upload(conn, cur):
         df["orientation"] = df.get("orientation", "").fillna("").astype(str).str.strip()
         df["quantity"] = pd.to_numeric(df.get("quantity", 1), errors="coerce").fillna(1).astype(int)
 
-        # 🔥 IMPORTANT: Create FULL PRODUCT CODE
+        # 🔥 FULL PRODUCT CODE (WITH ORIENTATION)
         df["full_code"] = df.apply(
-            lambda x: f"{x['product_code']} ({x['orientation']})" if x["orientation"] != "" else x["product_code"],
+            lambda x: f"{x['product_code']} ({x['orientation']})" if x["orientation"] else x["product_code"],
             axis=1
         )
 
@@ -56,6 +57,10 @@ def show_upload(conn, cur):
         unit_set = set(zip(df["project_name"], df["unit_name"]))
         house_set = set(zip(df["project_name"], df["unit_name"], df["house_no"]))
         product_set = set(df["full_code"])
+
+        total_items = int(df["quantity"].sum())
+
+        st.info(f"📊 Estimated Items: {total_items}")
 
         # ================= PROJECTS =================
         for p in project_set:
@@ -99,7 +104,7 @@ def show_upload(conn, cur):
         progress.progress(40)
 
         cur.execute("SELECT house_id, house_no, unit_id FROM houses")
-        house_map = {(h, u): hid for hid, h, u in cur.fetchall()}
+        house_map = {(str(h).strip(), u): hid for hid, h, u in cur.fetchall()}
 
         # ================= PRODUCT MASTER =================
         for full_code in product_set:
@@ -115,31 +120,64 @@ def show_upload(conn, cur):
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
 
-        # ================= PRODUCTS (EXPLODE QUANTITY) =================
+        # ================= PRODUCTS (CORE LOGIC) =================
         inserted_products = 0
-        total_items = df["quantity"].sum()
         processed = 0
+        loop_start = time.time()
 
-        for _, row in df.iterrows():
+        for i, row in df.iterrows():
 
-            unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
-            house_id = house_map[(row["house_no"], unit_id)]
-            product_id = product_map[row["full_code"]]
+            try:
+                unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
+                key = (row["house_no"], unit_id)
 
-            for i in range(row["quantity"]):
+                if key not in house_map:
+                    st.error(f"❌ House mapping failed at row {i+1}")
+                    st.stop()
 
-                cur.execute("""
-                    INSERT INTO products (house_id, product_id)
-                    VALUES (%s, %s)
-                    ON CONFLICT DO NOTHING
-                """, (house_id, product_id))
+                house_id = house_map[key]
 
-                inserted_products += 1
-                processed += 1
+                if row["full_code"] not in product_map:
+                    st.error(f"❌ Product mapping failed at row {i+1}")
+                    st.stop()
 
-                if processed % 50 == 0:
-                    percent = 60 + int((processed / total_items) * 35)
-                    progress.progress(min(percent, 95))
+                product_id = product_map[row["full_code"]]
+
+                for _ in range(row["quantity"]):
+
+                    cur.execute("""
+                        INSERT INTO products (house_id, product_id, orientation)
+                        VALUES (%s, %s, %s)
+                    """, (house_id, product_id, row["orientation"]))
+
+                    inserted_products += 1
+                    processed += 1
+
+                    # 🔥 LIVE ETA UPDATE
+                    if processed % 20 == 0 or processed == total_items:
+
+                        elapsed = time.time() - loop_start
+                        speed = processed / elapsed if elapsed > 0 else 0
+
+                        remaining = total_items - processed
+                        eta = remaining / speed if speed > 0 else 0
+
+                        percent = 60 + int((processed / total_items) * 35)
+                        progress.progress(min(percent, 95))
+
+                        eta_box.info(f"""
+⏳ Processed: {processed}/{total_items}  
+⚡ Speed: {round(speed, 2)} items/sec  
+⌛ Estimated Time Remaining: {round(eta, 2)} sec
+""")
+
+            except Exception as e:
+                st.error(f"""
+❌ Error at row {i+1}
+
+{str(e)}
+""")
+                st.stop()
 
         conn.commit()
 
