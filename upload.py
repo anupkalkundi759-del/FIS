@@ -7,122 +7,160 @@ def show_upload(conn, cur):
         st.error("Access denied")
         st.stop()
 
-    st.subheader("Upload Project Setup Excel")
+    st.subheader("📤 Upload Project Setup Excel")
 
-    uploaded_file = st.file_uploader("Upload Excel", type=["xlsx"])
+    file = st.file_uploader("Upload Excel", type=["xlsx"])
 
-    if uploaded_file:
+    if file:
 
         start_time = time.time()
+
         status = st.empty()
+        progress = st.progress(0)
+
         status.info("⏳ Uploading... Please wait")
 
-        df = pd.read_excel(uploaded_file)
-        df.columns = df.columns.str.strip().str.lower()
+        df = pd.read_excel(file, engine="openpyxl")
 
-        required = ["project_name", "unit_name", "house_no", "product_code", "orientation", "quantity"]
-        for col in required:
+        # ================= CLEAN =================
+        df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
+
+        required_cols = ["project_name", "unit_name", "house_no", "product_code"]
+        for col in required_cols:
             if col not in df.columns:
                 st.error(f"Missing column: {col}")
-                st.stop()
+                return
 
-        df = df.fillna("")
-        df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(1).astype(int)
+        df = df.dropna(subset=required_cols)
 
-        # ================= ESTIMATION =================
+        df["project_name"] = df["project_name"].astype(str).str.strip()
+        df["unit_name"] = df["unit_name"].astype(str).str.strip()
+        df["house_no"] = df["house_no"].astype(str).str.strip()
+        df["product_code"] = df["product_code"].astype(str).str.strip()
+
+        df["orientation"] = df.get("orientation", "").fillna("").astype(str).str.strip()
+        df["quantity"] = pd.to_numeric(df.get("quantity", 1), errors="coerce").fillna(1).astype(int)
+
+        # 🔥 IMPORTANT: Create FULL PRODUCT CODE
+        df["full_code"] = df.apply(
+            lambda x: f"{x['product_code']} ({x['orientation']})" if x["orientation"] != "" else x["product_code"],
+            axis=1
+        )
+
+        df = df.drop_duplicates()
+
         total_rows = len(df)
-        total_items = df["quantity"].sum()
-        estimated_time = round(total_items * 0.002, 2)  # rough estimate
 
-        st.info(f"📊 Estimated Items: {total_items} | Estimated Time: ~{estimated_time}s")
+        # ================= COUNTS =================
+        project_set = set(df["project_name"])
+        unit_set = set(zip(df["project_name"], df["unit_name"]))
+        house_set = set(zip(df["project_name"], df["unit_name"], df["house_no"]))
+        product_set = set(df["full_code"])
 
-        # ================= PROJECT =================
-        for p in df["project_name"].unique():
-            cur.execute("INSERT INTO projects (project_name) VALUES (%s) ON CONFLICT DO NOTHING", (p,))
+        # ================= PROJECTS =================
+        for p in project_set:
+            cur.execute("""
+                INSERT INTO projects (project_name)
+                VALUES (%s)
+                ON CONFLICT (project_name) DO NOTHING
+            """, (p,))
         conn.commit()
+
+        progress.progress(10)
 
         cur.execute("SELECT project_id, project_name FROM projects")
         project_map = {name: pid for pid, name in cur.fetchall()}
 
         # ================= UNITS =================
-        for _, row in df.iterrows():
+        for project_name, unit_name in unit_set:
             cur.execute("""
                 INSERT INTO units (project_id, unit_name)
                 VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-            """, (project_map[row["project_name"]], row["unit_name"]))
+                ON CONFLICT (project_id, unit_name) DO NOTHING
+            """, (project_map[project_name], unit_name))
         conn.commit()
+
+        progress.progress(25)
 
         cur.execute("SELECT unit_id, unit_name, project_id FROM units")
         unit_map = {(u, p): uid for uid, u, p in cur.fetchall()}
 
         # ================= HOUSES =================
-        for _, row in df.iterrows():
-            unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
+        for project_name, unit_name, house_no in house_set:
+            unit_id = unit_map[(unit_name, project_map[project_name])]
+
             cur.execute("""
                 INSERT INTO houses (unit_id, house_no)
                 VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-            """, (unit_id, row["house_no"]))
+                ON CONFLICT (unit_id, house_no) DO NOTHING
+            """, (unit_id, house_no))
         conn.commit()
+
+        progress.progress(40)
 
         cur.execute("SELECT house_id, house_no, unit_id FROM houses")
         house_map = {(h, u): hid for hid, h, u in cur.fetchall()}
 
         # ================= PRODUCT MASTER =================
-        for p in df["product_code"].unique():
+        for full_code in product_set:
             cur.execute("""
                 INSERT INTO products_master (product_code)
                 VALUES (%s)
-                ON CONFLICT DO NOTHING
-            """, (p,))
+                ON CONFLICT (product_code) DO NOTHING
+            """, (full_code,))
         conn.commit()
+
+        progress.progress(60)
 
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
 
-        # ================= PRODUCTS (ITEM LEVEL) =================
-        inserted_items = 0
+        # ================= PRODUCTS (EXPLODE QUANTITY) =================
+        inserted_products = 0
+        total_items = df["quantity"].sum()
+        processed = 0
 
         for _, row in df.iterrows():
 
             unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
             house_id = house_map[(row["house_no"], unit_id)]
-            product_id = product_map[row["product_code"]]
-            orientation = row["orientation"]
+            product_id = product_map[row["full_code"]]
 
-            for _ in range(row["quantity"]):
+            for i in range(row["quantity"]):
+
                 cur.execute("""
-                    INSERT INTO products (house_id, product_id, orientation)
-                    VALUES (%s, %s, %s)
-                """, (house_id, product_id, orientation))
+                    INSERT INTO products (house_id, product_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (house_id, product_id))
 
-                inserted_items += 1
+                inserted_products += 1
+                processed += 1
+
+                if processed % 50 == 0:
+                    percent = 60 + int((processed / total_items) * 35)
+                    progress.progress(min(percent, 95))
 
         conn.commit()
 
-        end_time = time.time()
-        total_time = round(end_time - start_time, 2)
+        progress.progress(100)
 
-        # ================= COUNTS =================
-        project_count = df["project_name"].nunique()
-        unit_count = df["unit_name"].nunique()
-        house_count = df["house_no"].nunique()
-        product_types = df["product_code"].nunique()
+        total_time = round(time.time() - start_time, 2)
 
         status.empty()
 
         st.success(f"""
-🚀 Upload Completed
+🚀 Upload Completed Successfully
 
-⏱ Time Taken: {total_time}s  
-📊 Estimated Time: ~{estimated_time}s  
+⏱ Time: {total_time} sec  
+📄 Excel Rows: {total_rows}
 
-🏗 Projects: {project_count}  
-🏢 Units: {unit_count}  
-🏠 Houses: {house_count}  
-📦 Product Types: {product_types}  
-🔩 Total Items Created: {inserted_items}
-
-✅ System Ready for Tracking
+📊 Summary:
+- Projects: {len(project_set)}
+- Units: {len(unit_set)}
+- Houses: {len(house_set)}
+- Product Types: {len(product_set)}
+- Total Product Items: {inserted_products}
 """)
+
+        st.info(f"⚡ Speed: {round(inserted_products / total_time, 2)} items/sec")
