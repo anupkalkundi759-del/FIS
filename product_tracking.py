@@ -19,23 +19,23 @@ def show_product_tracking(conn, cur):
     selected_project = col1.selectbox("Project", projects)
     selected_unit = col2.selectbox("Unit", units)
     selected_house = col3.selectbox("House", houses)
-
     search = col4.text_input("Search Product")
     limit = col5.selectbox("Rows", [50, 100, 200])
 
     # ================= QUERY =================
     query = """
         SELECT 
-            p.product_instance_id,
             pm.product_code,
+            pm.product_code AS type,
             p.orientation,
             pr.project_name,
             u.unit_name,
             h.house_no,
 
-            COALESCE(MAX(t.stage), 'Not Started') as stage,
-            COALESCE(MAX(t.status), 'Not Started') as status,
-            MAX(t.updated_at) as last_update
+            COALESCE(s.stage_name, 'Not Started') AS stage,
+            COALESCE(t.status, 'Not Started') AS status,
+
+            (t.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') AS ist_time
 
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
@@ -43,8 +43,15 @@ def show_product_tracking(conn, cur):
         JOIN units u ON h.unit_id = u.unit_id
         JOIN projects pr ON u.project_id = pr.project_id
 
-        LEFT JOIN tracking_log t 
-            ON p.product_instance_id = t.product_instance_id
+        LEFT JOIN LATERAL (
+            SELECT stage_id, status, timestamp
+            FROM tracking_log
+            WHERE product_instance_id = p.product_instance_id
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ) t ON TRUE
+
+        LEFT JOIN stages s ON t.stage_id = s.stage_id
 
         WHERE 1=1
     """
@@ -67,50 +74,27 @@ def show_product_tracking(conn, cur):
         query += " AND pm.product_code ILIKE %s"
         params.append(f"%{search}%")
 
-    query += """
-        GROUP BY 
-            p.product_instance_id,
-            pm.product_code,
-            p.orientation,
-            pr.project_name,
-            u.unit_name,
-            h.house_no
-        ORDER BY pr.project_name, u.unit_name, h.house_no
-        LIMIT %s
-    """
-
+    query += " ORDER BY pr.project_name, u.unit_name, h.house_no LIMIT %s"
     params.append(limit)
 
     cur.execute(query, tuple(params))
     data = cur.fetchall()
 
-    # ================= DISPLAY =================
+    # ================= DATAFRAME =================
     df = pd.DataFrame(data, columns=[
-        "ID", "Product", "Orientation",
+        "Product", "Type", "Orientation",
         "Project", "Unit", "House",
-        "Stage", "Status", "Last Update"
+        "Stage", "Status", "Date & Time"
     ])
 
-    # 🔥 CLEAN DISPLAY
-    df["Progress"] = df["Status"].map({
-        "Not Started": "0%",
-        "In Progress": "50%",
-        "Completed": "100%"
-    })
+    # ================= PROGRESS =================
+    df["Progress %"] = df["Status"].map({
+        "Not Started": 0,
+        "In Progress": 50,
+        "Completed": 100
+    }).fillna(0)
 
-    df = df.drop(columns=["ID"])
+    # ================= CLEAN =================
+    df["Date & Time"] = df["Date & Time"].astype(str).replace("None", "-")
 
     st.dataframe(df, use_container_width=True)
-
-    # ================= QUICK STATS =================
-    st.subheader("📊 Quick Stats")
-
-    total = len(df)
-    completed = len(df[df["Status"] == "Completed"])
-    pending = len(df[df["Status"] == "Not Started"])
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("Total Items", total)
-    col2.metric("Completed", completed)
-    col3.metric("Pending", pending)
