@@ -14,9 +14,6 @@ def show_upload(conn, cur):
     if file:
 
         start_time = time.time()
-        status = st.empty()
-        status.info("⏳ Uploading... Please wait")
-
         df = pd.read_excel(file, engine="openpyxl")
 
         # ================= CLEAN =================
@@ -41,16 +38,15 @@ def show_upload(conn, cur):
 
         df = df.drop_duplicates()
 
-        # ================= COUNTERS =================
-        project_count = 0
-        unit_count = 0
-        house_count = 0
-        product_master_count = 0
-        product_count = 0
+        # ================= COUNTS =================
+        project_count = len(df["project_name"].unique())
+        unit_set = set(zip(df["project_name"], df["unit_name"]))
+        house_set = set(zip(df["project_name"], df["unit_name"], df["house_no"]))
+        product_set = set(df["product_code"])
+        product_link_set = set(zip(df["project_name"], df["unit_name"], df["house_no"], df["product_code"]))
 
-        # ================= PROJECTS =================
-        projects = df["project_name"].unique()
-        for p in projects:
+        # ================= INSERT PROJECTS =================
+        for p in df["project_name"].unique():
             cur.execute("""
                 INSERT INTO projects (project_name)
                 VALUES (%s)
@@ -58,36 +54,22 @@ def show_upload(conn, cur):
             """, (p,))
         conn.commit()
 
-        project_count = len(projects)
-
         cur.execute("SELECT project_id, project_name FROM projects")
         project_map = {name: pid for pid, name in cur.fetchall()}
 
-        # ================= UNITS =================
-        unit_set = set()
-        for _, row in df.iterrows():
-            key = (row["project_name"], row["unit_name"])
-            unit_set.add(key)
-
+        # ================= INSERT UNITS =================
         for project_name, unit_name in unit_set:
             cur.execute("""
                 INSERT INTO units (project_id, unit_name)
                 VALUES (%s, %s)
                 ON CONFLICT (project_id, unit_name) DO NOTHING
             """, (project_map[project_name], unit_name))
-
         conn.commit()
-        unit_count = len(unit_set)
 
         cur.execute("SELECT unit_id, unit_name, project_id FROM units")
         unit_map = {(u, p): uid for uid, u, p in cur.fetchall()}
 
-        # ================= HOUSES =================
-        house_set = set()
-        for _, row in df.iterrows():
-            key = (row["project_name"], row["unit_name"], row["house_no"])
-            house_set.add(key)
-
+        # ================= INSERT HOUSES =================
         for project_name, unit_name, house_no in house_set:
             unit_id = unit_map[(unit_name, project_map[project_name])]
 
@@ -96,36 +78,24 @@ def show_upload(conn, cur):
                 VALUES (%s, %s)
                 ON CONFLICT (unit_id, house_no) DO NOTHING
             """, (unit_id, house_no))
-
         conn.commit()
-        house_count = len(house_set)
 
         cur.execute("SELECT house_id, house_no, unit_id FROM houses")
         house_map = {(h, u): hid for hid, h, u in cur.fetchall()}
 
         # ================= PRODUCT MASTER =================
-        product_set = df["product_code"].unique()
-
         for _, row in df.iterrows():
             cur.execute("""
                 INSERT INTO products_master (product_code, product_category, orientation)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (product_code) DO NOTHING
             """, (row["product_code"], row["product_category"], row["orientation"]))
-
         conn.commit()
-        product_master_count = len(product_set)
 
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
 
         # ================= PRODUCTS =================
-        product_link_set = set()
-
-        for _, row in df.iterrows():
-            key = (row["project_name"], row["unit_name"], row["house_no"], row["product_code"])
-            product_link_set.add(key)
-
         for project_name, unit_name, house_no, product_code in product_link_set:
             unit_id = unit_map[(unit_name, project_map[project_name])]
             house_id = house_map[(house_no, unit_id)]
@@ -136,25 +106,21 @@ def show_upload(conn, cur):
                 VALUES (%s, %s, %s)
                 ON CONFLICT (house_id, product_id) DO NOTHING
             """, (house_id, product_id, 1))
-
         conn.commit()
-        product_count = len(product_link_set)
 
-        # ================= FINAL =================
         total_time = round(time.time() - start_time, 2)
-        status.empty()
 
         st.success(f"""
-🚀 Upload Completed!
+🚀 Upload Completed
 
-⏱ Time Taken: {total_time} sec
+⏱ Time: {total_time} sec
 
 📊 Summary:
-- Projects Added: {project_count}
-- Units Added: {unit_count}
-- Houses Added: {house_count}
-- Product Master Added: {product_master_count}
-- Products Linked: {product_count}
+- Projects: {project_count}
+- Units: {len(unit_set)}
+- Houses: {len(house_set)}
+- Product Types: {len(product_set)}
+- Product Links: {len(product_link_set)}
 """)
 
         st.dataframe(df.head())
