@@ -20,27 +20,21 @@ def show_upload(conn, cur):
         df = pd.read_excel(uploaded_file)
         df.columns = df.columns.str.strip().str.lower()
 
-        # ================= REQUIRED =================
         required = ["project_name", "unit_name", "house_no", "product_code", "orientation", "quantity"]
         for col in required:
             if col not in df.columns:
                 st.error(f"Missing column: {col}")
                 st.stop()
 
-        # ================= CLEAN =================
-        df["project_name"] = df["project_name"].astype(str).str.strip()
-        df["unit_name"] = df["unit_name"].astype(str).str.strip()
-        df["house_no"] = df["house_no"].astype(str).str.strip()
-        df["product_code"] = df["product_code"].astype(str).str.strip()
-        df["orientation"] = df["orientation"].astype(str).str.strip()
-
+        df = df.fillna("")
         df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(1).astype(int)
 
         # ================= ESTIMATION =================
-        total_items_est = df["quantity"].sum()
-        estimated_time = round(total_items_est * 0.002, 2)
+        total_rows = len(df)
+        total_items = df["quantity"].sum()
+        estimated_time = round(total_items * 0.002, 2)  # rough estimate
 
-        st.info(f"📊 Estimated Items: {total_items_est} | Estimated Time: ~{estimated_time}s")
+        st.info(f"📊 Estimated Items: {total_items} | Estimated Time: ~{estimated_time}s")
 
         # ================= PROJECT =================
         for p in df["project_name"].unique():
@@ -73,7 +67,7 @@ def show_upload(conn, cur):
         conn.commit()
 
         cur.execute("SELECT house_id, house_no, unit_id FROM houses")
-        house_map = {(str(h).strip(), u): hid for hid, h, u in cur.fetchall()}
+        house_map = {(h, u): hid for hid, h, u in cur.fetchall()}
 
         # ================= PRODUCT MASTER =================
         for p in df["product_code"].unique():
@@ -87,45 +81,14 @@ def show_upload(conn, cur):
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
 
-        # ================= STRICT INSERT =================
+        # ================= PRODUCTS (ITEM LEVEL) =================
         inserted_items = 0
 
-        for i, row in df.iterrows():
+        for _, row in df.iterrows():
 
-            try:
-                project_id = project_map[row["project_name"]]
-            except:
-                st.error(f"❌ Project not found at row {i+1}: {row['project_name']}")
-                st.stop()
-
-            try:
-                unit_id = unit_map[(row["unit_name"], project_id)]
-            except:
-                st.error(f"❌ Unit mapping failed at row {i+1}: {row['unit_name']}")
-                st.stop()
-
-            key = (str(row["house_no"]).strip(), unit_id)
-
-            if key not in house_map:
-                st.error(f"""
-❌ House mapping failed
-
-Row: {i+1}
-House: {row['house_no']}
-Unit ID: {unit_id}
-
-👉 Check Excel for spaces / mismatch
-""")
-                st.stop()
-
-            house_id = house_map[key]
-
-            try:
-                product_id = product_map[row["product_code"]]
-            except:
-                st.error(f"❌ Product not found at row {i+1}: {row['product_code']}")
-                st.stop()
-
+            unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
+            house_id = house_map[(row["house_no"], unit_id)]
+            product_id = product_map[row["product_code"]]
             orientation = row["orientation"]
 
             for _ in range(row["quantity"]):
@@ -141,20 +104,25 @@ Unit ID: {unit_id}
         end_time = time.time()
         total_time = round(end_time - start_time, 2)
 
+        # ================= COUNTS =================
+        project_count = df["project_name"].nunique()
+        unit_count = df["unit_name"].nunique()
+        house_count = df["house_no"].nunique()
+        product_types = df["product_code"].nunique()
+
         status.empty()
 
         st.success(f"""
-🚀 Upload Completed Successfully
+🚀 Upload Completed
 
 ⏱ Time Taken: {total_time}s  
 📊 Estimated Time: ~{estimated_time}s  
 
-🏗 Projects: {df["project_name"].nunique()}  
-🏢 Units: {df["unit_name"].nunique()}  
-🏠 Houses: {df["house_no"].nunique()}  
-📦 Product Types: {df["product_code"].nunique()}  
-
+🏗 Projects: {project_count}  
+🏢 Units: {unit_count}  
+🏠 Houses: {house_count}  
+📦 Product Types: {product_types}  
 🔩 Total Items Created: {inserted_items}
 
-✅ Data Integrity Maintained (No rows skipped)
+✅ System Ready for Tracking
 """)
