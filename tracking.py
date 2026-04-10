@@ -77,7 +77,7 @@ def show_tracking(conn, cur):
     selected_product_label = st.selectbox("Select Product", list(product_dict.keys()))
     product_id = product_dict[selected_product_label]
 
-    # ================= GET NEXT ACTIVE ITEM =================
+    # ================= GET ACTIVE ITEM =================
     cur.execute("""
         SELECT p.id
         FROM products p
@@ -89,29 +89,38 @@ def show_tracking(conn, cur):
     all_items = cur.fetchall()
 
     product_instance_id = None
-    current_stage = 0
+    current_stage = None
 
     for item in all_items:
         pid = item[0]
 
         cur.execute("""
-            SELECT COALESCE(MAX(s.sequence), 0)
+            SELECT MAX(s.sequence)
             FROM tracking_log t
             JOIN stages s ON t.stage_id = s.stage_id
             WHERE t.product_instance_id = %s
         """, (pid,))
-        stage = cur.fetchone()[0]
+        result = cur.fetchone()[0]
 
-        if stage < 6:  # NOT fully completed
+        if result is None:
+            current_stage = None
             product_instance_id = pid
-            current_stage = stage
             break
+        else:
+            # Check if fully completed
+            cur.execute("SELECT MAX(sequence) FROM stages")
+            max_stage = cur.fetchone()[0]
+
+            if result < max_stage:
+                current_stage = result
+                product_instance_id = pid
+                break
 
     if not product_instance_id:
         st.success("✅ All items completed")
         return
 
-    st.info(f"Current Item Stage: {current_stage}")
+    st.info(f"Current Item Stage: {current_stage if current_stage is not None else 'Not Started'}")
 
     # ================= STAGES =================
     cur.execute("SELECT stage_id, stage_name, sequence FROM stages ORDER BY sequence")
@@ -121,12 +130,20 @@ def show_tracking(conn, cur):
     selected_stage_name = st.selectbox("Select Stage", list(stage_map.keys()))
     stage_id, selected_sequence = stage_map[selected_stage_name]
 
-    # ================= STRICT VALIDATION =================
-    if selected_sequence != current_stage + 1:
-        st.error(f"❌ You must complete Stage {current_stage + 1} first")
+    # ================= DETERMINE NEXT VALID STAGE =================
+    if current_stage is None:
+        # first stage = minimum sequence in DB
+        cur.execute("SELECT MIN(sequence) FROM stages")
+        expected_stage = cur.fetchone()[0]
+    else:
+        expected_stage = current_stage + 1
+
+    # ================= VALIDATION =================
+    if selected_sequence != expected_stage:
+        st.error(f"❌ You must complete Stage {expected_stage} first")
         return
 
-    # ================= CHECK DUPLICATE =================
+    # ================= DUPLICATE CHECK =================
     cur.execute("""
         SELECT 1 FROM tracking_log
         WHERE product_instance_id=%s AND stage_id=%s AND status='Completed'
@@ -141,9 +158,8 @@ def show_tracking(conn, cur):
     # ================= SUBMIT =================
     if st.button("Update Item"):
 
-        # HARD RULE → Only allow Completed for stage progression
         if status != "Completed":
-            st.error("❌ Only 'Completed' updates allowed for stage progression")
+            st.error("❌ Only 'Completed' allowed to move forward")
             return
 
         cur.execute("""
@@ -152,6 +168,6 @@ def show_tracking(conn, cur):
         """, (product_instance_id, stage_id, status))
 
         conn.commit()
-        st.success("✅ Stage Completed")
 
+        st.success("✅ Stage Completed")
         st.rerun()
