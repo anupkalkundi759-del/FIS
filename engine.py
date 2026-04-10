@@ -1,11 +1,11 @@
 def run_engine(conn, cur):
     import streamlit as st
-    from datetime import timedelta
     import pandas as pd
+    from datetime import datetime, timedelta
 
-    st.title("⚙️ Scheduling Engine")
+    st.title("⚙️ Advanced Scheduling Intelligence Engine")
 
-    # ================= LOAD DATA =================
+    # ================= LOAD MASTER ACTIVITIES =================
     cur.execute("""
         SELECT activity_name, sequence_order, duration_days
         FROM activity_master
@@ -13,56 +13,126 @@ def run_engine(conn, cur):
     """)
     activities = cur.fetchall()
 
-    cur.execute("SELECT stage_name, capacity_per_day FROM stage_capacity")
-    capacity_map = dict(cur.fetchall())
-
-    cur.execute("""
-        SELECT house_id, measurement_date
-        FROM houses
-        WHERE measurement_date IS NOT NULL
-        ORDER BY measurement_date
-    """)
-    houses = cur.fetchall()
-
-    if not houses:
-        st.warning("No measurement data available")
+    if not activities:
+        st.error("No activity master found")
         return
+
+    activity_df = pd.DataFrame(activities, columns=["stage", "seq", "days"])
+    total_planned_days = activity_df["days"].sum()
+
+    # ================= LOAD TRACKING DATA =================
+    cur.execute("""
+        SELECT 
+            h.house_no,
+            s.stage_name,
+            t.timestamp
+
+        FROM products p
+        JOIN houses h ON p.house_id = h.house_id
+
+        LEFT JOIN LATERAL (
+            SELECT stage_id, timestamp
+            FROM tracking_log
+            WHERE product_instance_id = p.product_instance_id
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ) t ON TRUE
+
+        LEFT JOIN stages s ON t.stage_id = s.stage_id
+    """)
+
+    data = cur.fetchall()
+
+    if not data:
+        st.warning("No tracking data found")
+        return
+
+    df = pd.DataFrame(data, columns=["house", "stage", "time"])
+
+    # ================= CLEAN DATA =================
+    df["stage"] = df["stage"].fillna("Not Started")
+
+    df = df.merge(activity_df, left_on="stage", right_on="stage", how="left")
+
+    # FIX: handle not started
+    df["seq"] = df["seq"].fillna(0)
+    df["days"] = df["days"].fillna(0)
+
+    today = datetime.now()
 
     results = []
 
-    # ================= ENGINE =================
-    for house_id, start_date in houses:
+    # ================= CORE ENGINE =================
+    for house in df["house"].unique():
 
-        current_date = start_date
+        house_df = df[df["house"] == house]
 
-        for act_name, seq, duration in activities:
+        # FIX: correct current stage (latest, not mode)
+        house_df = house_df.sort_values("seq")
+        current_stage_row = house_df.iloc[-1]
 
-            # skip non-capacity stages
-            if act_name in ["Measurement", "Cutting List"]:
-                current_date += timedelta(days=duration)
-                continue
+        current_stage = current_stage_row["stage"]
+        current_seq = current_stage_row["seq"]
 
-            # capacity logic (basic placeholder)
-            capacity = capacity_map.get(act_name, 999)
+        # ===== Remaining Work =====
+        remaining_days = activity_df[activity_df["seq"] > current_seq]["days"].sum()
 
-            delay = 0
-            if capacity < 3:
-                delay = 2  # simple assumption
+        # ===== Completed Work =====
+        completed_days = activity_df[activity_df["seq"] <= current_seq]["days"].sum()
 
-            current_date += timedelta(days=duration + delay)
+        # ===== Progress =====
+        progress_percent = (completed_days / total_planned_days) * 100 if total_planned_days > 0 else 0
 
-        results.append((house_id, current_date))
+        # ===== Predicted Finish =====
+        predicted_finish = today + timedelta(days=int(remaining_days))
 
-        # update DB
-        cur.execute("""
-            UPDATE houses
-            SET predicted_finish=%s
-            WHERE house_id=%s
-        """, (current_date, house_id))
+        # ===== REAL DELAY CALCULATION =====
+        start_date = today - timedelta(days=int(completed_days))
+        expected_finish = start_date + timedelta(days=int(total_planned_days))
 
-    conn.commit()
+        delay_days = (predicted_finish - expected_finish).days
+        delay_percent = (delay_days / total_planned_days) * 100 if total_planned_days > 0 else 0
 
-    df = pd.DataFrame(results, columns=["House", "Predicted Finish"])
-    st.dataframe(df)
+        # ===== RISK DETECTION =====
+        if delay_percent > 20:
+            risk = "🔴 High Risk"
+        elif delay_percent > 10:
+            risk = "🟠 Medium Risk"
+        else:
+            risk = "🟢 Low Risk"
 
-    st.success("Engine Run Complete")
+        results.append({
+            "House": house,
+            "Current Stage": current_stage,
+            "Progress %": round(progress_percent, 1),
+            "Remaining Days": int(remaining_days),
+            "Predicted Finish": predicted_finish.date(),
+            "Delay %": round(delay_percent, 1),
+            "Risk": risk
+        })
+
+    result_df = pd.DataFrame(results)
+
+    # ================= BOTTLENECK =================
+    bottleneck = df["stage"].value_counts().reset_index()
+    bottleneck.columns = ["Stage", "Count"]
+
+    # ================= CRITICAL HOUSES =================
+    critical = result_df.sort_values(by="Remaining Days", ascending=False).head(5)
+
+    # ================= UI =================
+    st.subheader("📊 House-Level Intelligence")
+    st.dataframe(result_df, use_container_width=True)
+
+    st.subheader("🔥 Bottleneck Detection")
+    st.dataframe(bottleneck, use_container_width=True)
+
+    st.subheader("🚨 Critical Houses (Priority)")
+    st.dataframe(critical, use_container_width=True)
+
+    # ================= KPI =================
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Total Houses", len(result_df))
+    col2.metric("Avg Progress %", round(result_df["Progress %"].mean(), 1))
+    col3.metric("High Risk Houses", len(result_df[result_df["Risk"] == "🔴 High Risk"]))
