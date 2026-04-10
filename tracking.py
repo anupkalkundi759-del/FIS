@@ -49,35 +49,69 @@ def show_tracking(conn, cur):
     selected_house_no = st.selectbox("Select House", list(house_dict.keys()))
     house_id = house_dict[selected_house_no]
 
-    # ================= PRODUCT =================
+    # ================= PRODUCT LIST WITH PROGRESS =================
     cur.execute("""
-        SELECT pm.product_id, pm.product_code
+        SELECT 
+            pm.product_id,
+            pm.product_code,
+            COUNT(p.id) AS total,
+            COUNT(t.id) FILTER (WHERE t.status='Completed') AS completed
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
+        LEFT JOIN tracking_log t ON p.id = t.product_instance_id
         WHERE p.house_id = %s
+        GROUP BY pm.product_id, pm.product_code
+        ORDER BY pm.product_code
     """, (house_id,))
+
     products = cur.fetchall()
 
     if not products:
         st.warning("No products found")
         return
 
-    product_dict = {p[1]: p[0] for p in products}
-    selected_product = st.selectbox("Select Product", list(product_dict.keys()))
-    product_id = product_dict[selected_product]
+    # UI: show progress
+    product_dict = {
+        f"{p[1]}  ({p[3]}/{p[2]})": p[0]
+        for p in products
+    }
 
-    # ================= COMPLETED STAGE =================
+    selected_product_label = st.selectbox("Select Product", list(product_dict.keys()))
+    product_id = product_dict[selected_product_label]
+
+    # ================= GET NEXT PENDING ITEM =================
+    cur.execute("""
+        SELECT p.id
+        FROM products p
+        LEFT JOIN tracking_log t 
+            ON p.id = t.product_instance_id 
+            AND t.status = 'Completed'
+        WHERE p.house_id = %s
+        AND p.product_id = %s
+        AND t.id IS NULL
+        LIMIT 1
+    """, (house_id, product_id))
+
+    row = cur.fetchone()
+
+    if not row:
+        st.success("✅ All items completed for this product")
+        return
+
+    product_instance_id = row[0]
+
+    # ================= CURRENT STAGE =================
     cur.execute("""
         SELECT COALESCE(MAX(s.sequence), 0)
         FROM tracking_log t
         JOIN stages s ON t.stage_id = s.stage_id
-        WHERE t.house_id=%s AND t.product_id=%s
-    """, (house_id, product_id))
+        WHERE t.product_instance_id = %s
+    """, (product_instance_id,))
 
-    completed_stage = cur.fetchone()[0]
-    st.info(f"Completed Stage: {completed_stage}")
+    current_stage = cur.fetchone()[0]
+    st.info(f"Current Item Stage: {current_stage}")
 
-    # ================= STAGE =================
+    # ================= STAGES =================
     cur.execute("SELECT stage_id, stage_name, sequence FROM stages ORDER BY sequence")
     stages = cur.fetchall()
 
@@ -86,20 +120,18 @@ def show_tracking(conn, cur):
     stage_id, selected_sequence = stage_map[selected_stage_name]
 
     # ================= VALIDATION =================
-    allowed_sequence = completed_stage + 1
-
-    if selected_sequence > allowed_sequence:
+    if selected_sequence > current_stage + 1:
         st.error("❌ Complete previous stage first")
         return
 
-    status = st.selectbox("Status", ["Started", "In Progress", "Completed", "Pending"])
+    status = st.selectbox("Status", ["Started", "In Progress", "Completed"])
 
     # ================= SUBMIT =================
-    if st.button("Submit"):
+    if st.button("Update Item"):
         cur.execute("""
-            INSERT INTO tracking_log (house_id, product_id, stage_id, status)
-            VALUES (%s, %s, %s, %s)
-        """, (house_id, product_id, stage_id, status))
+            INSERT INTO tracking_log (product_instance_id, stage_id, status)
+            VALUES (%s, %s, %s)
+        """, (product_instance_id, stage_id, status))
 
         conn.commit()
-        st.success("✅ Stage Updated")
+        st.success("✅ Item Updated")
