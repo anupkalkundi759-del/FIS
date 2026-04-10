@@ -2,21 +2,31 @@ def show_upload(conn, cur):
     import streamlit as st
     import pandas as pd
 
-    st.subheader("Upload Excel")
+    st.title("📤 Upload Excel")
 
     file = st.file_uploader("Upload Excel", type=["xlsx"])
 
     if file:
-        df = pd.read_excel(file)
-        df.columns = df.columns.str.lower().str.strip()
+        df = pd.read_excel(file, engine="openpyxl")
 
-        required = ["project", "unit", "house_id", "product_code", "category", "orientation"]
+        # ================= CLEAN HEADERS =================
+        df.columns = [
+            "project", "unit", "house_id",
+            "category", "product_code", "orientation", "quantity"
+        ]
 
-        for col in required:
-            if col not in df.columns:
-                st.error(f"Missing column: {col}")
-                return
+        # ================= CLEAN DATA =================
+        df = df.dropna()
 
+        df["project"] = df["project"].astype(str).str.strip()
+        df["unit"] = df["unit"].astype(str).str.strip()
+        df["house_id"] = df["house_id"].astype(str).str.strip()
+        df["product_code"] = df["product_code"].astype(str).str.strip()
+        df["category"] = df["category"].astype(str).str.strip()
+        df["orientation"] = df["orientation"].astype(str).str.strip()
+        df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(1).astype(int)
+
+        # ================= INSERT =================
         for _, row in df.iterrows():
 
             # PROJECT
@@ -56,7 +66,7 @@ def show_upload(conn, cur):
                 ON CONFLICT DO NOTHING
             """, (row["product_code"], row["category"], row["orientation"]))
 
-            # MAPPING
+            # HOUSE-PRODUCT
             cur.execute("""
                 INSERT INTO house_products (house_id, product_code)
                 VALUES (%s, %s)
@@ -64,4 +74,8 @@ def show_upload(conn, cur):
             """, (row["house_id"], row["product_code"]))
 
         conn.commit()
-        st.success("Upload Completed")
+
+        st.success("✅ Upload Successful")
+
+        st.write("Preview:")
+        st.dataframe(df.head())
