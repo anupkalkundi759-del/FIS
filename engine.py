@@ -24,11 +24,11 @@ def run_engine(conn, cur):
     total_duration = activity_df["days"].sum()
 
     # ================= WOOD INPUT =================
-    st.subheader("🪵 Wood Input")
+    st.markdown("### 🪵 Wood Input")
 
-    col1, col2 = st.columns(2)
+    w1, w2 = st.columns(2)
 
-    with col1:
+    with w1:
         stock_input = st.number_input("Total Wood Stock", min_value=0, step=1)
         if st.button("Update Stock"):
             cur.execute("INSERT INTO wood_inventory (total_stock) VALUES (%s)", (stock_input,))
@@ -36,7 +36,7 @@ def run_engine(conn, cur):
             st.success("Stock Updated")
             st.rerun()
 
-    with col2:
+    with w2:
         house_input = st.text_input("House No")
         consumption_input = st.number_input("Consumption", min_value=0, step=1)
 
@@ -108,8 +108,8 @@ def run_engine(conn, cur):
         if progress < planned_progress:
             early_warnings.append({
                 "House": house,
-                "Planned %": round(planned_progress,1),
-                "Actual %": round(progress,1)
+                "Planned %": round(planned_progress, 1),
+                "Actual %": round(progress, 1)
             })
 
         house_df = house_df.reset_index(drop=True)
@@ -120,11 +120,6 @@ def run_engine(conn, cur):
             next_time = house_df.loc[i + 1, "time"]
 
             actual_duration = (next_time - start_time).days
-
-            planned_row = activity_df[activity_df["stage"] == stage_name]
-            planned_duration = planned_row["days"].values[0] if not planned_row.empty else 0
-
-            delay_stage = actual_duration - planned_duration
 
             stage_analysis.append({
                 "Stage": stage_name,
@@ -146,18 +141,7 @@ def run_engine(conn, cur):
     stage_df = pd.DataFrame(stage_analysis)
     early_df = pd.DataFrame(early_warnings)
 
-    # ================= KPI =================
-    total_houses = len(result_df)
-    delayed = len(result_df[result_df["Delay"] > 0])
-
-    st.subheader("📊 Overview")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Houses", total_houses)
-    col2.metric("Delayed Houses", delayed)
-    col3.metric("Avg Progress", round(result_df["Progress %"].mean(),1))
-
-    # ================= WOOD =================
+    # ================= WOOD STATUS =================
     cur.execute("SELECT total_stock FROM wood_inventory ORDER BY id DESC LIMIT 1")
     stock = cur.fetchone()
     total_stock = stock[0] if stock else 0
@@ -167,35 +151,64 @@ def run_engine(conn, cur):
 
     remaining = total_stock - used
 
-    st.subheader("📦 Wood Status")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total", total_stock)
-    col2.metric("Used", used)
-    col3.metric("Remaining", remaining)
+    # ================= KPI STRIP =================
+    st.markdown("## 📊 Overview")
 
-    # ================= GRAPH: PROGRESS =================
-    st.subheader("📈 Progress vs Planned")
-    st.line_chart(result_df[["Progress %", "Planned %"]])
+    total_houses = len(result_df)
+    delayed = len(result_df[result_df["Delay"] > 0])
+    avg_progress = result_df["Progress %"].mean()
 
-    # ================= EARLY WARNING =================
-    st.subheader("🚨 Early Warnings")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total Houses", total_houses)
+    k2.metric("Delayed Houses", delayed)
+    k3.metric("Avg Progress %", round(avg_progress, 1))
+    k4.metric("Wood Remaining", remaining)
 
-    if early_df.empty:
-        st.success("All houses on track")
-    else:
-        st.dataframe(early_df)
+    st.divider()
 
-    # ================= PRIORITY =================
-    st.subheader("🚨 Priority Houses")
-    st.dataframe(result_df.sort_values("Priority", ascending=False).head(5))
+    # ================= ROW 2 =================
+    c1, c2 = st.columns(2)
 
-    # ================= BOTTLENECK =================
-    st.subheader("🔥 Bottleneck Stages")
+    with c1:
+        st.subheader("📈 Progress vs Planned")
+        st.line_chart(result_df[["Progress %", "Planned %"]])
 
-    if not stage_df.empty:
-        bottleneck = stage_df.groupby("Stage")["Actual Days"].mean().sort_values(ascending=False)
-        st.bar_chart(bottleneck)
+    with c2:
+        st.subheader("🪵 Wood Status")
+        st.metric("Total", total_stock)
+        st.metric("Used", used)
+        st.metric("Remaining", remaining)
 
-    # ================= MAIN TABLE =================
+    st.divider()
+
+    # ================= ROW 3 =================
+    c3, c4 = st.columns(2)
+
+    with c3:
+        st.subheader("🚨 Early Warnings")
+        if early_df.empty:
+            st.success("All houses on track")
+        else:
+            st.dataframe(early_df, use_container_width=True)
+
+    with c4:
+        st.subheader("🔥 Bottleneck Stages")
+        if not stage_df.empty:
+            bottleneck = (
+                stage_df.groupby("Stage")["Actual Days"]
+                .mean()
+                .sort_values(ascending=False)
+            )
+            st.bar_chart(bottleneck)
+
+    st.divider()
+
+    # ================= FULL WIDTH =================
     st.subheader("🏠 House Intelligence")
     st.dataframe(result_df, use_container_width=True)
+
+    st.subheader("🚨 Priority Houses")
+    st.dataframe(
+        result_df.sort_values("Priority", ascending=False).head(5),
+        use_container_width=True
+    )
