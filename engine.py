@@ -23,6 +23,39 @@ def run_engine(conn, cur):
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     total_duration = activity_df["days"].sum()
 
+    # ================= WOOD INPUT UI =================
+    st.subheader("🪵 Wood Input")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        total_stock_input = st.number_input("Enter Total Wood Stock", min_value=0, step=1)
+
+        if st.button("Update Stock"):
+            cur.execute(
+                "INSERT INTO wood_inventory (total_stock) VALUES (%s)",
+                (total_stock_input,)
+            )
+            conn.commit()
+            st.success("Stock Updated")
+            st.rerun()
+
+    with col2:
+        house_input = st.text_input("House No")
+        consumption_input = st.number_input("Consumption", min_value=0, step=1)
+
+        if st.button("Add Consumption"):
+            if house_input:
+                cur.execute("""
+                    INSERT INTO wood_consumption (house_no, consumption)
+                    VALUES (%s, %s)
+                """, (house_input, consumption_input))
+                conn.commit()
+                st.success("Consumption Added")
+                st.rerun()
+            else:
+                st.warning("Enter House No")
+
     # ================= LOAD TRACKING =================
     cur.execute("""
         SELECT 
@@ -70,13 +103,12 @@ def run_engine(conn, cur):
         progress = (completed_days / total_duration) * 100 if total_duration else 0
 
         # ===== PLAN VS ACTUAL =====
-        actual_elapsed = max(1, (today - start_date).days)  # avoid zero
+        actual_elapsed = max(1, (today - start_date).days)
         planned_progress = (actual_elapsed / TARGET_DAYS) * 100
 
-        # ===== FORECAST (FIXED) =====
+        # ===== FORECAST (BALANCED FIX) =====
         if completed_days > 0:
             performance = actual_elapsed / completed_days
-            performance = max(1, performance)  # 🔥 prevent unrealistic fast prediction
         else:
             performance = 1
 
@@ -93,7 +125,7 @@ def run_engine(conn, cur):
         else:
             alert = "🟢 On Track"
 
-        # ================= STAGE-WISE ANALYSIS (FIXED) =================
+        # ================= STAGE ANALYSIS =================
         house_df = house_df.reset_index(drop=True)
 
         for i in range(len(house_df) - 1):
@@ -103,7 +135,6 @@ def run_engine(conn, cur):
 
             actual_duration = (next_time - start_time).days
 
-            # 🔥 skip invalid / zero durations
             if actual_duration <= 0:
                 continue
 
@@ -137,7 +168,7 @@ def run_engine(conn, cur):
     result_df = pd.DataFrame(results)
     stage_df = pd.DataFrame(stage_analysis)
 
-    # ================= WOOD (MANUAL INPUT SYSTEM) =================
+    # ================= WOOD CALCULATION =================
     cur.execute("""
         SELECT total_stock FROM wood_inventory
         ORDER BY id DESC LIMIT 1
@@ -166,7 +197,6 @@ def run_engine(conn, cur):
         use_container_width=True
     )
 
-    # ================= STAGE ANALYSIS =================
     if not stage_df.empty:
         st.subheader("⏱ Stage-wise Delay Analysis")
         st.dataframe(stage_df, use_container_width=True)
