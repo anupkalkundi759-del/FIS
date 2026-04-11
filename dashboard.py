@@ -59,14 +59,15 @@ def show_dashboard(conn, cur):
 
     st.dataframe(df, use_container_width=True)
 
-    # ================= PROJECT SELECTION =================
+    # ================= PROJECT SELECT =================
     st.divider()
     st.subheader("📌 Project Detailed View")
 
-    project_list = df["Project"].tolist()
-    selected_project = st.selectbox("Select Project", project_list)
+    selected_project = st.selectbox("Select Project", df["Project"].tolist())
 
-    # ================= HOUSE LEVEL DATA =================
+    # ================= HOUSE LEVEL =================
+    st.subheader("🏠 House-Level Status")
+
     cur.execute("""
         SELECT 
             h.house_no,
@@ -102,10 +103,6 @@ def show_dashboard(conn, cur):
 
     house_data = cur.fetchall()
 
-    if not house_data:
-        st.warning("No house-level data")
-        return
-
     house_df = pd.DataFrame(house_data, columns=[
         "House",
         "Total Products",
@@ -116,12 +113,49 @@ def show_dashboard(conn, cur):
 
     st.dataframe(house_df, use_container_width=True)
 
-    # ================= KPI =================
+    # ================= STAGE-WISE BREAKDOWN =================
     st.divider()
-    st.subheader("📊 Key Metrics")
+    st.subheader("⚙️ Stage-wise Product Status")
 
-    col1, col2, col3 = st.columns(3)
+    cur.execute("""
+        SELECT 
+            s.stage_name,
+            COUNT(*) AS total_products
 
-    col1.metric("Total Houses", house_df.shape[0])
-    col2.metric("Total Products", house_df["Total Products"].sum())
-    col3.metric("Pending Products", house_df["Pending"].sum())
+        FROM products pr
+
+        LEFT JOIN LATERAL (
+            SELECT stage_id
+            FROM tracking_log
+            WHERE product_instance_id = pr.product_instance_id
+            ORDER BY timestamp DESC
+            LIMIT 1
+        ) t ON TRUE
+
+        LEFT JOIN stages s ON t.stage_id = s.stage_id
+        JOIN houses h ON pr.house_id = h.house_id
+        JOIN units u ON h.unit_id = u.unit_id
+        JOIN projects p ON u.project_id = p.project_id
+
+        WHERE p.project_name = %s
+
+        GROUP BY s.stage_name
+        ORDER BY s.stage_name
+    """, (selected_project,))
+
+    stage_data = cur.fetchall()
+
+    stage_df = pd.DataFrame(stage_data, columns=[
+        "Stage",
+        "No. of Products"
+    ])
+
+    st.dataframe(stage_df, use_container_width=True)
+
+    # ================= BOTTLENECK =================
+    st.subheader("🔥 Bottleneck Stage")
+
+    if not stage_df.empty:
+        bottleneck = stage_df.sort_values(by="No. of Products", ascending=False).iloc[0]
+
+        st.error(f"⚠️ Highest Load Stage: {bottleneck['Stage']} ({bottleneck['No. of Products']} products)")
