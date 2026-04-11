@@ -51,9 +51,7 @@ def show_tracking(conn, cur):
 
     # ================= PRODUCT =================
     cur.execute("""
-        SELECT 
-            p.id,
-            pm.product_code
+        SELECT p.id, pm.product_code
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
         WHERE p.house_id = %s
@@ -76,16 +74,29 @@ def show_tracking(conn, cur):
 
     product_instance_id = ids[selected_index]
 
-    # ================= STAGES =================
+    # ================= STAGES (DEFENSIVE LOAD) =================
     cur.execute("""
         SELECT stage_id, stage_name, sequence
         FROM stages
+        WHERE sequence IS NOT NULL
         ORDER BY sequence
     """)
     stages = cur.fetchall()
 
-    stage_map = {s[1]: (s[0], s[2]) for s in stages}
-    sequence_map = {s[2]: s[1] for s in stages}
+    if not stages:
+        st.error("❌ No valid stages found (sequence missing in DB)")
+        st.stop()
+
+    # Remove duplicates by sequence (keep first)
+    clean_sequence_map = {}
+    clean_stage_map = {}
+
+    for stage_id, name, seq in stages:
+        if seq not in clean_sequence_map:
+            clean_sequence_map[seq] = name
+            clean_stage_map[name] = (stage_id, seq)
+
+    sequences = sorted(clean_sequence_map.keys())
 
     # ================= CURRENT STAGE =================
     cur.execute("""
@@ -100,25 +111,27 @@ def show_tracking(conn, cur):
 
     if current_stage is None:
         st.info("Current Stage: Not Started")
-        expected_stage = min(sequence_map.keys())
+        expected_stage = sequences[0]
     else:
-        st.info(f"Current Stage: {sequence_map[current_stage]}")
-        expected_stage = current_stage + 1
+        st.info(f"Current Stage: {clean_sequence_map.get(current_stage, 'Unknown')}")
+        
+        try:
+            idx = sequences.index(current_stage)
+            expected_stage = sequences[idx + 1]
+        except (ValueError, IndexError):
+            st.success("🎉 All stages completed")
+            return
 
     # ================= NEXT STAGE =================
-    if expected_stage in sequence_map:
-        st.success(f"Next Allowed Stage: {sequence_map[expected_stage]}")
-    else:
-        st.success("🎉 All stages completed")
-        return
+    st.success(f"Next Allowed Stage: {clean_sequence_map[expected_stage]}")
 
     # ================= SELECT STAGE =================
-    selected_stage_name = st.selectbox("Select Stage", list(stage_map.keys()))
-    stage_id, selected_sequence = stage_map[selected_stage_name]
+    selected_stage_name = st.selectbox("Select Stage", list(clean_stage_map.keys()))
+    stage_id, selected_sequence = clean_stage_map[selected_stage_name]
 
     # ================= VALIDATION =================
     if selected_sequence != expected_stage:
-        st.error(f"❌ You must complete '{sequence_map[expected_stage]}' first")
+        st.error(f"❌ You must complete '{clean_sequence_map[expected_stage]}' first")
         st.stop()
 
     # ================= DUPLICATE CHECK =================
