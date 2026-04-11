@@ -7,10 +7,6 @@ def show_tracking(conn, cur):
     cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
     projects = cur.fetchall()
 
-    if not projects:
-        st.warning("No projects found")
-        return
-
     project_dict = {p[1]: p[0] for p in projects}
     selected_project = st.selectbox("Select Project", list(project_dict.keys()))
 
@@ -21,10 +17,6 @@ def show_tracking(conn, cur):
         WHERE project_id=%s
     """, (project_dict[selected_project],))
     units = cur.fetchall()
-
-    if not units:
-        st.warning("No units found")
-        return
 
     unit_dict = {u[1]: u[0] for u in units}
     selected_unit = st.selectbox("Select Unit", list(unit_dict.keys()))
@@ -37,17 +29,15 @@ def show_tracking(conn, cur):
     """, (unit_dict[selected_unit],))
     houses = cur.fetchall()
 
-    if not houses:
-        st.warning("No houses found")
-        return
-
     house_dict = {h[1]: h[0] for h in houses}
     selected_house = st.selectbox("Select House", list(house_dict.keys()))
     house_id = house_dict[selected_house]
 
-    # ================= PRODUCTS (CLEAN) =================
+    # ================= PRODUCTS (FIXED) =================
     cur.execute("""
-        SELECT DISTINCT pm.product_code
+        SELECT 
+            p.product_instance_id,
+            pm.product_code
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
         WHERE p.house_id = %s
@@ -60,58 +50,17 @@ def show_tracking(conn, cur):
         st.warning("No products found")
         return
 
-    product_list = [p[0] for p in products]
-    selected_product = st.selectbox("Select Product", product_list)
+    # IMPORTANT: keep duplicates but map internally
+    product_display = [p[1] for p in products]
+    product_map = {f"{p[1]}_{i}": p[0] for i, p in enumerate(products)}
 
-    # ================= PICK NEXT AVAILABLE INSTANCE =================
-    cur.execute("""
-        SELECT p.product_instance_id
-        FROM products p
-        JOIN products_master pm ON p.product_id = pm.product_id
-        WHERE p.house_id = %s
-        AND pm.product_code = %s
-        ORDER BY p.product_instance_id
-    """, (house_id, selected_product))
+    selected_display = st.selectbox("Select Product", list(product_map.keys()))
 
-    all_instances = cur.fetchall()
-
-    selected_product_instance_id = None
-
-    for inst in all_instances:
-        pid = inst[0]
-
-        # check last stage
-        cur.execute("""
-            SELECT s.sequence
-            FROM tracking_log t
-            JOIN stages s ON t.stage_id = s.stage_id
-            WHERE t.product_instance_id = %s
-            ORDER BY t.timestamp DESC
-            LIMIT 1
-        """, (pid,))
-        res = cur.fetchone()
-
-        if not res:
-            selected_product_instance_id = pid
-            break
-
-        last_seq = res[0]
-
-        # check if fully completed (last stage)
-        cur.execute("SELECT MAX(sequence) FROM stages")
-        max_seq = cur.fetchone()[0]
-
-        if last_seq < max_seq:
-            selected_product_instance_id = pid
-            break
-
-    if not selected_product_instance_id:
-        st.success("✅ All items of this product are completed")
-        return
+    selected_product_instance_id = product_map[selected_display]
 
     # ================= CURRENT STAGE =================
     cur.execute("""
-        SELECT s.stage_name, s.sequence
+        SELECT s.stage_name
         FROM tracking_log t
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE t.product_instance_id = %s
@@ -121,10 +70,7 @@ def show_tracking(conn, cur):
 
     result = cur.fetchone()
 
-    if result:
-        current_stage, current_seq = result
-    else:
-        current_stage, current_seq = "Not Started", 0
+    current_stage = result[0] if result else "Not Started"
 
     st.info(f"Last Completed Stage: {current_stage}")
 
@@ -136,26 +82,25 @@ def show_tracking(conn, cur):
     """)
     stages = cur.fetchall()
 
-    stage_map = {s[1]: s[0] for s in stages}
-    max_seq = max(stage_map.keys())
+    stage_sequence = [s[0] for s in stages]
 
-    if current_seq == 0:
-        next_seq = 1
-    elif current_seq < max_seq:
-        next_seq = current_seq + 1
+    if current_stage == "Not Started":
+        next_stage = stage_sequence[0]
     else:
-        st.success("✅ Product fully completed")
-        return
-
-    next_stage = stage_map[next_seq]
+        try:
+            idx = stage_sequence.index(current_stage)
+            next_stage = stage_sequence[idx + 1]
+        except:
+            next_stage = "Completed"
 
     st.success(f"Next Allowed Stage: {next_stage}")
 
-    # ================= INPUT =================
-    selected_stage = st.selectbox("Select Stage", [s[0] for s in stages])
+    # ================= SELECT STAGE =================
+    selected_stage = st.selectbox("Select Stage", stage_sequence)
+
     status = st.selectbox("Status", ["In Progress", "Completed"])
 
-    # ================= VALIDATION =================
+    # ================= VALIDATION (FIXED) =================
     if selected_stage != next_stage:
         st.error(f"You must complete '{next_stage}' first")
         return
@@ -177,4 +122,4 @@ def show_tracking(conn, cur):
 
         conn.commit()
 
-        st.success("✅ Updated successfully")
+        st.success("Updated successfully")
