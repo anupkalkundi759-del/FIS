@@ -105,16 +105,13 @@ def run_engine(conn, cur):
 
         delay = (predicted_finish - expected_finish).days
 
-        # ================= EARLY DETECTION =================
         if progress < planned_progress:
             early_warnings.append({
                 "House": house,
-                "Issue": "Lagging behind plan",
                 "Planned %": round(planned_progress,1),
                 "Actual %": round(progress,1)
             })
 
-        # ================= STAGE ANALYSIS =================
         house_df = house_df.reset_index(drop=True)
 
         for i in range(len(house_df) - 1):
@@ -130,11 +127,8 @@ def run_engine(conn, cur):
             delay_stage = actual_duration - planned_duration
 
             stage_analysis.append({
-                "House": house,
                 "Stage": stage_name,
-                "Planned Days": planned_duration,
-                "Actual Days": actual_duration,
-                "Delay": delay_stage
+                "Actual Days": actual_duration
             })
 
         priority_score = delay + remaining_days
@@ -144,14 +138,24 @@ def run_engine(conn, cur):
             "Stage": current_stage,
             "Progress %": round(progress, 1),
             "Planned %": round(planned_progress, 1),
-            "Delay (days)": delay,
-            "Predicted Finish": predicted_finish.date(),
-            "Priority Score": priority_score
+            "Delay": delay,
+            "Priority": priority_score
         })
 
     result_df = pd.DataFrame(results)
     stage_df = pd.DataFrame(stage_analysis)
     early_df = pd.DataFrame(early_warnings)
+
+    # ================= KPI =================
+    total_houses = len(result_df)
+    delayed = len(result_df[result_df["Delay"] > 0])
+
+    st.subheader("📊 Overview")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Houses", total_houses)
+    col2.metric("Delayed Houses", delayed)
+    col3.metric("Avg Progress", round(result_df["Progress %"].mean(),1))
 
     # ================= WOOD =================
     cur.execute("SELECT total_stock FROM wood_inventory ORDER BY id DESC LIMIT 1")
@@ -165,34 +169,33 @@ def run_engine(conn, cur):
 
     st.subheader("📦 Wood Status")
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total Stock", total_stock)
+    col1.metric("Total", total_stock)
     col2.metric("Used", used)
     col3.metric("Remaining", remaining)
 
-    # ================= OUTPUT =================
-    st.subheader("📊 House Intelligence")
-    st.dataframe(result_df, use_container_width=True)
+    # ================= GRAPH: PROGRESS =================
+    st.subheader("📈 Progress vs Planned")
+    st.line_chart(result_df[["Progress %", "Planned %"]])
 
-    st.subheader("🚨 Early Warning Detection")
+    # ================= EARLY WARNING =================
+    st.subheader("🚨 Early Warnings")
+
     if early_df.empty:
-        st.info("No early delays detected yet")
+        st.success("All houses on track")
     else:
-        st.dataframe(early_df, use_container_width=True)
+        st.dataframe(early_df)
 
-    st.subheader("⏱ Stage-wise Delay Analysis")
-    if stage_df.empty:
-        st.info("No stage transitions yet")
-    else:
-        st.dataframe(stage_df, use_container_width=True)
+    # ================= PRIORITY =================
+    st.subheader("🚨 Priority Houses")
+    st.dataframe(result_df.sort_values("Priority", ascending=False).head(5))
 
-    st.subheader("🔥 Bottleneck Detection")
-    if stage_df.empty:
-        st.info("No bottleneck detected (insufficient data)")
-    else:
-        bottleneck = (
-            stage_df.groupby("Stage")["Actual Days"]
-            .mean()
-            .reset_index()
-            .sort_values(by="Actual Days", ascending=False)
-        )
-        st.dataframe(bottleneck, use_container_width=True)
+    # ================= BOTTLENECK =================
+    st.subheader("🔥 Bottleneck Stages")
+
+    if not stage_df.empty:
+        bottleneck = stage_df.groupby("Stage")["Actual Days"].mean().sort_values(ascending=False)
+        st.bar_chart(bottleneck)
+
+    # ================= MAIN TABLE =================
+    st.subheader("🏠 House Intelligence")
+    st.dataframe(result_df, use_container_width=True)
