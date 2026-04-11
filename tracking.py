@@ -49,7 +49,7 @@ def show_tracking(conn, cur):
     selected_house_no = st.selectbox("Select House", list(house_dict.keys()))
     house_id = house_dict[selected_house_no]
 
-    # ================= PRODUCT INSTANCES =================
+    # ================= PRODUCT =================
     cur.execute("""
         SELECT 
             p.id,
@@ -59,20 +59,14 @@ def show_tracking(conn, cur):
         WHERE p.house_id = %s
         ORDER BY pm.product_code, p.id
     """, (house_id,))
-
     products = cur.fetchall()
 
     if not products:
         st.warning("No products found")
         return
 
-    # Allow duplicate names
-    labels = []
-    ids = []
-
-    for p in products:
-        labels.append(p[1])   # same name repeated
-        ids.append(p[0])      # internal ID
+    labels = [p[1] for p in products]
+    ids = [p[0] for p in products]
 
     selected_index = st.selectbox(
         "Select Product",
@@ -82,55 +76,67 @@ def show_tracking(conn, cur):
 
     product_instance_id = ids[selected_index]
 
+    # ================= STAGES =================
+    cur.execute("""
+        SELECT stage_id, stage_name, sequence
+        FROM stages
+        ORDER BY sequence
+    """)
+    stages = cur.fetchall()
+
+    stage_map = {s[1]: (s[0], s[2]) for s in stages}
+    sequence_map = {s[2]: s[1] for s in stages}
+
     # ================= CURRENT STAGE =================
     cur.execute("""
         SELECT MAX(s.sequence)
         FROM tracking_log t
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE t.product_instance_id = %s
+        AND t.status = 'Completed'
     """, (product_instance_id,))
 
     current_stage = cur.fetchone()[0]
 
     if current_stage is None:
-        st.info("Current Item Stage: Not Started")
+        st.info("Current Stage: Not Started")
+        expected_stage = min(sequence_map.keys())
     else:
-        st.info(f"Current Item Stage: {current_stage}")
+        st.info(f"Current Stage: {sequence_map[current_stage]}")
+        expected_stage = current_stage + 1
 
-    # ================= STAGES =================
-    cur.execute("SELECT stage_id, stage_name, sequence FROM stages ORDER BY sequence")
-    stages = cur.fetchall()
+    # ================= NEXT STAGE INFO =================
+    if expected_stage in sequence_map:
+        st.success(f"Next Allowed Stage: {sequence_map[expected_stage]}")
+    else:
+        st.success("🎉 All stages completed")
+        return
 
-    stage_map = {s[1]: (s[0], s[2]) for s in stages}
-
+    # ================= SELECT STAGE =================
     selected_stage_name = st.selectbox("Select Stage", list(stage_map.keys()))
     stage_id, selected_sequence = stage_map[selected_stage_name]
 
-    # ================= EXPECTED STAGE =================
-    if current_stage is None:
-        cur.execute("SELECT MIN(sequence) FROM stages")
-        expected_stage = cur.fetchone()[0]
-    else:
-        expected_stage = current_stage + 1
-
     # ================= VALIDATION =================
     if selected_sequence != expected_stage:
-        st.error(f"❌ You must complete Stage {expected_stage} first")
-        return
+        st.error(f"❌ You must complete '{sequence_map[expected_stage]}' first")
+        st.stop()
 
     # ================= DUPLICATE CHECK =================
     cur.execute("""
         SELECT 1 FROM tracking_log
-        WHERE product_instance_id=%s AND stage_id=%s AND status='Completed'
+        WHERE product_instance_id=%s 
+        AND stage_id=%s 
+        AND status='Completed'
     """, (product_instance_id, stage_id))
 
     if cur.fetchone():
         st.warning("⚠️ Stage already completed")
-        return
+        st.stop()
 
+    # ================= STATUS =================
     status = st.selectbox("Status", ["Completed"])
 
-    # ================= SUBMIT =================
+    # ================= UPDATE =================
     if st.button("Update Item"):
 
         cur.execute("""
@@ -140,5 +146,5 @@ def show_tracking(conn, cur):
 
         conn.commit()
 
-        st.success("✅ Stage Completed")
+        st.success(f"✅ {selected_stage_name} Completed")
         st.rerun()
