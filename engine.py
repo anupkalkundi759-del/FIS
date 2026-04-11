@@ -23,19 +23,15 @@ def run_engine(conn, cur):
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     total_duration = activity_df["days"].sum()
 
-    # ================= WOOD INPUT UI =================
+    # ================= WOOD INPUT =================
     st.subheader("🪵 Wood Input")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        total_stock_input = st.number_input("Enter Total Wood Stock", min_value=0, step=1)
-
+        stock_input = st.number_input("Total Wood Stock", min_value=0, step=1)
         if st.button("Update Stock"):
-            cur.execute(
-                "INSERT INTO wood_inventory (total_stock) VALUES (%s)",
-                (total_stock_input,)
-            )
+            cur.execute("INSERT INTO wood_inventory (total_stock) VALUES (%s)", (stock_input,))
             conn.commit()
             st.success("Stock Updated")
             st.rerun()
@@ -87,9 +83,6 @@ def run_engine(conn, cur):
 
         house_df = df[df["house"] == house].sort_values("seq")
 
-        if house_df.empty:
-            continue
-
         start_date = house_df["time"].min()
         current_row = house_df.iloc[-1]
 
@@ -106,24 +99,28 @@ def run_engine(conn, cur):
         actual_elapsed = max(1, (today - start_date).days)
         planned_progress = (actual_elapsed / TARGET_DAYS) * 100
 
-        # ===== FORECAST (BALANCED FIX) =====
-        if completed_days > 0:
-            performance = actual_elapsed / completed_days
-        else:
-            performance = 1
+        # ===== FORECAST (BACK TO STRONG LOGIC) =====
+        performance = actual_elapsed / completed_days if completed_days > 0 else 1
 
         predicted_finish = today + timedelta(days=int(remaining_days * performance))
         expected_finish = start_date + timedelta(days=TARGET_DAYS)
 
         delay = (predicted_finish - expected_finish).days
 
-        # ===== ALERT =====
+        # ===== EARLY ALERT (IMPROVED) =====
+        if actual_elapsed > 5 and progress < planned_progress:
+            early_flag = "⚠️ Lagging Early"
+        else:
+            early_flag = ""
+
         if delay > 10:
             alert = "🔴 Critical"
         elif delay > 5:
             alert = "🟠 Warning"
         else:
             alert = "🟢 On Track"
+
+        alert = f"{alert} {early_flag}"
 
         # ================= STAGE ANALYSIS =================
         house_df = house_df.reset_index(drop=True)
@@ -168,11 +165,8 @@ def run_engine(conn, cur):
     result_df = pd.DataFrame(results)
     stage_df = pd.DataFrame(stage_analysis)
 
-    # ================= WOOD CALCULATION =================
-    cur.execute("""
-        SELECT total_stock FROM wood_inventory
-        ORDER BY id DESC LIMIT 1
-    """)
+    # ================= WOOD =================
+    cur.execute("SELECT total_stock FROM wood_inventory ORDER BY id DESC LIMIT 1")
     stock = cur.fetchone()
     total_stock = stock[0] if stock else 0
 
