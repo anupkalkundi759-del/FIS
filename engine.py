@@ -1,198 +1,165 @@
-def run_engine(conn, cur):
+def show_tracking(conn, cur):
     import streamlit as st
-    import pandas as pd
-    from datetime import datetime, timedelta
 
-    st.title("⚙️ Scheduling Intelligence Engine")
+    st.title("🏭 Production Tracker")
 
-    TARGET_DAYS = 45
-    today = datetime.now()
+    # ================= PROJECT =================
+    cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
+    projects = cur.fetchall()
 
-    # ================= LOAD ACTIVITIES =================
-    cur.execute("""
-        SELECT activity_name, sequence_order, duration_days
-        FROM activity_master
-        ORDER BY sequence_order
-    """)
-    act = cur.fetchall()
-
-    if not act:
-        st.error("No activity master found")
+    if not projects:
+        st.warning("No projects found")
         return
 
-    activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
-    total_duration = activity_df["days"].sum()
+    project_dict = {p[1]: p[0] for p in projects}
+    selected_project = st.selectbox("Select Project", list(project_dict.keys()))
+    project_id = project_dict[selected_project]
 
-    # ================= WOOD INPUT =================
-    st.subheader("🪵 Wood Input")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        stock_input = st.number_input("Total Wood Stock", min_value=0, step=1)
-        if st.button("Update Stock"):
-            cur.execute("INSERT INTO wood_inventory (total_stock) VALUES (%s)", (stock_input,))
-            conn.commit()
-            st.success("Stock Updated")
-            st.rerun()
-
-    with col2:
-        house_input = st.text_input("House No")
-        consumption_input = st.number_input("Consumption", min_value=0, step=1)
-
-        if st.button("Add Consumption"):
-            if house_input:
-                cur.execute("""
-                    INSERT INTO wood_consumption (house_no, consumption)
-                    VALUES (%s, %s)
-                """, (house_input, consumption_input))
-                conn.commit()
-                st.success("Consumption Added")
-                st.rerun()
-            else:
-                st.warning("Enter House No")
-
-    # ================= LOAD TRACKING =================
+    # ================= UNIT =================
     cur.execute("""
-        SELECT 
-            h.house_no,
-            s.stage_name,
-            t.timestamp,
-            s.sequence
+        SELECT unit_id, unit_name
+        FROM units
+        WHERE project_id=%s
+        ORDER BY unit_name
+    """, (project_id,))
+    units = cur.fetchall()
+
+    if not units:
+        st.warning("No units found")
+        return
+
+    unit_dict = {u[1]: u[0] for u in units}
+    selected_unit = st.selectbox("Select Unit", list(unit_dict.keys()))
+    unit_id = unit_dict[selected_unit]
+
+    # ================= HOUSE =================
+    cur.execute("""
+        SELECT house_id, house_no
+        FROM houses
+        WHERE unit_id=%s
+        ORDER BY house_no
+    """, (unit_id,))
+    houses = cur.fetchall()
+
+    if not houses:
+        st.warning("No houses found")
+        return
+
+    house_dict = {h[1]: h[0] for h in houses}
+    selected_house_no = st.selectbox("Select House", list(house_dict.keys()))
+    house_id = house_dict[selected_house_no]
+
+    # ================= PRODUCT =================
+    cur.execute("""
+        SELECT p.id, pm.product_code
         FROM products p
-        JOIN houses h ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_instance_id = p.id
-        JOIN stages s ON t.stage_id = s.stage_id
-        ORDER BY h.house_no, s.sequence
-    """)
+        JOIN products_master pm ON p.product_id = pm.product_id
+        WHERE p.house_id = %s
+        ORDER BY pm.product_code, p.id
+    """, (house_id,))
+    products = cur.fetchall()
 
-    data = cur.fetchall()
-
-    if not data:
-        st.warning("No tracking data")
+    if not products:
+        st.warning("No products found")
         return
 
-    df = pd.DataFrame(data, columns=["house", "stage", "time", "seq"])
-    df["time"] = pd.to_datetime(df["time"])
-
-    results = []
-    stage_analysis = []
-    early_warnings = []
-
-    # ================= CORE ENGINE =================
-    for house in df["house"].unique():
-
-        house_df = df[df["house"] == house].sort_values("seq")
-
-        start_date = house_df["time"].min()
-        current_row = house_df.iloc[-1]
-
-        current_stage = current_row["stage"]
-        current_seq = current_row["seq"]
-
-        # ================= PROGRESS =================
-        completed_days = activity_df[activity_df["seq"] <= current_seq]["days"].sum()
-        remaining_days = activity_df[activity_df["seq"] > current_seq]["days"].sum()
-
-        progress = (completed_days / total_duration) * 100 if total_duration else 0
-
-        actual_elapsed = max(1, (today - start_date).days)
-        planned_progress = (actual_elapsed / TARGET_DAYS) * 100
-
-        performance = actual_elapsed / completed_days if completed_days > 0 else 1
-
-        # ✅ FIXED LOGIC
-        predicted_finish = start_date + timedelta(days=int(total_duration * performance))
-        expected_finish = start_date + timedelta(days=TARGET_DAYS)
-
-        delay = (predicted_finish - expected_finish).days
-
-        # ================= EARLY WARNING =================
-        if progress < planned_progress:
-            early_warnings.append({
-                "House": house,
-                "Planned %": round(planned_progress,1),
-                "Actual %": round(progress,1)
-            })
-
-        # ================= STAGE ANALYSIS =================
-        house_df = house_df.reset_index(drop=True)
-
-        for i in range(len(house_df) - 1):
-            stage_name = house_df.loc[i, "stage"]
-            start_time = house_df.loc[i, "time"]
-            next_time = house_df.loc[i + 1, "time"]
-
-            actual_duration = (next_time - start_time).days
-
-            stage_analysis.append({
-                "Stage": stage_name,
-                "Actual Days": actual_duration
-            })
-
-        # ================= PRIORITY =================
-        priority_score = delay + remaining_days
-
-        results.append({
-            "House": house,
-            "Stage": current_stage,
-            "Progress %": round(progress, 1),
-            "Planned %": round(planned_progress, 1),
-            "Delay": delay,
-            "Expected Finish": expected_finish.date(),
-            "Predicted Finish": predicted_finish.date(),
-            "Priority": priority_score
+    # 🔥 Hidden uniqueness (clean UI)
+    product_options = []
+    for pid, code in products:
+        product_options.append({
+            "id": pid,
+            "label": code
         })
 
-    result_df = pd.DataFrame(results)
-    stage_df = pd.DataFrame(stage_analysis)
-    early_df = pd.DataFrame(early_warnings)
+    selected_product = st.selectbox(
+        "Select Product",
+        product_options,
+        format_func=lambda x: x["label"]
+    )
 
-    # ================= KPI =================
-    st.subheader("📊 Overview")
+    product_instance_id = selected_product["id"]
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Houses", len(result_df))
-    col2.metric("Delayed Houses", len(result_df[result_df["Delay"] > 0]))
-    col3.metric("Avg Progress", round(result_df["Progress %"].mean(),1))
+    # ================= GET STAGES =================
+    cur.execute("""
+        SELECT stage_id, stage_name, sequence
+        FROM stages
+        WHERE sequence IS NOT NULL
+        ORDER BY sequence
+    """)
+    stages = cur.fetchall()
 
-    # ================= WOOD =================
-    cur.execute("SELECT total_stock FROM wood_inventory ORDER BY id DESC LIMIT 1")
-    stock = cur.fetchone()
-    total_stock = stock[0] if stock else 0
+    if not stages:
+        st.error("No stages configured")
+        return
 
-    cur.execute("SELECT SUM(consumption) FROM wood_consumption")
-    used = cur.fetchone()[0] or 0
+    sequence_map = {s[2]: s[1] for s in stages}
+    stage_map = {s[1]: (s[0], s[2]) for s in stages}
+    sequences = sorted(sequence_map.keys())
 
-    remaining = total_stock - used
+    # ================= SAFE LAST STAGE =================
+    cur.execute("""
+        SELECT s.sequence, s.stage_name
+        FROM tracking_log t
+        JOIN stages s ON t.stage_id = s.stage_id
+        WHERE t.product_instance_id = %s
+        AND t.status = 'Completed'
+        ORDER BY s.sequence DESC
+        LIMIT 1
+    """, (product_instance_id,))
 
-    st.subheader("📦 Wood Status")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total", total_stock)
-    col2.metric("Used", used)
-    col3.metric("Remaining", remaining)
+    row = cur.fetchone()
 
-    # ================= GRAPH =================
-    st.subheader("📈 Progress vs Planned")
-    st.line_chart(result_df[["Progress %", "Planned %"]])
-
-    # ================= EARLY WARNING =================
-    st.subheader("🚨 Early Warnings")
-    if early_df.empty:
-        st.success("All houses on track")
+    if row is None:
+        st.info("Last Completed Stage: Not Started")
+        expected_stage = sequences[0]
     else:
-        st.dataframe(early_df)
+        last_seq = row[0]
+        st.info(f"Last Completed Stage: {row[1]}")
 
-    # ================= PRIORITY =================
-    st.subheader("🚨 Priority Houses")
-    st.dataframe(result_df.sort_values("Priority", ascending=False).head(5))
+        if last_seq not in sequences:
+            st.warning("⚠️ Invalid stage history detected → resetting flow")
+            expected_stage = sequences[0]
+        else:
+            idx = sequences.index(last_seq)
+            if idx + 1 >= len(sequences):
+                st.success("🎉 All stages completed")
+                return
+            expected_stage = sequences[idx + 1]
 
-    # ================= BOTTLENECK =================
-    st.subheader("🔥 Bottleneck Stages")
-    if not stage_df.empty:
-        bottleneck = stage_df.groupby("Stage")["Actual Days"].mean().sort_values(ascending=False)
-        st.bar_chart(bottleneck)
+    # ================= NEXT STAGE =================
+    st.success(f"Next Allowed Stage: {sequence_map[expected_stage]}")
 
-    # ================= FINAL TABLE =================
-    st.subheader("🏠 House Intelligence")
-    st.dataframe(result_df, use_container_width=True)
+    # ================= SELECT STAGE =================
+    selected_stage = st.selectbox("Select Stage", list(stage_map.keys()))
+    stage_id, selected_seq = stage_map[selected_stage]
+
+    # ================= STRICT VALIDATION =================
+    if selected_seq != expected_stage:
+        st.error(f"❌ You must complete '{sequence_map[expected_stage]}' first")
+        return
+
+    # ================= DUPLICATE SAFE CHECK =================
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM tracking_log
+        WHERE product_instance_id=%s
+        AND stage_id=%s
+        AND status='Completed'
+    """, (product_instance_id, stage_id))
+
+    if cur.fetchone()[0] > 0:
+        st.warning("⚠️ Stage already completed for this item")
+        return
+
+    # ================= UPDATE =================
+    if st.button("Update Item"):
+
+        cur.execute("""
+            INSERT INTO tracking_log (product_instance_id, stage_id, status)
+            VALUES (%s, %s, 'Completed')
+        """, (product_instance_id, stage_id))
+
+        conn.commit()
+
+        st.success(f"✅ {selected_stage} completed")
+        st.rerun()
