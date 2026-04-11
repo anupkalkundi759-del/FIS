@@ -105,7 +105,7 @@ def show_tracking(conn, cur):
         st.info(f"Current Stage: {sequence_map[current_stage]}")
         expected_stage = current_stage + 1
 
-    # ================= NEXT STAGE INFO =================
+    # ================= NEXT STAGE =================
     if expected_stage in sequence_map:
         st.success(f"Next Allowed Stage: {sequence_map[expected_stage]}")
     else:
