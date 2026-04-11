@@ -3,7 +3,7 @@ def run_engine(conn, cur):
     import pandas as pd
     from datetime import datetime, timedelta
 
-    st.title("⚙️ Advanced Scheduling Intelligence Engine")
+    st.title("⚙️ Scheduling Intelligence Engine")
 
     # ================= LOAD MASTER ACTIVITIES =================
     cur.execute("""
