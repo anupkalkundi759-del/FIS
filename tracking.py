@@ -74,7 +74,7 @@ def show_tracking(conn, cur):
 
     product_instance_id = ids[selected_index]
 
-    # ================= STAGES (DEFENSIVE LOAD) =================
+    # ================= STAGES =================
     cur.execute("""
         SELECT stage_id, stage_name, sequence
         FROM stages
@@ -84,10 +84,10 @@ def show_tracking(conn, cur):
     stages = cur.fetchall()
 
     if not stages:
-        st.error("❌ No valid stages found (sequence missing in DB)")
+        st.error("❌ No valid stages found (fix your DB)")
         st.stop()
 
-    # Remove duplicates by sequence (keep first)
+    # Clean duplicates
     clean_sequence_map = {}
     clean_stage_map = {}
 
@@ -98,7 +98,7 @@ def show_tracking(conn, cur):
 
     sequences = sorted(clean_sequence_map.keys())
 
-    # ================= CURRENT STAGE =================
+    # ================= LAST COMPLETED STAGE =================
     cur.execute("""
         SELECT MAX(s.sequence)
         FROM tracking_log t
@@ -107,16 +107,16 @@ def show_tracking(conn, cur):
         AND t.status = 'Completed'
     """, (product_instance_id,))
 
-    last completed_stage = cur.fetchone()[0]
+    last_completed_stage = cur.fetchone()[0]
 
-    if  last completed_stage is None:
+    if last_completed_stage is None:
         st.info("Last Completed Stage: Not Started")
         expected_stage = sequences[0]
     else:
-        st.info(f"Last Completed Stage: {clean_sequence_map.get(last completed_stage, 'Unknown')}")
-        
+        st.info(f"Last Completed Stage: {clean_sequence_map.get(last_completed_stage, 'Unknown')}")
+
         try:
-            idx = sequences.index(last completed_stage)
+            idx = sequences.index(last_completed_stage)
             expected_stage = sequences[idx + 1]
         except (ValueError, IndexError):
             st.success("🎉 All stages completed")
