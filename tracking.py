@@ -74,76 +74,76 @@ def show_tracking(conn, cur):
 
     product_instance_id = ids[selected_index]
 
-    # ================= ACTIVITIES =================
+    # ================= STAGES =================
     cur.execute("""
-        SELECT activity_id, activity_name, sequence_order
-        FROM activity_master
-        WHERE sequence_order IS NOT NULL
-        ORDER BY sequence_order
+        SELECT stage_id, stage_name, sequence
+        FROM stages
+        WHERE sequence IS NOT NULL
+        ORDER BY sequence
     """)
-    activities = cur.fetchall()
+    stages = cur.fetchall()
 
-    if not activities:
-        st.error("❌ No valid activities found")
+    if not stages:
+        st.error("❌ No valid stages found (fix your DB)")
         st.stop()
 
     # Clean duplicates
-    seq_map = {}
-    activity_map = {}
+    clean_sequence_map = {}
+    clean_stage_map = {}
 
-    for act_id, name, seq in activities:
-        if seq not in seq_map:
-            seq_map[seq] = name
-            activity_map[name] = (act_id, seq)
+    for stage_id, name, seq in stages:
+        if seq not in clean_sequence_map:
+            clean_sequence_map[seq] = name
+            clean_stage_map[name] = (stage_id, seq)
 
-    sequences = sorted(seq_map.keys())
+    sequences = sorted(clean_sequence_map.keys())
 
-    # ================= LAST COMPLETED ACTIVITY =================
+    # ================= LAST COMPLETED STAGE =================
     cur.execute("""
-        SELECT MAX(a.sequence_order)
+        SELECT MAX(s.sequence)
         FROM tracking_log t
-        JOIN activity_master a ON t.activity_id = a.activity_id
+        JOIN stages s ON t.stage_id = s.stage_id
         WHERE t.product_instance_id = %s
         AND t.status = 'Completed'
     """, (product_instance_id,))
 
-    last_completed = cur.fetchone()[0]
+    last_completed_stage = cur.fetchone()[0]
 
-    if last_completed is None:
-        st.info("Last Completed Activity: Not Started")
-        expected_seq = sequences[0]
+    if last_completed_stage is None:
+        st.info("Last Completed Stage: Not Started")
+        expected_stage = sequences[0]
     else:
-        st.info(f"Last Completed Activity: {seq_map.get(last_completed, 'Unknown')}")
+        st.info(f"Last Completed Stage: {clean_sequence_map.get(last_completed_stage, 'Unknown')}")
 
         try:
-            idx = sequences.index(last_completed)
-            expected_seq = sequences[idx + 1]
+            idx = sequences.index(last_completed_stage)
+            expected_stage = sequences[idx + 1]
         except (ValueError, IndexError):
-            st.success("🎉 All activities completed")
+            st.success("🎉 All stages completed")
             return
 
-    # ================= NEXT ACTIVITY =================
-    st.success(f"Next Allowed Activity: {seq_map[expected_seq]}")
+    # ================= NEXT STAGE =================
+    st.success(f"Next Allowed Stage: {clean_sequence_map[expected_stage]}")
 
-    # ================= SELECT ACTIVITY =================
-    selected_activity_name = st.selectbox("Select Activity", list(activity_map.keys()))
-    activity_id, selected_seq = activity_map[selected_activity_name]
+    # ================= SELECT STAGE =================
+    selected_stage_name = st.selectbox("Select Stage", list(clean_stage_map.keys()))
+    stage_id, selected_sequence = clean_stage_map[selected_stage_name]
 
     # ================= VALIDATION =================
-    if selected_seq != expected_seq:
-        st.error(f"❌ You must complete '{seq_map[expected_seq]}' first")
+    if selected_sequence != expected_stage:
+        st.error(f"❌ You must complete '{clean_sequence_map[expected_stage]}' first")
         st.stop()
 
     # ================= DUPLICATE CHECK =================
     cur.execute("""
         SELECT 1 FROM tracking_log
         WHERE product_instance_id=%s 
-        AND activity_id=%s 
+        AND stage_id=%s 
         AND status='Completed'
-    """, (product_instance_id, activity_id))
+    """, (product_instance_id, stage_id))
 
     if cur.fetchone():
-        st.warning("⚠️ Activity already completed")
+        st.warning("⚠️ Stage already completed")
         st.stop()
 
     # ================= STATUS =================
@@ -153,11 +153,11 @@ def show_tracking(conn, cur):
     if st.button("Update Item"):
 
         cur.execute("""
-            INSERT INTO tracking_log (product_instance_id, activity_id, status)
+            INSERT INTO tracking_log (product_instance_id, stage_id, status)
             VALUES (%s, %s, %s)
-        """, (product_instance_id, activity_id, status))
+        """, (product_instance_id, stage_id, status))
 
         conn.commit()
 
-        st.success(f"✅ {selected_activity_name} Completed")
+        st.success(f"✅ {selected_stage_name} Completed")
         st.rerun()
