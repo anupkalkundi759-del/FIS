@@ -63,16 +63,38 @@ def show_tracking(conn, cur):
         st.warning("No products found")
         return
 
-    labels = [p[1] for p in products]
-    ids = [p[0] for p in products]
+    # 🔥 FIX: Hidden uniqueness (no 1/2 shown)
+    product_options = []
+    for pid, code in products:
+        product_options.append({
+            "id": pid,
+            "label": code
+        })
 
-    selected_index = st.selectbox(
+    selected_product = st.selectbox(
         "Select Product",
-        range(len(labels)),
-        format_func=lambda x: labels[x]
+        product_options,
+        format_func=lambda x: x["label"]
     )
 
-    product_instance_id = ids[selected_index]
+    product_instance_id = selected_product["id"]
+
+    # ================= CURRENT STATUS =================
+    cur.execute("""
+        SELECT s.stage_name
+        FROM tracking_log t
+        JOIN stages s ON t.stage_id = s.stage_id
+        WHERE t.product_instance_id = %s
+        ORDER BY s.sequence DESC
+        LIMIT 1
+    """, (product_instance_id,))
+
+    current_stage = cur.fetchone()
+
+    if current_stage:
+        st.info(f"Current Status: {current_stage[0]}")
+    else:
+        st.info("Current Status: Not Started")
 
     # ================= STAGES =================
     cur.execute("""
@@ -98,7 +120,7 @@ def show_tracking(conn, cur):
 
     sequences = sorted(clean_sequence_map.keys())
 
-    # ================= LAST COMPLETED STAGE =================
+    # ================= LAST COMPLETED =================
     cur.execute("""
         SELECT MAX(s.sequence)
         FROM tracking_log t
@@ -107,18 +129,18 @@ def show_tracking(conn, cur):
         AND t.status = 'Completed'
     """, (product_instance_id,))
 
-    last_completed_stage = cur.fetchone()[0]
+    last_completed = cur.fetchone()[0]
 
-    if last_completed_stage is None:
+    if last_completed is None:
         st.info("Last Completed Stage: Not Started")
         expected_stage = sequences[0]
     else:
-        st.info(f"Last Completed Stage: {clean_sequence_map.get(last_completed_stage, 'Unknown')}")
+        st.info(f"Last Completed Stage: {clean_sequence_map.get(last_completed)}")
 
         try:
-            idx = sequences.index(last_completed_stage)
+            idx = sequences.index(last_completed)
             expected_stage = sequences[idx + 1]
-        except (ValueError, IndexError):
+        except:
             st.success("🎉 All stages completed")
             return
 
@@ -127,10 +149,10 @@ def show_tracking(conn, cur):
 
     # ================= SELECT STAGE =================
     selected_stage_name = st.selectbox("Select Stage", list(clean_stage_map.keys()))
-    stage_id, selected_sequence = clean_stage_map[selected_stage_name]
+    stage_id, selected_seq = clean_stage_map[selected_stage_name]
 
     # ================= VALIDATION =================
-    if selected_sequence != expected_stage:
+    if selected_seq != expected_stage:
         st.error(f"❌ You must complete '{clean_sequence_map[expected_stage]}' first")
         st.stop()
 
