@@ -77,6 +77,7 @@ def run_engine(conn, cur):
 
     results = []
     stage_analysis = []
+    early_warnings = []
 
     # ================= CORE ENGINE =================
     for house in df["house"].unique():
@@ -89,17 +90,14 @@ def run_engine(conn, cur):
         current_stage = current_row["stage"]
         current_seq = current_row["seq"]
 
-        # ===== PROGRESS =====
         completed_days = activity_df[activity_df["seq"] <= current_seq]["days"].sum()
         remaining_days = activity_df[activity_df["seq"] > current_seq]["days"].sum()
 
         progress = (completed_days / total_duration) * 100 if total_duration else 0
 
-        # ===== PLAN VS ACTUAL =====
         actual_elapsed = max(1, (today - start_date).days)
         planned_progress = (actual_elapsed / TARGET_DAYS) * 100
 
-        # ===== FORECAST (BACK TO STRONG LOGIC) =====
         performance = actual_elapsed / completed_days if completed_days > 0 else 1
 
         predicted_finish = today + timedelta(days=int(remaining_days * performance))
@@ -107,20 +105,14 @@ def run_engine(conn, cur):
 
         delay = (predicted_finish - expected_finish).days
 
-        # ===== EARLY ALERT (IMPROVED) =====
-        if actual_elapsed > 5 and progress < planned_progress:
-            early_flag = "⚠️ Lagging Early"
-        else:
-            early_flag = ""
-
-        if delay > 10:
-            alert = "🔴 Critical"
-        elif delay > 5:
-            alert = "🟠 Warning"
-        else:
-            alert = "🟢 On Track"
-
-        alert = f"{alert} {early_flag}"
+        # ================= EARLY DETECTION =================
+        if progress < planned_progress:
+            early_warnings.append({
+                "House": house,
+                "Issue": "Lagging behind plan",
+                "Planned %": round(planned_progress,1),
+                "Actual %": round(progress,1)
+            })
 
         # ================= STAGE ANALYSIS =================
         house_df = house_df.reset_index(drop=True)
@@ -131,9 +123,6 @@ def run_engine(conn, cur):
             next_time = house_df.loc[i + 1, "time"]
 
             actual_duration = (next_time - start_time).days
-
-            if actual_duration <= 0:
-                continue
 
             planned_row = activity_df[activity_df["stage"] == stage_name]
             planned_duration = planned_row["days"].values[0] if not planned_row.empty else 0
@@ -148,7 +137,6 @@ def run_engine(conn, cur):
                 "Delay": delay_stage
             })
 
-        # ===== PRIORITY =====
         priority_score = delay + remaining_days
 
         results.append({
@@ -158,12 +146,12 @@ def run_engine(conn, cur):
             "Planned %": round(planned_progress, 1),
             "Delay (days)": delay,
             "Predicted Finish": predicted_finish.date(),
-            "Alert": alert,
             "Priority Score": priority_score
         })
 
     result_df = pd.DataFrame(results)
     stage_df = pd.DataFrame(stage_analysis)
+    early_df = pd.DataFrame(early_warnings)
 
     # ================= WOOD =================
     cur.execute("SELECT total_stock FROM wood_inventory ORDER BY id DESC LIMIT 1")
@@ -185,22 +173,26 @@ def run_engine(conn, cur):
     st.subheader("📊 House Intelligence")
     st.dataframe(result_df, use_container_width=True)
 
-    st.subheader("🚨 Priority Houses")
-    st.dataframe(
-        result_df.sort_values(by="Priority Score", ascending=False).head(5),
-        use_container_width=True
-    )
+    st.subheader("🚨 Early Warning Detection")
+    if early_df.empty:
+        st.info("No early delays detected yet")
+    else:
+        st.dataframe(early_df, use_container_width=True)
 
-    if not stage_df.empty:
-        st.subheader("⏱ Stage-wise Delay Analysis")
+    st.subheader("⏱ Stage-wise Delay Analysis")
+    if stage_df.empty:
+        st.info("No stage transitions yet")
+    else:
         st.dataframe(stage_df, use_container_width=True)
 
+    st.subheader("🔥 Bottleneck Detection")
+    if stage_df.empty:
+        st.info("No bottleneck detected (insufficient data)")
+    else:
         bottleneck = (
             stage_df.groupby("Stage")["Actual Days"]
             .mean()
             .reset_index()
             .sort_values(by="Actual Days", ascending=False)
         )
-
-        st.subheader("🔥 Bottleneck Stages")
         st.dataframe(bottleneck, use_container_width=True)
