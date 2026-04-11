@@ -107,16 +107,16 @@ def show_tracking(conn, cur):
         AND t.status = 'Completed'
     """, (product_instance_id,))
 
-    current_stage = cur.fetchone()[0]
+    last completed_stage = cur.fetchone()[0]
 
-    if current_stage is None:
-        st.info("Current Stage: Not Started")
+    if  last completed_stage is None:
+        st.info("Last Completed Stage: Not Started")
         expected_stage = sequences[0]
     else:
-        st.info(f"Current Stage: {clean_sequence_map.get(current_stage, 'Unknown')}")
+        st.info(f"Last Completed Stage: {clean_sequence_map.get(last completed_stage, 'Unknown')}")
         
         try:
-            idx = sequences.index(current_stage)
+            idx = sequences.index(last completed_stage)
             expected_stage = sequences[idx + 1]
         except (ValueError, IndexError):
             st.success("🎉 All stages completed")
