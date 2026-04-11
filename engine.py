@@ -90,23 +90,6 @@ def run_engine(conn, cur):
         current_stage = current_row["stage"]
         current_seq = current_row["seq"]
 
-        # ================= ES / EF CALCULATION =================
-        es = start_date
-        ef = start_date
-
-        for _, row in activity_df.iterrows():
-            duration = row["days"]
-
-            if row["seq"] == 1:
-                es = start_date
-                ef = es + timedelta(days=duration)
-            else:
-                es = ef
-                ef = es + timedelta(days=duration)
-
-            if row["seq"] == current_seq:
-                break
-
         # ================= PROGRESS =================
         completed_days = activity_df[activity_df["seq"] <= current_seq]["days"].sum()
         remaining_days = activity_df[activity_df["seq"] > current_seq]["days"].sum()
@@ -118,7 +101,8 @@ def run_engine(conn, cur):
 
         performance = actual_elapsed / completed_days if completed_days > 0 else 1
 
-        predicted_finish = today + timedelta(days=int(remaining_days * performance))
+        # ✅ FIXED LOGIC
+        predicted_finish = start_date + timedelta(days=int(total_duration * performance))
         expected_finish = start_date + timedelta(days=TARGET_DAYS)
 
         delay = (predicted_finish - expected_finish).days
@@ -155,8 +139,7 @@ def run_engine(conn, cur):
             "Progress %": round(progress, 1),
             "Planned %": round(planned_progress, 1),
             "Delay": delay,
-            "ES": es.date(),
-            "EF": ef.date(),
+            "Expected Finish": expected_finish.date(),
             "Predicted Finish": predicted_finish.date(),
             "Priority": priority_score
         })
