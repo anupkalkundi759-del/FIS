@@ -70,14 +70,19 @@ def run_engine(conn, cur):
         progress = (completed_days / total_duration) * 100 if total_duration else 0
 
         # ===== PLAN VS ACTUAL =====
-        actual_elapsed = (today - start_date).days
+        actual_elapsed = max(1, (today - start_date).days)  # avoid zero
         planned_progress = (actual_elapsed / TARGET_DAYS) * 100
 
-        # ===== FORECAST =====
-        performance = actual_elapsed / completed_days if completed_days > 0 else 1
-        predicted_finish = today + timedelta(days=int(remaining_days * performance))
+        # ===== FORECAST (FIXED) =====
+        if completed_days > 0:
+            performance = actual_elapsed / completed_days
+            performance = max(1, performance)  # 🔥 prevent unrealistic fast prediction
+        else:
+            performance = 1
 
+        predicted_finish = today + timedelta(days=int(remaining_days * performance))
         expected_finish = start_date + timedelta(days=TARGET_DAYS)
+
         delay = (predicted_finish - expected_finish).days
 
         # ===== ALERT =====
@@ -88,30 +93,31 @@ def run_engine(conn, cur):
         else:
             alert = "🟢 On Track"
 
-        # ================= STAGE-WISE ANALYSIS =================
+        # ================= STAGE-WISE ANALYSIS (FIXED) =================
         house_df = house_df.reset_index(drop=True)
 
         for i in range(len(house_df) - 1):
-            current_stage_name = house_df.loc[i, "stage"]
+            stage_name = house_df.loc[i, "stage"]
             start_time = house_df.loc[i, "time"]
             next_time = house_df.loc[i + 1, "time"]
 
             actual_duration = (next_time - start_time).days
 
-            planned_row = activity_df[activity_df["stage"] == current_stage_name]
+            # 🔥 skip invalid / zero durations
+            if actual_duration <= 0:
+                continue
+
+            planned_row = activity_df[activity_df["stage"] == stage_name]
             planned_duration = planned_row["days"].values[0] if not planned_row.empty else 0
 
             delay_stage = actual_duration - planned_duration
 
-            idle_time = 0  # if gaps exist later, can enhance
-
             stage_analysis.append({
                 "House": house,
-                "Stage": current_stage_name,
+                "Stage": stage_name,
                 "Planned Days": planned_duration,
                 "Actual Days": actual_duration,
-                "Delay": delay_stage,
-                "Idle Time": idle_time
+                "Delay": delay_stage
             })
 
         # ===== PRIORITY =====
@@ -131,9 +137,9 @@ def run_engine(conn, cur):
     result_df = pd.DataFrame(results)
     stage_df = pd.DataFrame(stage_analysis)
 
-    # ================= WOOD =================
+    # ================= WOOD (MANUAL INPUT SYSTEM) =================
     cur.execute("""
-        SELECT total_stock FROM wood_inventory 
+        SELECT total_stock FROM wood_inventory
         ORDER BY id DESC LIMIT 1
     """)
     stock = cur.fetchone()
@@ -161,11 +167,10 @@ def run_engine(conn, cur):
     )
 
     # ================= STAGE ANALYSIS =================
-    st.subheader("⏱ Stage-wise Delay Analysis")
-    st.dataframe(stage_df, use_container_width=True)
-
-    # ================= BOTTLENECK =================
     if not stage_df.empty:
+        st.subheader("⏱ Stage-wise Delay Analysis")
+        st.dataframe(stage_df, use_container_width=True)
+
         bottleneck = (
             stage_df.groupby("Stage")["Actual Days"]
             .mean()
