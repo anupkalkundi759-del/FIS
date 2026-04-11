@@ -151,11 +151,3 @@ def show_dashboard(conn, cur):
     ])
 
     st.dataframe(stage_df, use_container_width=True)
-
-    # ================= BOTTLENECK =================
-    st.subheader("🔥 Bottleneck Stage")
-
-    if not stage_df.empty:
-        bottleneck = stage_df.sort_values(by="No. of Products", ascending=False).iloc[0]
-
-        st.error(f"⚠️ Highest Load Stage: {bottleneck['Stage']} ({bottleneck['No. of Products']} products)")
