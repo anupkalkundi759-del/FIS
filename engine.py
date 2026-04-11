@@ -23,35 +23,6 @@ def run_engine(conn, cur):
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     total_duration = activity_df["days"].sum()
 
-    # ================= WOOD INPUT =================
-    st.subheader("🪵 Wood Input")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        stock_input = st.number_input("Total Wood Stock", min_value=0, step=1)
-        if st.button("Update Stock"):
-            cur.execute("INSERT INTO wood_inventory (total_stock) VALUES (%s)", (stock_input,))
-            conn.commit()
-            st.success("Stock Updated")
-            st.rerun()
-
-    with col2:
-        house_input = st.text_input("House No")
-        consumption_input = st.number_input("Consumption", min_value=0, step=1)
-
-        if st.button("Add Consumption"):
-            if house_input:
-                cur.execute("""
-                    INSERT INTO wood_consumption (house_no, consumption)
-                    VALUES (%s, %s)
-                """, (house_input, consumption_input))
-                conn.commit()
-                st.success("Consumption Added")
-                st.rerun()
-            else:
-                st.warning("Enter House No")
-
     # ================= LOAD TRACKING =================
     cur.execute("""
         SELECT 
@@ -90,6 +61,24 @@ def run_engine(conn, cur):
         current_stage = current_row["stage"]
         current_seq = current_row["seq"]
 
+        # ===== ES / EF =====
+        es = start_date
+        ef = start_date
+
+        for _, row in activity_df.iterrows():
+            duration = row["days"]
+
+            if row["seq"] == 1:
+                es = start_date
+                ef = es + timedelta(days=duration)
+            else:
+                es = ef
+                ef = es + timedelta(days=duration)
+
+            if row["seq"] == current_seq:
+                break
+
+        # ===== PROGRESS =====
         completed_days = activity_df[activity_df["seq"] <= current_seq]["days"].sum()
         remaining_days = activity_df[activity_df["seq"] > current_seq]["days"].sum()
 
@@ -105,6 +94,7 @@ def run_engine(conn, cur):
 
         delay = (predicted_finish - expected_finish).days
 
+        # ===== EARLY WARNING =====
         if progress < planned_progress:
             early_warnings.append({
                 "House": house,
@@ -112,6 +102,7 @@ def run_engine(conn, cur):
                 "Actual %": round(progress,1)
             })
 
+        # ===== STAGE ANALYSIS =====
         house_df = house_df.reset_index(drop=True)
 
         for i in range(len(house_df) - 1):
@@ -120,11 +111,6 @@ def run_engine(conn, cur):
             next_time = house_df.loc[i + 1, "time"]
 
             actual_duration = (next_time - start_time).days
-
-            planned_row = activity_df[activity_df["stage"] == stage_name]
-            planned_duration = planned_row["days"].values[0] if not planned_row.empty else 0
-
-            delay_stage = actual_duration - planned_duration
 
             stage_analysis.append({
                 "Stage": stage_name,
@@ -139,6 +125,9 @@ def run_engine(conn, cur):
             "Progress %": round(progress, 1),
             "Planned %": round(planned_progress, 1),
             "Delay": delay,
+            "ES": es.date(),
+            "EF": ef.date(),
+            "Predicted Finish": predicted_finish.date(),
             "Priority": priority_score
         })
 
@@ -146,36 +135,40 @@ def run_engine(conn, cur):
     stage_df = pd.DataFrame(stage_analysis)
     early_df = pd.DataFrame(early_warnings)
 
+    # ================= FLOW METRICS =================
+    st.markdown("## 📊 Flow Metrics")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("📦 Stage Load (WIP)")
+        stage_load = df["stage"].value_counts()
+        st.bar_chart(stage_load)
+
+    with col2:
+        st.subheader("⚡ Bottleneck")
+        if not stage_df.empty:
+            bottleneck = stage_df.groupby("Stage")["Actual Days"].mean().sort_values(ascending=False)
+            st.bar_chart(bottleneck)
+
+    # ================= THROUGHPUT =================
+    st.subheader("🚀 Throughput (Last 7 Days)")
+
+    last_week = df[df["time"] >= today - timedelta(days=7)]
+    throughput = last_week.groupby(last_week["time"].dt.date)["house"].nunique()
+
+    if not throughput.empty:
+        st.line_chart(throughput)
+    else:
+        st.info("Not enough recent data")
+
     # ================= KPI =================
-    total_houses = len(result_df)
-    delayed = len(result_df[result_df["Delay"] > 0])
-
-    st.subheader("📊 Overview")
+    st.markdown("## 📊 Overview")
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total Houses", total_houses)
-    col2.metric("Delayed Houses", delayed)
+    col1.metric("Total Houses", len(result_df))
+    col2.metric("Delayed Houses", len(result_df[result_df["Delay"] > 0]))
     col3.metric("Avg Progress", round(result_df["Progress %"].mean(),1))
-
-    # ================= WOOD =================
-    cur.execute("SELECT total_stock FROM wood_inventory ORDER BY id DESC LIMIT 1")
-    stock = cur.fetchone()
-    total_stock = stock[0] if stock else 0
-
-    cur.execute("SELECT SUM(consumption) FROM wood_consumption")
-    used = cur.fetchone()[0] or 0
-
-    remaining = total_stock - used
-
-    st.subheader("📦 Wood Status")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total", total_stock)
-    col2.metric("Used", used)
-    col3.metric("Remaining", remaining)
-
-    # ================= GRAPH: PROGRESS =================
-    st.subheader("📈 Progress vs Planned")
-    st.line_chart(result_df[["Progress %", "Planned %"]])
 
     # ================= EARLY WARNING =================
     st.subheader("🚨 Early Warnings")
@@ -183,18 +176,11 @@ def run_engine(conn, cur):
     if early_df.empty:
         st.success("All houses on track")
     else:
-        st.dataframe(early_df)
+        st.dataframe(early_df, use_container_width=True)
 
     # ================= PRIORITY =================
     st.subheader("🚨 Priority Houses")
     st.dataframe(result_df.sort_values("Priority", ascending=False).head(5))
-
-    # ================= BOTTLENECK =================
-    st.subheader("🔥 Bottleneck Stages")
-
-    if not stage_df.empty:
-        bottleneck = stage_df.groupby("Stage")["Actual Days"].mean().sort_values(ascending=False)
-        st.bar_chart(bottleneck)
 
     # ================= MAIN TABLE =================
     st.subheader("🏠 House Intelligence")
