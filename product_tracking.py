@@ -5,7 +5,7 @@ def show_product_tracking(conn, cur):
     st.title("🔎 Product Tracking")
 
     # ================= FILTERS =================
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     cur.execute("SELECT DISTINCT project_name FROM projects")
     projects = ["All"] + [p[0] for p in cur.fetchall()]
@@ -16,10 +16,18 @@ def show_product_tracking(conn, cur):
     cur.execute("SELECT DISTINCT house_no FROM houses")
     houses = ["All"] + [h[0] for h in cur.fetchall()]
 
+    cur.execute("SELECT DISTINCT stage_name FROM stages")
+    stages = ["All"] + [s[0] for s in cur.fetchall()]
+
+    statuses = ["All", "Not Started", "In Progress", "Completed"]
+
     selected_project = col1.selectbox("Project", projects)
     selected_unit = col2.selectbox("Unit", units)
     selected_house = col3.selectbox("House", houses)
-    search = col4.text_input("Search Product")
+    selected_stage = col4.selectbox("Stage", stages)
+    selected_status = col5.selectbox("Status", statuses)
+
+    search = st.text_input("Search Product")
 
     # ================= QUERY =================
     query = """
@@ -68,6 +76,14 @@ def show_product_tracking(conn, cur):
         query += " AND h.house_no = %s"
         params.append(selected_house)
 
+    if selected_stage != "All":
+        query += " AND s.stage_name = %s"
+        params.append(selected_stage)
+
+    if selected_status != "All":
+        query += " AND t.status = %s"
+        params.append(selected_status)
+
     if search:
         query += " AND pm.product_code ILIKE %s"
         params.append(f"%{search}%")
@@ -90,22 +106,40 @@ def show_product_tracking(conn, cur):
 
     # ================= TIME FIX =================
     df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce")
-
-    try:
-        df["Date & Time"] = df["Date & Time"].dt.tz_convert("Asia/Kolkata")
-    except:
-        df["Date & Time"] = df["Date & Time"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
-
-    df["Date & Time"] = df["Date & Time"].astype(str).replace("NaT", "-")
-
+    df["Date & Time"] = df["Date & Time"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+    df["Date & Time"] = df["Date & Time"].dt.strftime("%d-%m-%Y %H:%M")
     df = df.drop(columns=["Timestamp"])
 
-    # ================= PROGRESS =================
-    df["Progress %"] = df["Status"].map({
-        "Not Started": 0,
-        "In Progress": 50,
-        "Completed": 100
-    }).fillna(0)
+    # ================= PROGRESS LOGIC =================
+    stage_order = {
+        "Measurement": 1,
+        "Cutting": 2,
+        "Production": 3,
+        "Pre Assembly": 4,
+        "Polishing": 5,
+        "Final Assembly": 6,
+        "Dispatch": 7
+    }
+
+    TOTAL_STAGES = len(stage_order)
+
+    def calculate_progress(row):
+        stage = row["Stage"]
+        status = row["Status"]
+
+        if stage not in stage_order:
+            return 0
+
+        base = (stage_order[stage] - 1) / TOTAL_STAGES * 100
+
+        if status == "Completed":
+            return round((stage_order[stage] / TOTAL_STAGES) * 100, 1)
+        elif status == "In Progress":
+            return round(base + (100 / TOTAL_STAGES) * 0.5, 1)
+        else:
+            return round(base, 1)
+
+    df["Progress %"] = df.apply(calculate_progress, axis=1)
 
     # ================= DISPLAY =================
     st.dataframe(df, use_container_width=True)
