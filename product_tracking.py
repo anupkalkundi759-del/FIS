@@ -7,26 +7,53 @@ def show_product_tracking(conn, cur):
     # ================= FILTERS =================
     col1, col2, col3, col4, col5 = st.columns(5)
 
-    cur.execute("SELECT DISTINCT project_name FROM projects")
+    # -------- PROJECT --------
+    cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
     projects = ["All"] + [p[0] for p in cur.fetchall()]
-
-    cur.execute("SELECT DISTINCT unit_name FROM units")
-    units = ["All"] + [u[0] for u in cur.fetchall()]
-
-    cur.execute("SELECT DISTINCT house_no FROM houses")
-    houses = ["All"] + [h[0] for h in cur.fetchall()]
-
-    cur.execute("SELECT DISTINCT stage_name FROM stages")
-    stages = ["All"] + [s[0] for s in cur.fetchall()]
-
-    statuses = ["All", "Not Started", "In Progress", "Completed"]
-
     selected_project = col1.selectbox("Project", projects)
+
+    # -------- UNIT (depends on project) --------
+    if selected_project == "All":
+        cur.execute("SELECT DISTINCT unit_name FROM units ORDER BY unit_name")
+        units = ["All"] + [u[0] for u in cur.fetchall()]
+    else:
+        cur.execute("""
+            SELECT DISTINCT u.unit_name
+            FROM units u
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s
+            ORDER BY u.unit_name
+        """, (selected_project,))
+        units = ["All"] + [u[0] for u in cur.fetchall()]
+
     selected_unit = col2.selectbox("Unit", units)
+
+    # -------- HOUSE (depends on unit) --------
+    if selected_unit == "All":
+        cur.execute("SELECT DISTINCT house_no FROM houses ORDER BY house_no")
+        houses = ["All"] + [h[0] for h in cur.fetchall()]
+    else:
+        cur.execute("""
+            SELECT DISTINCT h.house_no
+            FROM houses h
+            JOIN units u ON h.unit_id = u.unit_id
+            WHERE u.unit_name = %s
+            ORDER BY h.house_no
+        """, (selected_unit,))
+        houses = ["All"] + [h[0] for h in cur.fetchall()]
+
     selected_house = col3.selectbox("House", houses)
+
+    # -------- STAGE --------
+    cur.execute("SELECT DISTINCT stage_name FROM stages ORDER BY stage_name")
+    stages = ["All"] + [s[0] for s in cur.fetchall()]
     selected_stage = col4.selectbox("Stage", stages)
+
+    # -------- STATUS --------
+    statuses = ["All", "Not Started", "In Progress", "Completed"]
     selected_status = col5.selectbox("Status", statuses)
 
+    # -------- SEARCH --------
     search = st.text_input("Search Product")
 
     # ================= QUERY =================
@@ -110,7 +137,7 @@ def show_product_tracking(conn, cur):
     df["Date & Time"] = df["Date & Time"].dt.strftime("%d-%m-%Y %H:%M")
     df = df.drop(columns=["Timestamp"])
 
-    # ================= PROGRESS LOGIC =================
+    # ================= PROGRESS =================
     stage_order = {
         "Measurement": 1,
         "Cutting": 2,
