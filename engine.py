@@ -22,6 +22,9 @@ def run_engine(conn, cur):
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     activity_df = activity_df.sort_values("seq").reset_index(drop=True)
 
+    # 🔥 FORCE INT (CRITICAL FIX)
+    activity_df["days"] = activity_df["days"].astype(int)
+
     # ================= FORWARD PASS =================
     activity_df["ES"] = 0
     activity_df["EF"] = 0
@@ -30,11 +33,12 @@ def run_engine(conn, cur):
         if i == 0:
             activity_df.loc[i, "ES"] = 0
         else:
-            activity_df.loc[i, "ES"] = activity_df.loc[i-1, "EF"]
+            activity_df.loc[i, "ES"] = int(activity_df.loc[i-1, "EF"])
 
-        activity_df.loc[i, "EF"] = activity_df.loc[i, "ES"] + activity_df.loc[i, "days"]
+        activity_df.loc[i, "EF"] = int(activity_df.loc[i, "ES"] + activity_df.loc[i, "days"])
 
-    project_duration = activity_df["EF"].max()
+    project_duration = int(activity_df["EF"].max())
+    total_duration = int(activity_df["days"].sum())
 
     # ================= BACKWARD PASS =================
     activity_df["LF"] = project_duration
@@ -44,21 +48,20 @@ def run_engine(conn, cur):
         if i == len(activity_df) - 1:
             activity_df.loc[i, "LF"] = project_duration
         else:
-            activity_df.loc[i, "LF"] = activity_df.loc[i+1, "LS"]
+            activity_df.loc[i, "LF"] = int(activity_df.loc[i+1, "LS"])
 
-        activity_df.loc[i, "LS"] = activity_df.loc[i, "LF"] - activity_df.loc[i, "days"]
+        activity_df.loc[i, "LS"] = int(activity_df.loc[i, "LF"] - activity_df.loc[i, "days"])
 
     activity_df["Float"] = activity_df["LS"] - activity_df["ES"]
-
-    total_duration = activity_df["days"].sum()
 
     # ================= WOOD =================
     cur.execute("SELECT total_stock FROM wood_inventory ORDER BY id DESC LIMIT 1")
     stock = cur.fetchone()
-    total_stock = stock[0] if stock else 0
+    total_stock = int(stock[0]) if stock else 0
 
     cur.execute("SELECT SUM(consumption) FROM wood_consumption")
     used = cur.fetchone()[0] or 0
+    used = int(used)
 
     remaining_stock = total_stock - used
 
@@ -83,7 +86,7 @@ def run_engine(conn, cur):
         return
 
     df = pd.DataFrame(data, columns=["house", "stage", "time", "seq"])
-    df["time"] = pd.to_datetime(df["time"])
+    df["time"] = pd.to_datetime(df["time"], errors="coerce")
 
     results = []
     stage_analysis = []
@@ -94,23 +97,26 @@ def run_engine(conn, cur):
 
         house_df = df[df["house"] == house].sort_values("seq").reset_index(drop=True)
 
+        if house_df.empty:
+            continue
+
         start_date = house_df["time"].min()
         current_row = house_df.iloc[-1]
 
         current_stage = current_row["stage"]
-        current_seq = current_row["seq"]
+        current_seq = int(current_row["seq"])
 
-        # ================= REAL PROGRESS =================
+        # ================= PROGRESS =================
         completed_days = activity_df[activity_df["seq"] < current_seq]["days"].sum()
 
-        current_stage_days = activity_df[activity_df["seq"] == current_seq]["days"].values
-        current_stage_days = current_stage_days[0] if len(current_stage_days) else 0
+        current_stage_days = activity_df[activity_df["seq"] == current_seq]["days"]
+        current_stage_days = int(current_stage_days.values[0]) if not current_stage_days.empty else 0
 
         current_stage_start = current_row["time"]
         days_in_stage = max(0, (today - current_stage_start).days)
 
-        partial_progress = min(days_in_stage / current_stage_days, 1) if current_stage_days else 0
-        completed_days += current_stage_days * partial_progress
+        partial_progress = min(days_in_stage / current_stage_days, 1) if current_stage_days > 0 else 0
+        completed_days += int(current_stage_days * partial_progress)
 
         progress = (completed_days / total_duration) * 100 if total_duration else 0
 
@@ -120,14 +126,12 @@ def run_engine(conn, cur):
         planned_progress = (planned_days / total_duration) * 100
 
         # ================= PRODUCTIVITY =================
-        if completed_days > 0:
-            productivity_rate = actual_elapsed / completed_days
-        else:
-            productivity_rate = 1
+        productivity_rate = actual_elapsed / completed_days if completed_days > 0 else 1
 
         remaining_days = total_duration - completed_days
         predicted_finish = today + timedelta(days=int(remaining_days * productivity_rate))
-        expected_finish = start_date + timedelta(days=total_duration)
+
+        expected_finish = start_date + timedelta(days=int(total_duration))
 
         delay = (predicted_finish - expected_finish).days
 
@@ -136,23 +140,24 @@ def run_engine(conn, cur):
 
         for _, row in activity_df.iterrows():
             stage_name = row["stage"]
-            planned_finish = start_date + timedelta(days=row["EF"])
+            planned_finish = start_date + timedelta(days=int(row["EF"]))
 
             actual_stage = house_df[house_df["stage"] == stage_name]
 
             if not actual_stage.empty:
                 actual_time = actual_stage.iloc[-1]["time"]
 
-                if actual_time > planned_finish:
+                if pd.notna(actual_time) and actual_time > planned_finish:
                     critical_delay += (actual_time - planned_finish).days
 
-        # ================= BLOCKED DETECTION =================
-        days_since_update = (today - current_row["time"]).days
-        if days_since_update > 3:
-            early_warnings.append({
-                "House": house,
-                "Issue": f"Blocked at {current_stage}"
-            })
+        # ================= BLOCKED =================
+        if pd.notna(current_row["time"]):
+            days_since_update = (today - current_row["time"]).days
+            if days_since_update > 3:
+                early_warnings.append({
+                    "House": house,
+                    "Issue": f"Blocked at {current_stage}"
+                })
 
         # ================= STAGE ANALYSIS =================
         for i in range(len(house_df) - 1):
@@ -160,24 +165,22 @@ def run_engine(conn, cur):
             start_time = house_df.loc[i, "time"]
             next_time = house_df.loc[i + 1, "time"]
 
-            actual_duration = (next_time - start_time).days
+            if pd.notna(start_time) and pd.notna(next_time):
+                actual_duration = (next_time - start_time).days
 
-            planned_days = activity_df[activity_df["stage"] == stage_name]["days"].values
-            planned_days = planned_days[0] if len(planned_days) else 1
+                planned_days_stage = activity_df[activity_df["stage"] == stage_name]["days"]
+                planned_days_stage = int(planned_days_stage.values[0]) if not planned_days_stage.empty else 1
 
-            delay_stage = actual_duration - planned_days
+                delay_stage = actual_duration - planned_days_stage
 
-            stage_analysis.append({
-                "Stage": stage_name,
-                "Delay": delay_stage
-            })
+                stage_analysis.append({
+                    "Stage": stage_name,
+                    "Delay": delay_stage
+                })
 
-        # ================= RESOURCE CHECK =================
-        resource_flag = "OK"
-        if remaining_stock < 0:
-            resource_flag = "Shortage"
+        # ================= RESOURCE =================
+        resource_flag = "OK" if remaining_stock >= 0 else "Shortage"
 
-        # ================= PRIORITY =================
         priority_score = delay + remaining_days
 
         results.append({
@@ -207,6 +210,7 @@ def run_engine(conn, cur):
 
     # ================= WOOD =================
     st.subheader("📦 Wood Status")
+
     col1, col2, col3 = st.columns(3)
     col1.metric("Total", total_stock)
     col2.metric("Used", used)
@@ -214,9 +218,10 @@ def run_engine(conn, cur):
 
     # ================= GRAPH =================
     st.subheader("📈 Progress vs Planned")
-    st.line_chart(result_df[["Progress %", "Planned %"]])
+    if not result_df.empty:
+        st.line_chart(result_df[["Progress %", "Planned %"]])
 
-    # ================= EARLY WARNING =================
+    # ================= WARNINGS =================
     st.subheader("🚨 Early Warnings")
     if early_df.empty:
         st.success("All houses on track")
@@ -225,7 +230,8 @@ def run_engine(conn, cur):
 
     # ================= PRIORITY =================
     st.subheader("🚨 Priority Houses")
-    st.dataframe(result_df.sort_values("Priority", ascending=False).head(5))
+    if not result_df.empty:
+        st.dataframe(result_df.sort_values("Priority", ascending=False).head(5))
 
     # ================= BOTTLENECK =================
     st.subheader("🔥 Bottleneck Stages")
@@ -233,6 +239,6 @@ def run_engine(conn, cur):
         bottleneck = stage_df.groupby("Stage")["Delay"].mean().sort_values(ascending=False)
         st.bar_chart(bottleneck)
 
-    # ================= FINAL TABLE =================
+    # ================= FINAL =================
     st.subheader("🏠 House Intelligence")
     st.dataframe(result_df, use_container_width=True)
