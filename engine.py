@@ -7,7 +7,7 @@ def run_engine(conn, cur):
 
     today = datetime.now()
 
-    # ================= AUTO CREATE CONFIG TABLE =================
+    # ================= CONFIG TABLE =================
     cur.execute("""
         CREATE TABLE IF NOT EXISTS house_config (
             house_no TEXT PRIMARY KEY,
@@ -68,7 +68,6 @@ def run_engine(conn, cur):
         """, (selected_house, urgency, sla_date))
         conn.commit()
         st.success("Saved")
-        st.rerun()
 
     # ================= LOAD CONFIG =================
     cur.execute("SELECT house_no, urgency, sla_date FROM house_config")
@@ -147,15 +146,12 @@ def run_engine(conn, cur):
 
         house_products = prod_df[prod_df["house"] == house]
 
-        # ✅ PROGRESS
         house_progress = house_products["progress"].mean()
 
-        # ✅ TRUE STAGE (MIN)
         min_row = house_products.loc[house_products["seq"].idxmin()]
         current_stage = min_row["stage"]
         current_time = min_row["time"]
 
-        # ✅ START DATE = MEASUREMENT
         measurement_rows = df[(df["house"] == house) & (df["stage"] == "Measurement")]
 
         if not measurement_rows.empty:
@@ -183,7 +179,6 @@ def run_engine(conn, cur):
 
                 delay_stage = actual_days - planned_days
 
-                # collect for bottleneck
                 stage_analysis.append({
                     "Stage": house_df.loc[i, "stage"],
                     "Delay": delay_stage
@@ -207,35 +202,50 @@ def run_engine(conn, cur):
 
         urgency_label_display = [k for k, v in urgency_map_ui.items() if v == urgency_val][0]
 
-        # ================= PREDICTION =================
-        remaining_days = total_duration * (1 - house_progress / 100)
-
-        predicted_finish = today + timedelta(days=int(remaining_days * productivity_rate))
-
+        # ================= EXPECTED FINISH =================
         if sla_date:
             expected_finish = pd.to_datetime(sla_date)
         else:
             expected_finish = start_date + timedelta(days=int(total_duration))
 
-        delay = (predicted_finish - expected_finish).days
+        # ================= PREDICTION =================
+        if house_progress < 5:
+            predicted_finish = None
+            delay = None
+        else:
+            remaining_days = total_duration * (1 - house_progress / 100)
+            predicted_finish = today + timedelta(days=int(remaining_days * productivity_rate))
+            delay = (predicted_finish - expected_finish).days
+
+        # ================= DELAY DISPLAY =================
+        if house_progress < 5:
+            delay_display = "Not started"
+        elif delay < 0:
+            delay_display = f"Ahead by {abs(delay)} days"
+        elif delay == 0:
+            delay_display = "On time"
+        else:
+            delay_display = f"Delayed by {delay} days"
 
         # ================= PRIORITY =================
-        days_to_sla = (expected_finish - today).days if sla_date else 30
+        days_to_sla = (expected_finish - today).days
+
+        delay_factor = max(0, delay) if delay is not None else 0
 
         priority_score = (
-            (delay * 3) +
+            (delay_factor * 3) +
             (100 - house_progress) +
             (urgency_val * 15) -
             days_to_sla
         )
 
         # ================= REASON =================
-        if delay > 0:
+        if house_progress < 5:
+            reason = "Not started"
+        elif delay is not None and delay > 0:
             reason = "Delayed project"
         elif days_to_sla < 7:
             reason = "Approaching SLA"
-        elif house_progress < 10:
-            reason = "Not started"
         elif house_progress < 40:
             reason = "Slow progress"
         elif urgency_val >= 2:
@@ -255,13 +265,14 @@ def run_engine(conn, cur):
                 "Issue": f"Delay in {current_stage}"
             })
 
+        # ================= RESULTS =================
         results.append({
             "House": house,
             "Stage": current_stage,
             "Progress %": round(house_progress, 1),
-            "Delay": delay,
+            "Delay": delay_display,
             "SLA": expected_finish.date(),
-            "Predicted Finish": predicted_finish.date(),
+            "Predicted Finish": predicted_finish.date() if predicted_finish else "N/A",
             "Urgency": urgency_label_display,
             "Priority Score": round(priority_score, 1),
             "Priority": priority_color(priority_score),
@@ -274,7 +285,7 @@ def run_engine(conn, cur):
     st.subheader("📊 Overview")
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Houses", len(result_df))
-    col2.metric("Delayed Houses", len(result_df[result_df["Delay"] > 0]))
+    col2.metric("Delayed Houses", len(result_df[result_df["Delay"].str.contains("Delayed", na=False)]))
     col3.metric("Avg Progress", round(result_df["Progress %"].mean(), 1))
 
     # ================= PRIORITY =================
@@ -286,24 +297,19 @@ def run_engine(conn, cur):
     if early_warnings:
         st.dataframe(pd.DataFrame(early_warnings))
     else:
-        st.success("All houses on track")
+        st.success("No bottlenecks - all stages performing within plan")
 
-    # ================= BOTTLENECK (FINAL FIX) =================
+    # ================= BOTTLENECK =================
     stage_df = pd.DataFrame(stage_analysis)
-
-    major_bottleneck = None
 
     if not stage_df.empty:
         bottleneck_df = stage_df.groupby("Stage")["Delay"].mean()
-        bottleneck_df = bottleneck_df[bottleneck_df > 0]  # only real delays
+        bottleneck_df = bottleneck_df[bottleneck_df > 0]
 
         if not bottleneck_df.empty:
-            major_bottleneck = bottleneck_df.idxmax()
-
-    if major_bottleneck:
-        st.error(f"🚨 Major Bottleneck: {major_bottleneck}")
-    else:
-        st.success("✅ No bottlenecks - all stages performing within plan")
+            st.error(f"🚨 Major Bottleneck: {bottleneck_df.idxmax()}")
+        else:
+            st.success("No bottlenecks - all stages performing within plan")
 
     # ================= FINAL =================
     st.subheader("🏠 House Intelligence")
