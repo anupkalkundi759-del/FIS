@@ -10,20 +10,19 @@ from upload import show_upload
 from delete import show_delete
 
 # ================= SESSION =================
-if "page" not in st.session_state:
-    st.session_state.page = "Tracking"
-
-# ================= HANDLE NAV CLICK =================
-query_params = st.query_params
-if "page" in query_params:
-    st.session_state.page = query_params["page"]
-
-# ================= LOGIN =================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+
 if "role" not in st.session_state:
     st.session_state.role = None
 
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+
+if "page" not in st.session_state:
+    st.session_state.page = "Tracking"
+
+# ================= LOGIN =================
 def login():
     st.title("🔐 Login")
 
@@ -39,9 +38,13 @@ def login():
         if u in users and users[u]["password"] == p:
             st.session_state.logged_in = True
             st.session_state.role = users[u]["role"]
+            st.session_state.auth = True
             st.rerun()
         else:
             st.error("Invalid credentials")
+
+if st.session_state.get("auth"):
+    st.session_state.logged_in = True
 
 if not st.session_state.logged_in:
     login()
@@ -61,51 +64,80 @@ except:
     st.error("DB error")
     st.stop()
 
-# ================= SIDEBAR (ZERO GAP HTML) =================
+# ================= CSS (MAX GAP REDUCTION) =================
+st.markdown("""
+<style>
+
+/* Sidebar color */
+[data-testid="stSidebar"] {
+    background-color: #1f4e79;
+}
+
+/* Remove container spacing */
+[data-testid="stSidebar"] .block-container {
+    padding: 0.2rem 0.3rem !important;
+}
+
+/* Remove vertical spacing between elements */
+[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div {
+    margin-bottom: 0px !important;
+    padding: 0px !important;
+}
+
+/* Text color */
+[data-testid="stSidebar"] * {
+    color: white !important;
+}
+
+/* Button wrapper */
+[data-testid="stSidebar"] .stButton {
+    margin: 0 !important;
+}
+
+/* Button style */
+[data-testid="stSidebar"] .stButton button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 2px 4px !important;   /* 🔥 ultra tight */
+    margin: 0 !important;
+    font-size: 13px;
+    text-align: left;
+    height: auto;
+}
+
+/* Hover */
+[data-testid="stSidebar"] .stButton button:hover {
+    background: rgba(255,255,255,0.12) !important;
+}
+
+/* Active */
+.active button {
+    background: rgba(255,255,255,0.25) !important;
+    font-weight: 600;
+}
+
+/* Section titles */
+.sec {
+    font-size: 10px;
+    margin: 2px 0 !important;
+    opacity: 0.6;
+}
+
+/* Divider */
+[data-testid="stSidebar"] hr {
+    margin: 2px 0 !important;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+# ================= SIDEBAR =================
 with st.sidebar:
 
-    st.markdown("### 🏢 OperaFlow")
-    st.caption("Enterprise Suite")
-
+    st.markdown("**OperaFlow**")
+    st.markdown("<small style='opacity:0.7'>Enterprise Suite</small>", unsafe_allow_html=True)
     st.markdown(f"👤 {st.session_state.role.upper()}")
-
-    # ===== STYLE (TIGHT) =====
-    st.markdown("""
-    <style>
-    /* kill vertical gaps properly */
-    [data-testid="stSidebar"] .stButton {
-        margin-bottom: -6px !important;
-    }
-
-    /* button look */
-    [data-testid="stSidebar"] .stButton button {
-        padding: 4px 6px !important;
-        font-size: 13px;
-        text-align: left;
-        width: 100%;
-        background: transparent;
-        border: none;
-    }
-
-    /* hover */
-    [data-testid="stSidebar"] .stButton button:hover {
-        background: rgba(255,255,255,0.12);
-    }
-
-    /* active */
-    .active button {
-        background: rgba(255,255,255,0.25) !important;
-        font-weight: 600;
-    }
-
-    /* section titles */
-    .sec {
-        font-size: 10px;
-        margin: 4px 0 0 0;
-        opacity: 0.6;
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
     def nav(label, page):
         if st.session_state.page == page:
@@ -119,7 +151,6 @@ with st.sidebar:
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ===== NAV =====
     st.markdown('<div class="sec">OPERATIONS</div>', unsafe_allow_html=True)
     nav("📍 Tracking", "Tracking")
     nav("📦 Product Tracking", "Product Tracking")
