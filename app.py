@@ -1,5 +1,6 @@
 import streamlit as st
 import psycopg2
+import streamlit_authenticator as stauth
 
 from tracking import show_tracking
 from dashboard import show_dashboard
@@ -9,46 +10,35 @@ from engine import run_engine
 from upload import show_upload
 from delete import show_delete
 
-# ================= SESSION INIT =================
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+# ================= AUTH SETUP =================
+names = ["Worker", "Admin"]
+usernames = ["worker", "admin"]
+passwords = ["123", "admin@123"]
 
-if "role" not in st.session_state:
-    st.session_state.role = None
+hashed_passwords = stauth.Hasher(passwords).generate()
 
-if "auth" not in st.session_state:
-    st.session_state.auth = False
+authenticator = stauth.Authenticate(
+    names,
+    usernames,
+    hashed_passwords,
+    "factory_app",
+    "abcdef123",
+    cookie_expiry_days=7
+)
 
 # ================= LOGIN =================
-def login():
-    st.title("🔐 Login")
+name, auth_status, username = authenticator.login("Login", "main")
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-
-        users = {
-            "worker": {"password": "123", "role": "worker"},
-            "admin": {"password": "admin@123", "role": "admin"}
-        }
-
-        if username in users and users[username]["password"] == password:
-            st.session_state.logged_in = True
-            st.session_state.role = users[username]["role"]
-            st.session_state.auth = True
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
-
-# 🔥 restore login (same session only)
-if st.session_state.get("auth", False):
-    st.session_state.logged_in = True
-
-# ================= LOGIN CHECK =================
-if not st.session_state.logged_in:
-    login()
+if auth_status == False:
+    st.error("Invalid credentials")
     st.stop()
+
+if auth_status is None:
+    st.warning("Enter login details")
+    st.stop()
+
+# ================= ROLE =================
+role = "admin" if username == "admin" else "worker"
 
 # ================= DB =================
 try:
@@ -60,38 +50,68 @@ try:
         password=st.secrets["DB_PASSWORD"]
     )
     cur = conn.cursor()
-except Exception as e:
-    st.error("❌ Database connection failed. Check secrets.")
+except:
+    st.error("Database connection failed")
     st.stop()
 
+# ================= SIDEBAR STYLE =================
+st.markdown("""
+<style>
+[data-testid="stSidebar"] {
+    background-color: #1f4e79;
+}
+[data-testid="stSidebar"] * {
+    color: white !important;
+}
+.section {
+    font-size: 12px;
+    margin-top: 15px;
+    opacity: 0.7;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ================= SIDEBAR =================
-st.sidebar.title("📂 Navigation")
+with st.sidebar:
 
-if st.session_state.role == "admin":
-    pages = {
-        "📍 Tracking": "Tracking",
-        "📦 Product Tracking": "Product Tracking",
-        "📊 Dashboard": "Dashboard",
-        "⚙️ Scheduling Engine": "Scheduling Engine",
-        "📤 Upload Excel": "Upload Excel",
-        "🗑 Delete Data": "Delete Data",
-        "📏 Measurement Update": "Measurement Update"
-    }
-else:
-    pages = {
-        "📍 Tracking": "Tracking",
-        "📦 Product Tracking": "Product Tracking"
-    }
+    st.markdown("### 🏢 OperaFlow")
+    st.caption("Enterprise Suite")
 
-page = st.sidebar.radio("", list(pages.keys()))
-selected_page = pages[page]
+    st.markdown("---")
+    st.markdown(f"**👤 {name}**")
+    st.caption(role.capitalize())
 
-# ================= LOGOUT =================
-if st.sidebar.button("🚪 Logout"):
-    st.session_state.logged_in = False
-    st.session_state.role = None
-    st.session_state.auth = False
-    st.rerun()
+    st.markdown("---")
+
+    # OPERATIONS
+    st.markdown('<div class="section">OPERATIONS</div>', unsafe_allow_html=True)
+    op_page = st.radio("", ["Tracking", "Product Tracking", "Dashboard"], key="op")
+
+    # MANAGEMENT (admin only)
+    if role == "admin":
+        st.markdown('<div class="section">MANAGEMENT</div>', unsafe_allow_html=True)
+        mgmt_page = st.radio("", [
+            "Scheduling Engine",
+            "Upload Excel",
+            "Measurement Update"
+        ], key="mgmt")
+
+        st.markdown('<div class="section">SYSTEM</div>', unsafe_allow_html=True)
+        sys_page = st.radio("", ["Delete Data"], key="sys")
+
+    st.markdown("---")
+
+    # LOGOUT (proper)
+    authenticator.logout("🚪 Logout", "sidebar")
+
+# ================= PAGE LOGIC =================
+selected_page = op_page
+
+if role == "admin":
+    if "mgmt_page" in st.session_state:
+        selected_page = st.session_state.get("mgmt", op_page)
+    if "sys_page" in st.session_state:
+        selected_page = st.session_state.get("sys", selected_page)
 
 # ================= MAIN =================
 st.title("🏭 Factory Intelligence System")
