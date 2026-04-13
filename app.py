@@ -18,7 +18,6 @@ if "logged_in" not in st.session_state:
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
-
 # ================= LOGIN =================
 def login():
     st.title("🔐 Login")
@@ -41,28 +40,24 @@ def login():
         else:
             st.error("Invalid credentials")
 
-
 # 🔥 restore login after refresh
 if st.session_state.get("auth", False):
     st.session_state.logged_in = True
-
 
 # ================= LOGIN CHECK =================
 if not st.session_state.logged_in:
     login()
     st.stop()
 
-
 # ================= DB =================
 conn = psycopg2.connect(
-    host="aws-1-ap-south-1.pooler.supabase.com",
-    port="6543",
-    database="postgres",
-    user="postgres.uigwsyjmcmmpsgshsxhc",
-    password=",6r+rZUqHGnWide"
+    host=st.secrets["DB_HOST"],
+    port=st.secrets["DB_PORT"],
+    database=st.secrets["DB_NAME"],
+    user=st.secrets["DB_USER"],
+    password=st.secrets["DB_PASSWORD"]
 )
 cur = conn.cursor()
-
 
 # ================= SIDEBAR (CLEAN + HIGHLIGHT) =================
 st.sidebar.title("📂 Navigation")
@@ -87,7 +82,6 @@ else:
 page = st.sidebar.radio("", list(pages.keys()))
 selected_page = pages[page]
 
-
 # ================= LOGOUT =================
 if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
@@ -95,10 +89,8 @@ if st.sidebar.button("🚪 Logout"):
     st.session_state.auth = False
     st.rerun()
 
-
 # ================= MAIN TITLE =================
 st.title("🏭 Factory Intelligence System")
-
 
 # ================= ROUTING =================
 if selected_page == "Tracking":
