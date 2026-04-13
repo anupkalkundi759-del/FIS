@@ -15,6 +15,7 @@ names = ["Worker", "Admin"]
 usernames = ["worker", "admin"]
 passwords = ["123", "admin@123"]
 
+# ⚠️ This works ONLY with version 0.2.2
 hashed_passwords = stauth.Hasher(passwords).generate()
 
 authenticator = stauth.Authenticate(
@@ -50,7 +51,7 @@ try:
         password=st.secrets["DB_PASSWORD"]
     )
     cur = conn.cursor()
-except:
+except Exception as e:
     st.error("Database connection failed")
     st.stop()
 
@@ -85,33 +86,36 @@ with st.sidebar:
 
     # OPERATIONS
     st.markdown('<div class="section">OPERATIONS</div>', unsafe_allow_html=True)
-    op_page = st.radio("", ["Tracking", "Product Tracking", "Dashboard"], key="op")
+    op_page = st.radio("", ["Tracking", "Product Tracking", "Dashboard"])
 
     # MANAGEMENT (admin only)
+    mgmt_page = None
+    sys_page = None
+
     if role == "admin":
         st.markdown('<div class="section">MANAGEMENT</div>', unsafe_allow_html=True)
         mgmt_page = st.radio("", [
             "Scheduling Engine",
             "Upload Excel",
             "Measurement Update"
-        ], key="mgmt")
+        ])
 
         st.markdown('<div class="section">SYSTEM</div>', unsafe_allow_html=True)
-        sys_page = st.radio("", ["Delete Data"], key="sys")
+        sys_page = st.radio("", ["Delete Data"])
 
     st.markdown("---")
 
-    # LOGOUT (proper)
+    # LOGOUT (persistent auth logout)
     authenticator.logout("🚪 Logout", "sidebar")
 
-# ================= PAGE LOGIC =================
+# ================= PAGE SELECTION =================
 selected_page = op_page
 
 if role == "admin":
-    if "mgmt_page" in st.session_state:
-        selected_page = st.session_state.get("mgmt", op_page)
-    if "sys_page" in st.session_state:
-        selected_page = st.session_state.get("sys", selected_page)
+    if mgmt_page:
+        selected_page = mgmt_page
+    if sys_page:
+        selected_page = sys_page
 
 # ================= MAIN =================
 st.title("🏭 Factory Intelligence System")
