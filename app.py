@@ -28,7 +28,7 @@ def login():
     if st.button("Login"):
 
         users = {
-            "worker": {"password": "123", "role": "shopfloor"},
+            "shopfloor": {"password": "123", "role": "shopfloor"},
             "admin": {"password": "admin@123", "role": "admin"}
         }
 
