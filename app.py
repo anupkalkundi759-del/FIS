@@ -67,68 +67,48 @@ except:
     st.error("❌ Database connection failed")
     st.stop()
 
-# ================= SIDEBAR CSS =================
+# ================= SIDEBAR STYLE =================
 st.markdown("""
 <style>
 
-/* Sidebar fixed */
+/* Sidebar color */
 [data-testid="stSidebar"] {
     background-color: #1f4e79;
-    height: 100vh;
-    overflow: hidden;
 }
 
-/* Text color */
+/* Text white */
 [data-testid="stSidebar"] * {
     color: white !important;
 }
 
-/* Layout */
-.sidebar-container {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-}
-
-/* Scroll only menu */
-.sidebar-menu {
-    flex-grow: 1;
-    overflow-y: auto;
-}
-
-/* Buttons */
-.nav-btn button {
+/* Remove default button style */
+[data-testid="stSidebar"] .stButton button {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
     width: 100%;
     text-align: left;
-    padding: 6px 10px;
+    padding: 8px 10px;
     border-radius: 6px;
-    border: none;
-    background: transparent;
-    font-size: 14px;
 }
 
 /* Hover */
-.nav-btn button:hover {
-    background-color: rgba(255,255,255,0.12);
+[data-testid="stSidebar"] .stButton button:hover {
+    background-color: rgba(255,255,255,0.15) !important;
 }
 
 /* Active */
-.active-btn button {
+.active-nav button {
     background-color: rgba(255,255,255,0.25) !important;
     font-weight: 600;
 }
 
-/* Section titles */
+/* Section title */
 .section-title {
     font-size: 11px;
     margin-top: 12px;
     margin-bottom: 4px;
     opacity: 0.7;
-}
-
-/* Bottom */
-.sidebar-bottom {
-    padding-top: 8px;
 }
 
 </style>
@@ -137,23 +117,19 @@ st.markdown("""
 # ================= SIDEBAR =================
 with st.sidebar:
 
-    st.markdown('<div class="sidebar-container">', unsafe_allow_html=True)
-
-    # TOP
     st.markdown("### 🏢 OperaFlow")
     st.caption("Enterprise Suite")
 
     st.markdown("---")
     st.markdown(f"👤 {st.session_state.role.upper()}")
 
-    # MENU
-    st.markdown('<div class="sidebar-menu">', unsafe_allow_html=True)
+    st.markdown("---")
 
     def nav_item(label, page):
         if st.session_state.page == page:
-            st.markdown('<div class="active-btn nav-btn">', unsafe_allow_html=True)
+            st.markdown('<div class="active-nav">', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="nav-btn">', unsafe_allow_html=True)
+            st.markdown('<div>', unsafe_allow_html=True)
 
         if st.button(label, key=page):
             st.session_state.page = page
@@ -177,18 +153,11 @@ with st.sidebar:
         st.markdown('<div class="section-title">SYSTEM</div>', unsafe_allow_html=True)
         nav_item("🗑 Delete Data", "Delete Data")
 
-    st.markdown('</div>', unsafe_allow_html=True)  # END MENU
-
-    # BOTTOM (FIXED)
-    st.markdown('<div class="sidebar-bottom">', unsafe_allow_html=True)
     st.markdown("---")
 
     if st.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
-
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
 # ================= MAIN =================
 st.title("🏭 Factory Intelligence System")
