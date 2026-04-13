@@ -83,11 +83,11 @@ with st.sidebar:
         "Navigation",
         [
             "Tracking",
-            "Product Tracking",
             "Dashboard",
+            "Product Tracking",
+            "Measurement Update",
             "Scheduling Engine",
             "Upload Excel",
-            "Measurement Update",
             "Delete Data"
         ]
     )
