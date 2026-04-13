@@ -19,6 +19,9 @@ if "role" not in st.session_state:
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
+if "page" not in st.session_state:
+    st.session_state.page = "Tracking"
+
 # ================= LOGIN =================
 def login():
     st.title("🔐 Login")
@@ -60,7 +63,7 @@ try:
         password=st.secrets["DB_PASSWORD"]
     )
     cur = conn.cursor()
-except Exception as e:
+except:
     st.error("❌ Database connection failed")
     st.stop()
 
@@ -79,20 +82,46 @@ st.markdown("""
     opacity: 0.7;
     font-weight: bold;
 }
+[data-testid="stSidebar"] .stButton button {
+    background-color: transparent;
+    color: white;
+    border: none;
+    text-align: left;
+    padding: 10px;
+    border-radius: 8px;
+    width: 100%;
+}
+[data-testid="stSidebar"] .stButton button:hover {
+    background-color: rgba(255,255,255,0.15);
+}
+[data-testid="stSidebar"] .stButton button:focus {
+    background-color: rgba(255,255,255,0.25);
+}
+.sidebar-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+.sidebar-top {
+    flex-grow: 1;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ================= SIDEBAR =================
 with st.sidebar:
 
-    # HEADER
+    st.markdown('<div class="sidebar-container">', unsafe_allow_html=True)
+
+    # TOP CONTENT
+    st.markdown('<div class="sidebar-top">', unsafe_allow_html=True)
+
     st.markdown("### 🏢 OperaFlow")
     st.caption("Enterprise Suite")
 
     st.markdown("---")
 
-    # USER INFO
-    st.markdown(f"**👤 {st.session_state.role.upper()}**")
+    st.markdown(f"👤 {st.session_state.role.upper()}")
 
     st.markdown("---")
 
@@ -100,21 +129,27 @@ with st.sidebar:
 
     # OPERATIONS
     st.markdown('<div class="section">OPERATIONS</div>', unsafe_allow_html=True)
+
     if st.button("📍 Tracking"):
         selected_page = "Tracking"
+
     if st.button("📦 Product Tracking"):
         selected_page = "Product Tracking"
+
     if st.button("📊 Dashboard"):
         selected_page = "Dashboard"
 
     # MANAGEMENT
     if st.session_state.role == "admin":
+
         st.markdown('<div class="section">MANAGEMENT</div>', unsafe_allow_html=True)
 
         if st.button("⚙️ Scheduling Engine"):
             selected_page = "Scheduling Engine"
+
         if st.button("📤 Upload Excel"):
             selected_page = "Upload Excel"
+
         if st.button("📏 Measurement Update"):
             selected_page = "Measurement Update"
 
@@ -123,17 +158,18 @@ with st.sidebar:
         if st.button("🗑 Delete Data"):
             selected_page = "Delete Data"
 
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # LOGOUT (BOTTOM)
     st.markdown("---")
 
-    # LOGOUT AT BOTTOM
     if st.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
 
-# ================= PAGE STATE FIX =================
-if "page" not in st.session_state:
-    st.session_state.page = "Tracking"
+    st.markdown('</div>', unsafe_allow_html=True)
 
+# ================= PAGE CONTROL =================
 if selected_page:
     st.session_state.page = selected_page
 
