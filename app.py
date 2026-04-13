@@ -67,75 +67,20 @@ except:
     st.error("❌ Database connection failed")
     st.stop()
 
-# ================= SIDEBAR CSS (FIXED) =================
+# ================= SIDEBAR STYLE =================
 st.markdown("""
 <style>
-
-/* Sidebar base */
 [data-testid="stSidebar"] {
     background-color: #1f4e79;
-    height: 100vh;
-    overflow: hidden;
 }
-
-/* Text color */
 [data-testid="stSidebar"] * {
     color: white !important;
 }
-
-/* Section titles */
-.section {
-    font-size: 12px;
-    margin-top: 18px;
-    opacity: 0.7;
-    font-weight: bold;
-}
-
-/* Buttons */
-[data-testid="stSidebar"] .stButton button {
-    background-color: transparent;
-    border: none;
-    text-align: left;
-    padding: 10px;
-    border-radius: 8px;
-    width: 100%;
-}
-[data-testid="stSidebar"] .stButton button:hover {
-    background-color: rgba(255,255,255,0.15);
-}
-[data-testid="stSidebar"] .stButton button:focus {
-    background-color: rgba(255,255,255,0.25);
-}
-
-/* Layout structure */
-.sidebar-container {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-}
-
-/* Scrollable area */
-.sidebar-top {
-    flex-grow: 1;
-    overflow-y: auto;
-    padding-right: 5px;
-}
-
-/* Bottom fixed */
-.sidebar-bottom {
-    padding-top: 10px;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
 # ================= SIDEBAR =================
 with st.sidebar:
-
-    st.markdown('<div class="sidebar-container">', unsafe_allow_html=True)
-
-    # ===== TOP (SCROLLABLE) =====
-    st.markdown('<div class="sidebar-top">', unsafe_allow_html=True)
 
     st.markdown("### 🏢 OperaFlow")
     st.caption("Enterprise Suite")
@@ -144,43 +89,25 @@ with st.sidebar:
     st.markdown(f"👤 {st.session_state.role.upper()}")
     st.markdown("---")
 
-    selected_page = None
+    # ===== MENU =====
+    menu = ["Tracking", "Product Tracking", "Dashboard"]
 
-    # OPERATIONS
-    st.markdown('<div class="section">OPERATIONS</div>', unsafe_allow_html=True)
-
-    if st.button("📍 Tracking"):
-        selected_page = "Tracking"
-
-    if st.button("📦 Product Tracking"):
-        selected_page = "Product Tracking"
-
-    if st.button("📊 Dashboard"):
-        selected_page = "Dashboard"
-
-    # MANAGEMENT
     if st.session_state.role == "admin":
+        menu += [
+            "Scheduling Engine",
+            "Upload Excel",
+            "Measurement Update",
+            "Delete Data"
+        ]
 
-        st.markdown('<div class="section">MANAGEMENT</div>', unsafe_allow_html=True)
+    # ===== STABLE NAVIGATION =====
+    selected_page = st.radio(
+        "Navigation",
+        menu,
+        index=menu.index(st.session_state.page)
+    )
 
-        if st.button("⚙️ Scheduling Engine"):
-            selected_page = "Scheduling Engine"
-
-        if st.button("📤 Upload Excel"):
-            selected_page = "Upload Excel"
-
-        if st.button("📏 Measurement Update"):
-            selected_page = "Measurement Update"
-
-        st.markdown('<div class="section">SYSTEM</div>', unsafe_allow_html=True)
-
-        if st.button("🗑 Delete Data"):
-            selected_page = "Delete Data"
-
-    st.markdown('</div>', unsafe_allow_html=True)  # END TOP
-
-    # ===== BOTTOM (FIXED) =====
-    st.markdown('<div class="sidebar-bottom">', unsafe_allow_html=True)
+    st.session_state.page = selected_page
 
     st.markdown("---")
 
@@ -188,17 +115,10 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-    st.markdown('</div>', unsafe_allow_html=True)  # END BOTTOM
-    st.markdown('</div>', unsafe_allow_html=True)  # END CONTAINER
-
-# ================= PAGE CONTROL =================
-if selected_page:
-    st.session_state.page = selected_page
-
-selected_page = st.session_state.page
-
 # ================= MAIN =================
 st.title("🏭 Factory Intelligence System")
+
+selected_page = st.session_state.page
 
 # ================= ROUTING =================
 if selected_page == "Tracking":
