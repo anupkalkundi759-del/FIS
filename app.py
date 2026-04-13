@@ -64,53 +64,71 @@ except:
     st.error("DB error")
     st.stop()
 
-# ================= CSS =================
+# ================= CSS (MAX GAP REDUCTION) =================
 st.markdown("""
 <style>
+
+/* Sidebar color */
 [data-testid="stSidebar"] {
     background-color: #1f4e79;
 }
 
-/* kill spacing */
+/* Remove container spacing */
 [data-testid="stSidebar"] .block-container {
-    padding: 0.4rem 0.4rem !important;
+    padding: 0.2rem 0.3rem !important;
 }
 
-/* text */
+/* Remove vertical spacing between elements */
+[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div {
+    margin-bottom: 0px !important;
+    padding: 0px !important;
+}
+
+/* Text color */
 [data-testid="stSidebar"] * {
     color: white !important;
 }
 
-/* buttons tight */
+/* Button wrapper */
 [data-testid="stSidebar"] .stButton {
-    margin: 0px !important;
+    margin: 0 !important;
 }
+
+/* Button style */
 [data-testid="stSidebar"] .stButton button {
     background: transparent !important;
     border: none !important;
-    padding: 4px 6px !important;
+    box-shadow: none !important;
+    padding: 2px 4px !important;   /* 🔥 ultra tight */
+    margin: 0 !important;
     font-size: 13px;
     text-align: left;
+    height: auto;
 }
 
-/* hover */
+/* Hover */
 [data-testid="stSidebar"] .stButton button:hover {
     background: rgba(255,255,255,0.12) !important;
 }
 
-/* active */
+/* Active */
 .active button {
     background: rgba(255,255,255,0.25) !important;
     font-weight: 600;
 }
 
-/* section */
+/* Section titles */
 .sec {
     font-size: 10px;
-    margin-top: 6px;
-    margin-bottom: 2px;
+    margin: 2px 0 !important;
     opacity: 0.6;
 }
+
+/* Divider */
+[data-testid="stSidebar"] hr {
+    margin: 2px 0 !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -118,7 +136,7 @@ st.markdown("""
 with st.sidebar:
 
     st.markdown("**OperaFlow**")
-    st.caption("Enterprise Suite")
+    st.markdown("<small style='opacity:0.7'>Enterprise Suite</small>", unsafe_allow_html=True)
     st.markdown(f"👤 {st.session_state.role.upper()}")
 
     def nav(label, page):
