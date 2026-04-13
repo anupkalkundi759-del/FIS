@@ -145,6 +145,7 @@ def run_engine(conn, cur):
     for house in prod_df["house"].unique():
 
         house_products = prod_df[prod_df["house"] == house]
+
         house_progress = house_products["progress"].mean()
 
         min_row = house_products.loc[house_products["seq"].idxmin()]
@@ -185,13 +186,19 @@ def run_engine(conn, cur):
 
                 recent_rates.append(actual_days / planned_days)
 
-        productivity_rate = sum(recent_rates[-2:]) / 2 if len(recent_rates) >= 2 else (recent_rates[-1] if recent_rates else 1)
+        if len(recent_rates) >= 2:
+            productivity_rate = sum(recent_rates[-2:]) / 2
+        elif recent_rates:
+            productivity_rate = recent_rates[-1]
+        else:
+            productivity_rate = 1
+
         productivity_rate = max(0.7, min(productivity_rate, 1.5))
 
         # ================= CONFIG =================
-        config = config_map.get(house)
-        sla_date = config["sla"] if config else None
-        urgency_val = config["urgency"] if config else 0
+        config = config_map.get(house, {})
+        urgency_val = config.get("urgency", 0)
+        sla_date = config.get("sla")
 
         urgency_label_display = [k for k, v in urgency_map_ui.items() if v == urgency_val][0]
 
@@ -199,7 +206,7 @@ def run_engine(conn, cur):
         if sla_date:
             expected_finish = pd.to_datetime(sla_date)
         else:
-            expected_finish = None
+            expected_finish = start_date + timedelta(days=int(total_duration))
 
         # ================= PREDICTION =================
         if house_progress < 5:
@@ -208,17 +215,11 @@ def run_engine(conn, cur):
         else:
             remaining_days = total_duration * (1 - house_progress / 100)
             predicted_finish = today + timedelta(days=int(remaining_days * productivity_rate))
-
-            if expected_finish is not None:
-                delay = (predicted_finish - expected_finish).days
-            else:
-                delay = None
+            delay = (predicted_finish - expected_finish).days
 
         # ================= DELAY DISPLAY =================
         if house_progress < 5:
             delay_display = "Not started"
-        elif delay is None:
-            delay_display = "No SLA"
         elif delay < 0:
             delay_display = f"Ahead by {abs(delay)} days"
         elif delay == 0:
@@ -227,7 +228,8 @@ def run_engine(conn, cur):
             delay_display = f"Delayed by {delay} days"
 
         # ================= PRIORITY =================
-        days_to_sla = (expected_finish - today).days if expected_finish else 30
+        days_to_sla = (expected_finish - today).days
+
         delay_factor = max(0, delay) if delay is not None else 0
 
         priority_score = (
@@ -238,9 +240,7 @@ def run_engine(conn, cur):
         )
 
         # ================= REASON =================
-        if house_progress < 5 and sla_date:
-            reason = "Not started (SLA defined)"
-        elif house_progress < 5:
+        if house_progress < 5:
             reason = "Not started"
         elif delay is not None and delay > 0:
             reason = "Delayed project"
@@ -257,7 +257,9 @@ def run_engine(conn, cur):
         stage_days = activity_df[activity_df["stage"] == current_stage]["days"]
         stage_days = int(stage_days.values[0]) if not stage_days.empty else 1
 
-        if (today - current_time).days > stage_days:
+        days_in_stage = (today - current_time).days
+
+        if days_in_stage > stage_days:
             early_warnings.append({
                 "House": house,
                 "Issue": f"Delay in {current_stage}"
@@ -269,7 +271,7 @@ def run_engine(conn, cur):
             "Stage": current_stage,
             "Progress %": round(house_progress, 1),
             "Delay": delay_display,
-            "SLA": expected_finish.date() if expected_finish else "Not defined",
+            "SLA": expected_finish.date(),
             "Predicted Finish": predicted_finish.date() if predicted_finish else "N/A",
             "Urgency": urgency_label_display,
             "Priority Score": round(priority_score, 1),
@@ -295,7 +297,7 @@ def run_engine(conn, cur):
     if early_warnings:
         st.dataframe(pd.DataFrame(early_warnings))
     else:
-        st.success("No early warnings")
+        st.success("No bottlenecks - all stages performing within plan")
 
     # ================= BOTTLENECK =================
     stage_df = pd.DataFrame(stage_analysis)
