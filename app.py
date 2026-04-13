@@ -44,11 +44,9 @@ def login():
         else:
             st.error("Invalid credentials")
 
-# restore login
 if st.session_state.get("auth", False):
     st.session_state.logged_in = True
 
-# ================= LOGIN CHECK =================
 if not st.session_state.logged_in:
     login()
     st.stop()
@@ -67,15 +65,53 @@ except:
     st.error("❌ Database connection failed")
     st.stop()
 
-# ================= SIDEBAR STYLE =================
+# ================= PRO SIDEBAR CSS =================
 st.markdown("""
 <style>
+
+/* Sidebar */
 [data-testid="stSidebar"] {
     background-color: #1f4e79;
 }
+
+/* Remove default radio circles */
+[data-testid="stSidebar"] input[type="radio"] {
+    display: none;
+}
+
+/* Sidebar text */
 [data-testid="stSidebar"] * {
     color: white !important;
 }
+
+/* Section titles */
+.sidebar-section {
+    font-size: 11px;
+    font-weight: 600;
+    opacity: 0.6;
+    margin-top: 20px;
+    margin-bottom: 6px;
+}
+
+/* Menu item */
+.menu-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    cursor: pointer;
+}
+
+/* Active item */
+.menu-item-active {
+    background-color: rgba(255,255,255,0.2);
+    font-weight: 600;
+}
+
+/* Hover */
+.menu-item:hover {
+    background-color: rgba(255,255,255,0.1);
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -87,27 +123,48 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown(f"👤 {st.session_state.role.upper()}")
-    st.markdown("---")
 
-    # ===== MENU =====
-    menu = ["Tracking", "Product Tracking", "Dashboard"]
+    # ===== MENU STRUCTURE =====
+    menu_structure = {
+        "OPERATIONS": [
+            ("📍 Tracking", "Tracking"),
+            ("📦 Product Tracking", "Product Tracking"),
+            ("📊 Dashboard", "Dashboard")
+        ]
+    }
 
     if st.session_state.role == "admin":
-        menu += [
-            "Scheduling Engine",
-            "Upload Excel",
-            "Measurement Update",
-            "Delete Data"
+        menu_structure["MANAGEMENT"] = [
+            ("⚙️ Scheduling Engine", "Scheduling Engine"),
+            ("📤 Upload Excel", "Upload Excel"),
+            ("📏 Measurement Update", "Measurement Update")
+        ]
+        menu_structure["SYSTEM"] = [
+            ("🗑 Delete Data", "Delete Data")
         ]
 
-    # ===== STABLE NAVIGATION =====
-    selected_page = st.radio(
-        "Navigation",
-        menu,
-        index=menu.index(st.session_state.page)
+    # ===== BUILD MENU =====
+    all_pages = []
+    labels = []
+
+    for section, items in menu_structure.items():
+
+        st.markdown(f'<div class="sidebar-section">{section}</div>', unsafe_allow_html=True)
+
+        for label, value in items:
+            all_pages.append(value)
+            labels.append(label)
+
+    # ===== RADIO (HIDDEN LOGIC) =====
+    selected = st.radio(
+        "",
+        all_pages,
+        index=all_pages.index(st.session_state.page),
+        key="nav",
+        label_visibility="collapsed"
     )
 
-    st.session_state.page = selected_page
+    st.session_state.page = selected
 
     st.markdown("---")
 
@@ -118,26 +175,26 @@ with st.sidebar:
 # ================= MAIN =================
 st.title("🏭 Factory Intelligence System")
 
-selected_page = st.session_state.page
+page = st.session_state.page
 
 # ================= ROUTING =================
-if selected_page == "Tracking":
+if page == "Tracking":
     show_tracking(conn, cur)
 
-elif selected_page == "Dashboard":
+elif page == "Dashboard":
     show_dashboard(conn, cur)
 
-elif selected_page == "Product Tracking":
+elif page == "Product Tracking":
     show_product_tracking(conn, cur)
 
-elif selected_page == "Measurement Update":
+elif page == "Measurement Update":
     update_measurement(conn, cur)
 
-elif selected_page == "Scheduling Engine":
+elif page == "Scheduling Engine":
     run_engine(conn, cur)
 
-elif selected_page == "Upload Excel":
+elif page == "Upload Excel":
     show_upload(conn, cur)
 
-elif selected_page == "Delete Data":
+elif page == "Delete Data":
     show_delete(conn, cur)
