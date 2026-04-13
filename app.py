@@ -1,21 +1,6 @@
 import streamlit as st
 import psycopg2
 
-# ================= PERFORMANCE: CACHE DB =================
-@st.cache_resource
-def get_connection():
-    return psycopg2.connect(
-        host=st.secrets["DB_HOST"],
-        port=st.secrets["DB_PORT"],
-        database=st.secrets["DB_NAME"],
-        user=st.secrets["DB_USER"],
-        password=st.secrets["DB_PASSWORD"]
-    )
-
-@st.cache_resource
-def get_cursor(conn):
-    return conn.cursor()
-
 # ================= SESSION =================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -50,12 +35,43 @@ if not st.session_state.logged_in:
     login()
     st.stop()
 
-# ================= DB =================
-try:
-    conn = get_connection()
-    cur = get_cursor(conn)
-except:
-    st.error("DB error")
+# ================= DB (FIXED) =================
+def create_connection():
+    try:
+        return psycopg2.connect(
+            host=st.secrets["DB_HOST"],
+            port=st.secrets["DB_PORT"],
+            database=st.secrets["DB_NAME"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"]
+        )
+    except Exception as e:
+        st.error(f"DB connection failed: {e}")
+        return None
+
+def get_db():
+    # Create or reconnect if needed
+    if "conn" not in st.session_state or st.session_state.conn.closed:
+        st.session_state.conn = create_connection()
+
+    if st.session_state.conn is None:
+        return None, None
+
+    try:
+        cur = st.session_state.conn.cursor()
+        return st.session_state.conn, cur
+    except Exception as e:
+        # reconnect if cursor fails
+        st.session_state.conn = create_connection()
+        if st.session_state.conn:
+            return st.session_state.conn, st.session_state.conn.cursor()
+        else:
+            st.error(f"DB cursor error: {e}")
+            return None, None
+
+conn, cur = get_db()
+
+if conn is None:
     st.stop()
 
 # ================= SIDEBAR =================
