@@ -1,8 +1,5 @@
 import streamlit as st
 import psycopg2
-import pandas as pd
-from io import StringIO
-import time
 
 from tracking import show_tracking
 from dashboard import show_dashboard
@@ -26,7 +23,7 @@ def login():
     if st.button("Login"):
 
         users = {
-            "worker": {"password": "123", "role": "worker"},
+            "worker": {"password": "123", "role": "shopfloor"},
             "admin": {"password": "admin@123", "role": "admin"}
         }
 
@@ -51,51 +48,80 @@ conn = psycopg2.connect(
 )
 cur = conn.cursor()
 
-# ================= NAV =================
-if st.session_state.role == "admin":
-    page = st.sidebar.radio(
-        "Navigation",
-        [
-            "Tracking",
-            "Dashboard",
-            "Product Tracking",
-            "Measurement Update",
-            "Scheduling Engine",
-            "Upload Excel",
-            "Delete Data"
-        ]
-    )
-else:
-    page = st.sidebar.radio(
-        "Navigation",
-        ["Tracking", "Product Tracking"]
-    )
+# ================= NAVIGATION =================
+st.sidebar.title("📂 Navigation")
 
-if st.sidebar.button("Logout"):
+menu = {
+    "🏗 Execution": [
+        "📍 Tracking",
+        "📦 Product Tracking"
+    ],
+    "📊 Planning & Control": [
+        "📊 Dashboard",
+        "⚙️ Scheduling Engine"
+    ],
+    "🗂 Data Management": [
+        "📤 Upload Excel",
+        "🗑 Delete Data",
+        "📏 Measurement Update"
+    ]
+}
+
+# ================= ROLE FILTER =================
+if st.session_state.role == "admin":
+    allowed_pages = [
+        "📍 Tracking",
+        "📦 Product Tracking",
+        "📊 Dashboard",
+        "⚙️ Scheduling Engine",
+        "📤 Upload Excel",
+        "🗑 Delete Data",
+        "📏 Measurement Update"
+    ]
+else:
+    # SHOPFLOOR
+    allowed_pages = [
+        "📍 Tracking",
+        "📦 Product Tracking"
+    ]
+
+# ================= BUILD MENU =================
+all_options = []
+
+for section, items in menu.items():
+    st.sidebar.markdown(f"### {section}")
+    for item in items:
+        if item in allowed_pages:
+            all_options.append(item)
+
+page = st.sidebar.radio("", all_options)
+
+# ================= LOGOUT =================
+if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
     st.session_state.role = None
     st.rerun()
 
-st.title("Factory Intelligence System")
+st.title("🏭 Factory Intelligence System")
 
 # ================= ROUTING =================
-if page == "Tracking":
+if page == "📍 Tracking":
     show_tracking(conn, cur)
 
-elif page == "Dashboard":
+elif page == "📊 Dashboard":
     show_dashboard(conn, cur)
 
-elif page == "Product Tracking":
+elif page == "📦 Product Tracking":
     show_product_tracking(conn, cur)
 
-elif page == "Measurement Update":
+elif page == "📏 Measurement Update":
     update_measurement(conn, cur)
 
-elif page == "Scheduling Engine":
+elif page == "⚙️ Scheduling Engine":
     run_engine(conn, cur)
 
-elif page == "Upload Excel":
+elif page == "📤 Upload Excel":
     show_upload(conn, cur)
 
-elif page == "Delete Data":
+elif page == "🗑 Delete Data":
     show_delete(conn, cur)
