@@ -33,11 +33,18 @@ def run_engine(conn, cur):
     activity_df["days"] = activity_df["days"].astype(int)
     total_duration = int(activity_df["days"].sum())
 
-    # ================= CONFIG UI =================
+    # ================= URGENCY UI =================
     st.subheader("⚙️ House Configuration (SLA + Urgency)")
 
     cur.execute("SELECT DISTINCT house_no FROM houses")
     houses = [h[0] for h in cur.fetchall()]
+
+    urgency_map_ui = {
+        "Low": 0,
+        "Medium": 1,
+        "High": 2,
+        "Critical": 3
+    }
 
     col1, col2, col3 = st.columns(3)
 
@@ -45,7 +52,8 @@ def run_engine(conn, cur):
         selected_house = st.selectbox("House", houses)
 
     with col2:
-        urgency = st.selectbox("Urgency", [0, 1, 2, 3])
+        urgency_label = st.selectbox("Urgency", list(urgency_map_ui.keys()))
+        urgency = urgency_map_ui[urgency_label]
 
     with col3:
         sla_date = st.date_input("SLA Deadline")
@@ -129,17 +137,26 @@ def run_engine(conn, cur):
     results = []
     early_warnings = []
 
+    # ================= PRIORITY COLOR =================
+    def priority_color(score):
+        if score >= 80:
+            return "🔴 Critical"
+        elif score >= 50:
+            return "🟠 High"
+        elif score >= 20:
+            return "🟡 Medium"
+        else:
+            return "🟢 Low"
+
     # ================= HOUSE LEVEL =================
     for house in prod_df["house"].unique():
 
         house_products = prod_df[prod_df["house"] == house]
 
-        # ✅ HOUSE PROGRESS (CORRECT)
         house_progress = house_products["progress"].mean()
 
         latest = house_products.sort_values("seq").iloc[-1]
         current_stage = latest["stage"]
-        current_seq = latest["seq"]
         current_time = latest["time"]
 
         start_date = df[df["house"] == house]["time"].min()
@@ -176,8 +193,10 @@ def run_engine(conn, cur):
 
         # ================= CONFIG =================
         config = config_map.get(house, {})
-        urgency = config.get("urgency", 0)
+        urgency_val = config.get("urgency", 0)
         sla_date = config.get("sla")
+
+        urgency_label_display = [k for k, v in urgency_map_ui.items() if v == urgency_val][0]
 
         # ================= PREDICTION =================
         remaining_days = total_duration * (1 - house_progress / 100)
@@ -200,14 +219,33 @@ def run_engine(conn, cur):
         priority_score = (
             (delay * 3) +
             (100 - house_progress) +
-            (urgency * 15) -
+            (urgency_val * 15) -
             days_to_sla
         )
 
+        # ================= REASON =================
+        reasons = []
+
+        if delay > 0:
+            reasons.append("Delayed")
+
+        if house_progress < 30:
+            reasons.append("Low progress")
+
+        if urgency_val >= 2:
+            reasons.append("High urgency")
+
+        if days_to_sla < 7:
+            reasons.append("Near SLA")
+
+        if not reasons:
+            reasons.append("On track")
+
+        priority_reason = ", ".join(reasons)
+
         # ================= BLOCKED =================
         if pd.notna(current_time):
-            days_since_update = (today - current_time).days
-            if days_since_update > 3:
+            if (today - current_time).days > 3:
                 early_warnings.append({
                     "House": house,
                     "Issue": f"Blocked at {current_stage}"
@@ -220,8 +258,10 @@ def run_engine(conn, cur):
             "Delay": delay,
             "SLA": expected_finish.date(),
             "Predicted Finish": predicted_finish.date(),
-            "Urgency": urgency,
-            "Priority": round(priority_score, 1)
+            "Urgency": urgency_label_display,
+            "Priority Score": round(priority_score, 1),
+            "Priority": priority_color(priority_score),
+            "Reason": priority_reason
         })
 
     result_df = pd.DataFrame(results)
@@ -237,7 +277,7 @@ def run_engine(conn, cur):
     # ================= PRIORITY =================
     st.subheader("🚨 Priority Houses")
 
-    priority_df = result_df.sort_values("Priority", ascending=False).head(5)
+    priority_df = result_df.sort_values("Priority Score", ascending=False).head(5)
     st.dataframe(priority_df)
 
     # ================= WARNINGS =================
