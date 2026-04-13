@@ -35,7 +35,7 @@ if not st.session_state.logged_in:
     login()
     st.stop()
 
-# ================= DB (FIXED) =================
+# ================= DB (STABLE + AUTO RECONNECT) =================
 def create_connection():
     try:
         return psycopg2.connect(
@@ -50,7 +50,6 @@ def create_connection():
         return None
 
 def get_db():
-    # Create or reconnect if needed
     if "conn" not in st.session_state or st.session_state.conn.closed:
         st.session_state.conn = create_connection()
 
@@ -60,39 +59,86 @@ def get_db():
     try:
         cur = st.session_state.conn.cursor()
         return st.session_state.conn, cur
-    except Exception as e:
-        # reconnect if cursor fails
+    except:
         st.session_state.conn = create_connection()
         if st.session_state.conn:
             return st.session_state.conn, st.session_state.conn.cursor()
-        else:
-            st.error(f"DB cursor error: {e}")
-            return None, None
+        return None, None
 
 conn, cur = get_db()
 
 if conn is None:
     st.stop()
 
+# ================= CSS (YOUR ORIGINAL STYLE RESTORED) =================
+st.markdown("""
+<style>
+
+/* Sidebar color */
+[data-testid="stSidebar"] {
+    background-color: #1f4e79;
+}
+
+/* Text color */
+[data-testid="stSidebar"] * {
+    color: white !important;
+}
+
+/* Button style */
+[data-testid="stSidebar"] .stButton button {
+    background: transparent !important;
+    border: none !important;
+    padding: 6px 8px !important;
+    text-align: left;
+    width: 100%;
+}
+
+/* Hover */
+[data-testid="stSidebar"] .stButton button:hover {
+    background: rgba(255,255,255,0.15) !important;
+}
+
+/* Active highlight */
+.active-btn button {
+    background: rgba(255,255,255,0.3) !important;
+    font-weight: 600;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
 # ================= SIDEBAR =================
 with st.sidebar:
-    st.markdown("**OperaFlow**")
+
+    st.markdown("## OperaFlow")
     st.markdown(f"👤 {st.session_state.role.upper()}")
 
-    page = st.radio(
-        "Navigation",
-        [
-            "Tracking",
-            "Product Tracking",
-            "Dashboard",
-            "Scheduling Engine",
-            "Upload Excel",
-            "Measurement Update",
-            "Delete Data"
-        ]
-    )
+    def nav(label, page):
+        is_active = st.session_state.page == page
 
-    st.session_state.page = page
+        if is_active:
+            st.markdown('<div class="active-btn">', unsafe_allow_html=True)
+        else:
+            st.markdown('<div>', unsafe_allow_html=True)
+
+        if st.button(label, key=page):
+            st.session_state.page = page
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("### OPERATIONS")
+    nav("📍 Tracking", "Tracking")
+    nav("📦 Product Tracking", "Product Tracking")
+    nav("📊 Dashboard", "Dashboard")
+
+    if st.session_state.role == "admin":
+        st.markdown("### MANAGEMENT")
+        nav("⚙️ Scheduling Engine", "Scheduling Engine")
+        nav("📤 Upload Excel", "Upload Excel")
+        nav("📏 Measurement Update", "Measurement Update")
+
+        st.markdown("### SYSTEM")
+        nav("🗑 Delete Data", "Delete Data")
 
     if st.button("🚪 Logout"):
         st.session_state.clear()
@@ -103,7 +149,7 @@ st.title("🏭 Factory Intelligence System")
 
 page = st.session_state.page
 
-# ================= LAZY LOAD PAGES =================
+# ================= LAZY LOAD (FASTER LOAD) =================
 if page == "Tracking":
     from tracking import show_tracking
     show_tracking(conn, cur)
