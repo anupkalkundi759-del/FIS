@@ -19,9 +19,6 @@ if "role" not in st.session_state:
 if "auth" not in st.session_state:
     st.session_state.auth = False
 
-if "page" not in st.session_state:
-    st.session_state.page = "Tracking"
-
 # ================= LOGIN =================
 def login():
     st.title("🔐 Login")
@@ -78,32 +75,16 @@ st.markdown("""
 }
 .section {
     font-size: 12px;
-    margin-top: 18px;
+    margin-top: 15px;
     opacity: 0.7;
     font-weight: bold;
 }
-[data-testid="stSidebar"] .stButton button {
-    background-color: transparent;
-    color: white;
-    border: none;
-    text-align: left;
-    padding: 10px;
+div[role="radiogroup"] > label {
+    padding: 8px;
     border-radius: 8px;
-    width: 100%;
 }
-[data-testid="stSidebar"] .stButton button:hover {
+div[role="radiogroup"] > label:hover {
     background-color: rgba(255,255,255,0.15);
-}
-[data-testid="stSidebar"] .stButton button:focus {
-    background-color: rgba(255,255,255,0.25);
-}
-.sidebar-container {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-}
-.sidebar-top {
-    flex-grow: 1;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -111,69 +92,56 @@ st.markdown("""
 # ================= SIDEBAR =================
 with st.sidebar:
 
-    st.markdown('<div class="sidebar-container">', unsafe_allow_html=True)
-
-    # TOP CONTENT
-    st.markdown('<div class="sidebar-top">', unsafe_allow_html=True)
-
     st.markdown("### 🏢 OperaFlow")
     st.caption("Enterprise Suite")
 
     st.markdown("---")
-
     st.markdown(f"👤 {st.session_state.role.upper()}")
-
     st.markdown("---")
-
-    selected_page = None
 
     # OPERATIONS
     st.markdown('<div class="section">OPERATIONS</div>', unsafe_allow_html=True)
-
-    if st.button("📍 Tracking"):
-        selected_page = "Tracking"
-
-    if st.button("📦 Product Tracking"):
-        selected_page = "Product Tracking"
-
-    if st.button("📊 Dashboard"):
-        selected_page = "Dashboard"
+    op_page = st.radio(
+        "",
+        ["Tracking", "Product Tracking", "Dashboard"],
+        key="op"
+    )
 
     # MANAGEMENT
+    mgmt_page = None
+    sys_page = None
+
     if st.session_state.role == "admin":
 
         st.markdown('<div class="section">MANAGEMENT</div>', unsafe_allow_html=True)
-
-        if st.button("⚙️ Scheduling Engine"):
-            selected_page = "Scheduling Engine"
-
-        if st.button("📤 Upload Excel"):
-            selected_page = "Upload Excel"
-
-        if st.button("📏 Measurement Update"):
-            selected_page = "Measurement Update"
+        mgmt_page = st.radio(
+            "",
+            ["Scheduling Engine", "Upload Excel", "Measurement Update"],
+            key="mgmt"
+        )
 
         st.markdown('<div class="section">SYSTEM</div>', unsafe_allow_html=True)
+        sys_page = st.radio(
+            "",
+            ["Delete Data"],
+            key="sys"
+        )
 
-        if st.button("🗑 Delete Data"):
-            selected_page = "Delete Data"
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # LOGOUT (BOTTOM)
     st.markdown("---")
 
+    # LOGOUT
     if st.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
 
-    st.markdown('</div>', unsafe_allow_html=True)
+# ================= PAGE SELECTION =================
+selected_page = op_page
 
-# ================= PAGE CONTROL =================
-if selected_page:
-    st.session_state.page = selected_page
-
-selected_page = st.session_state.page
+if st.session_state.role == "admin":
+    if mgmt_page:
+        selected_page = mgmt_page
+    if sys_page:
+        selected_page = sys_page
 
 # ================= MAIN =================
 st.title("🏭 Factory Intelligence System")
