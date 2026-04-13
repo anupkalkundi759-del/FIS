@@ -33,7 +33,7 @@ def run_engine(conn, cur):
     activity_df["days"] = activity_df["days"].astype(int)
     total_duration = int(activity_df["days"].sum())
 
-    # ================= URGENCY UI =================
+    # ================= CONFIG UI =================
     st.subheader("⚙️ House Configuration (SLA + Urgency)")
 
     cur.execute("SELECT DISTINCT house_no FROM houses")
@@ -150,7 +150,7 @@ def run_engine(conn, cur):
         # ✅ PROGRESS
         house_progress = house_products["progress"].mean()
 
-        # ✅ STAGE (MIN = TRUE STATUS)
+        # ✅ TRUE STAGE (MIN)
         min_row = house_products.loc[house_products["seq"].idxmin()]
         current_stage = min_row["stage"]
         current_time = min_row["time"]
@@ -181,15 +181,15 @@ def run_engine(conn, cur):
 
                 planned_days = int(planned_days.values[0]) if not planned_days.empty else 1
 
-                recent_rates.append(actual_days / planned_days)
+                delay_stage = actual_days - planned_days
 
-                # 🔥 bottleneck data
+                # collect for bottleneck
                 stage_analysis.append({
                     "Stage": house_df.loc[i, "stage"],
-                    "Actual": actual_days,
-                    "Planned": planned_days,
-                    "Delay": actual_days - planned_days
+                    "Delay": delay_stage
                 })
+
+                recent_rates.append(actual_days / planned_days)
 
         if len(recent_rates) >= 2:
             productivity_rate = sum(recent_rates[-2:]) / 2
@@ -288,23 +288,22 @@ def run_engine(conn, cur):
     else:
         st.success("All houses on track")
 
-    # ================= BOTTLENECK =================
+    # ================= BOTTLENECK (FINAL FIX) =================
     stage_df = pd.DataFrame(stage_analysis)
 
+    major_bottleneck = None
+
     if not stage_df.empty:
-        bottleneck = stage_df.groupby("Stage").agg({
-            "Actual": "mean",
-            "Planned": "mean",
-            "Delay": "mean"
-        }).sort_values("Delay", ascending=False)
+        bottleneck_df = stage_df.groupby("Stage")["Delay"].mean()
+        bottleneck_df = bottleneck_df[bottleneck_df > 0]  # only real delays
 
-        st.subheader("🔥 Bottleneck Table")
-        st.dataframe(bottleneck)
+        if not bottleneck_df.empty:
+            major_bottleneck = bottleneck_df.idxmax()
 
-        st.subheader("📊 Bottleneck Chart")
-        st.bar_chart(bottleneck["Delay"])
-
-        st.error(f"🚨 Major Bottleneck: {bottleneck.index[0]}")
+    if major_bottleneck:
+        st.error(f"🚨 Major Bottleneck: {major_bottleneck}")
+    else:
+        st.success("✅ No bottlenecks — all stages performing within plan")
 
     # ================= FINAL =================
     st.subheader("🏠 House Intelligence")
