@@ -44,9 +44,11 @@ def login():
         else:
             st.error("Invalid credentials")
 
+# restore session
 if st.session_state.get("auth", False):
     st.session_state.logged_in = True
 
+# ================= LOGIN CHECK =================
 if not st.session_state.logged_in:
     login()
     st.stop()
@@ -65,85 +67,128 @@ except:
     st.error("❌ Database connection failed")
     st.stop()
 
-# ================= SIDEBAR STYLE =================
+# ================= SIDEBAR CSS =================
 st.markdown("""
 <style>
+
+/* Sidebar fixed */
 [data-testid="stSidebar"] {
     background-color: #1f4e79;
+    height: 100vh;
+    overflow: hidden;
 }
+
+/* Text color */
 [data-testid="stSidebar"] * {
     color: white !important;
 }
 
-/* NAV BUTTON */
+/* Layout */
+.sidebar-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* Scroll only menu */
+.sidebar-menu {
+    flex-grow: 1;
+    overflow-y: auto;
+}
+
+/* Buttons */
 .nav-btn button {
     width: 100%;
     text-align: left;
-    padding: 10px;
-    border-radius: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
     border: none;
     background: transparent;
-    color: white;
+    font-size: 14px;
 }
 
-/* HOVER */
+/* Hover */
 .nav-btn button:hover {
-    background-color: rgba(255,255,255,0.15);
+    background-color: rgba(255,255,255,0.12);
 }
 
-/* ACTIVE */
+/* Active */
 .active-btn button {
     background-color: rgba(255,255,255,0.25) !important;
     font-weight: 600;
 }
+
+/* Section titles */
+.section-title {
+    font-size: 11px;
+    margin-top: 12px;
+    margin-bottom: 4px;
+    opacity: 0.7;
+}
+
+/* Bottom */
+.sidebar-bottom {
+    padding-top: 8px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
 # ================= SIDEBAR =================
 with st.sidebar:
 
+    st.markdown('<div class="sidebar-container">', unsafe_allow_html=True)
+
+    # TOP
     st.markdown("### 🏢 OperaFlow")
     st.caption("Enterprise Suite")
 
     st.markdown("---")
     st.markdown(f"👤 {st.session_state.role.upper()}")
 
-    st.markdown("---")
+    # MENU
+    st.markdown('<div class="sidebar-menu">', unsafe_allow_html=True)
 
-    # ===== NAV FUNCTION =====
-    def nav_item(label, page_name):
-        if st.session_state.page == page_name:
+    def nav_item(label, page):
+        if st.session_state.page == page:
             st.markdown('<div class="active-btn nav-btn">', unsafe_allow_html=True)
         else:
             st.markdown('<div class="nav-btn">', unsafe_allow_html=True)
 
-        if st.button(label, key=page_name):
-            st.session_state.page = page_name
+        if st.button(label, key=page):
+            st.session_state.page = page
             st.rerun()
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ===== OPERATIONS =====
-    st.markdown("#### OPERATIONS")
+    # OPERATIONS
+    st.markdown('<div class="section-title">OPERATIONS</div>', unsafe_allow_html=True)
     nav_item("📍 Tracking", "Tracking")
     nav_item("📦 Product Tracking", "Product Tracking")
     nav_item("📊 Dashboard", "Dashboard")
 
-    # ===== MANAGEMENT =====
+    # MANAGEMENT
     if st.session_state.role == "admin":
-        st.markdown("#### MANAGEMENT")
+        st.markdown('<div class="section-title">MANAGEMENT</div>', unsafe_allow_html=True)
         nav_item("⚙️ Scheduling Engine", "Scheduling Engine")
         nav_item("📤 Upload Excel", "Upload Excel")
         nav_item("📏 Measurement Update", "Measurement Update")
 
-        st.markdown("#### SYSTEM")
+        st.markdown('<div class="section-title">SYSTEM</div>', unsafe_allow_html=True)
         nav_item("🗑 Delete Data", "Delete Data")
 
+    st.markdown('</div>', unsafe_allow_html=True)  # END MENU
+
+    # BOTTOM (FIXED)
+    st.markdown('<div class="sidebar-bottom">', unsafe_allow_html=True)
     st.markdown("---")
 
     if st.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ================= MAIN =================
 st.title("🏭 Factory Intelligence System")
