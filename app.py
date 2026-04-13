@@ -67,7 +67,7 @@ except:
     st.error("❌ Database connection failed")
     st.stop()
 
-# ================= SIDEBAR STYLE =================
+# ================= SIDEBAR CSS =================
 st.markdown("""
 <style>
 
@@ -76,25 +76,33 @@ st.markdown("""
     background-color: #1f4e79;
 }
 
-/* Text white */
+/* Reduce overall padding */
+[data-testid="stSidebar"] .block-container {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+}
+
+/* Text */
 [data-testid="stSidebar"] * {
     color: white !important;
 }
 
-/* Remove default button style */
+/* Buttons (compact) */
 [data-testid="stSidebar"] .stButton button {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
     width: 100%;
     text-align: left;
-    padding: 8px 10px;
-    border-radius: 6px;
+    padding: 5px 8px !important;
+    border-radius: 5px;
+    font-size: 13px;
+    margin: 2px 0px !important;
 }
 
 /* Hover */
 [data-testid="stSidebar"] .stButton button:hover {
-    background-color: rgba(255,255,255,0.15) !important;
+    background-color: rgba(255,255,255,0.12) !important;
 }
 
 /* Active */
@@ -103,12 +111,17 @@ st.markdown("""
     font-weight: 600;
 }
 
-/* Section title */
+/* Section titles */
 .section-title {
-    font-size: 11px;
-    margin-top: 12px;
-    margin-bottom: 4px;
-    opacity: 0.7;
+    font-size: 10px;
+    margin-top: 8px !important;
+    margin-bottom: 2px !important;
+    opacity: 0.6;
+}
+
+/* Divider */
+[data-testid="stSidebar"] hr {
+    margin: 6px 0px !important;
 }
 
 </style>
@@ -118,7 +131,7 @@ st.markdown("""
 with st.sidebar:
 
     st.markdown("### 🏢 OperaFlow")
-    st.caption("Enterprise Suite")
+    st.markdown("<small style='opacity:0.7'>Enterprise Suite</small>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown(f"👤 {st.session_state.role.upper()}")
