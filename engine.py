@@ -303,7 +303,7 @@ def run_engine(conn, cur):
     if major_bottleneck:
         st.error(f"🚨 Major Bottleneck: {major_bottleneck}")
     else:
-        st.success("✅ No bottlenecks — all stages performing within plan")
+        st.success("✅ No bottlenecks - all stages performing within plan")
 
     # ================= FINAL =================
     st.subheader("🏠 House Intelligence")
