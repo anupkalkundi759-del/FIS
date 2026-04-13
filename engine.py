@@ -66,18 +66,15 @@ def run_engine(conn, cur):
             DO UPDATE SET urgency = EXCLUDED.urgency,
                           sla_date = EXCLUDED.sla_date
         """, (selected_house, urgency, sla_date))
-
         conn.commit()
         st.success("Saved")
         st.rerun()
 
     # ================= LOAD CONFIG =================
     cur.execute("SELECT house_no, urgency, sla_date FROM house_config")
-    config_data = cur.fetchall()
-
     config_map = {
         row[0]: {"urgency": row[1], "sla": row[2]}
-        for row in config_data
+        for row in cur.fetchall()
     }
 
     # ================= LOAD TRACKING =================
@@ -106,11 +103,8 @@ def run_engine(conn, cur):
     product_progress = []
 
     for _, row in df.iterrows():
-
-        house = row["house"]
         seq = int(row["seq"])
         time = row["time"]
-        stage = row["stage"]
 
         completed_days = activity_df[activity_df["seq"] < seq]["days"].sum()
 
@@ -125,9 +119,9 @@ def run_engine(conn, cur):
         progress = (completed_days / total_duration) * 100 if total_duration else 0
 
         product_progress.append({
-            "house": house,
+            "house": row["house"],
             "progress": progress,
-            "stage": stage,
+            "stage": row["stage"],
             "seq": seq,
             "time": time
         })
@@ -136,8 +130,8 @@ def run_engine(conn, cur):
 
     results = []
     early_warnings = []
+    stage_analysis = []
 
-    # ================= PRIORITY COLOR =================
     def priority_color(score):
         if score >= 80:
             return "🔴 Critical"
@@ -148,18 +142,26 @@ def run_engine(conn, cur):
         else:
             return "🟢 Low"
 
-    # ================= HOUSE LEVEL =================
+    # ================= HOUSE LOOP =================
     for house in prod_df["house"].unique():
 
         house_products = prod_df[prod_df["house"] == house]
 
+        # ✅ PROGRESS
         house_progress = house_products["progress"].mean()
 
-        latest = house_products.sort_values("seq").iloc[-1]
-        current_stage = latest["stage"]
-        current_time = latest["time"]
+        # ✅ STAGE (MIN = TRUE STATUS)
+        min_row = house_products.loc[house_products["seq"].idxmin()]
+        current_stage = min_row["stage"]
+        current_time = min_row["time"]
 
-        start_date = df[df["house"] == house]["time"].min()
+        # ✅ START DATE = MEASUREMENT
+        measurement_rows = df[(df["house"] == house) & (df["stage"] == "Measurement")]
+
+        if not measurement_rows.empty:
+            start_date = measurement_rows["time"].min()
+        else:
+            start_date = df[df["house"] == house]["time"].min()
 
         # ================= PRODUCTIVITY =================
         house_df = df[df["house"] == house].sort_values("seq").reset_index(drop=True)
@@ -179,8 +181,15 @@ def run_engine(conn, cur):
 
                 planned_days = int(planned_days.values[0]) if not planned_days.empty else 1
 
-                rate = actual_days / planned_days
-                recent_rates.append(rate)
+                recent_rates.append(actual_days / planned_days)
+
+                # 🔥 bottleneck data
+                stage_analysis.append({
+                    "Stage": house_df.loc[i, "stage"],
+                    "Actual": actual_days,
+                    "Planned": planned_days,
+                    "Delay": actual_days - planned_days
+                })
 
         if len(recent_rates) >= 2:
             productivity_rate = sum(recent_rates[-2:]) / 2
@@ -211,10 +220,7 @@ def run_engine(conn, cur):
         delay = (predicted_finish - expected_finish).days
 
         # ================= PRIORITY =================
-        if sla_date:
-            days_to_sla = (expected_finish - today).days
-        else:
-            days_to_sla = 30
+        days_to_sla = (expected_finish - today).days if sla_date else 30
 
         priority_score = (
             (delay * 3) +
@@ -224,32 +230,30 @@ def run_engine(conn, cur):
         )
 
         # ================= REASON =================
-        reasons = []
-
         if delay > 0:
-            reasons.append("Delayed")
+            reason = "Delayed project"
+        elif days_to_sla < 7:
+            reason = "Approaching SLA"
+        elif house_progress < 10:
+            reason = "Not started"
+        elif house_progress < 40:
+            reason = "Slow progress"
+        elif urgency_val >= 2:
+            reason = "High priority (manual)"
+        else:
+            reason = "On track"
 
-        if house_progress < 30:
-            reasons.append("Low progress")
+        # ================= EARLY WARNING =================
+        stage_days = activity_df[activity_df["stage"] == current_stage]["days"]
+        stage_days = int(stage_days.values[0]) if not stage_days.empty else 1
 
-        if urgency_val >= 2:
-            reasons.append("High urgency")
+        days_in_stage = (today - current_time).days
 
-        if days_to_sla < 7:
-            reasons.append("Near SLA")
-
-        if not reasons:
-            reasons.append("On track")
-
-        priority_reason = ", ".join(reasons)
-
-        # ================= BLOCKED =================
-        if pd.notna(current_time):
-            if (today - current_time).days > 3:
-                early_warnings.append({
-                    "House": house,
-                    "Issue": f"Blocked at {current_stage}"
-                })
+        if days_in_stage > stage_days:
+            early_warnings.append({
+                "House": house,
+                "Issue": f"Delay in {current_stage}"
+            })
 
         results.append({
             "House": house,
@@ -261,14 +265,13 @@ def run_engine(conn, cur):
             "Urgency": urgency_label_display,
             "Priority Score": round(priority_score, 1),
             "Priority": priority_color(priority_score),
-            "Reason": priority_reason
+            "Reason": reason
         })
 
     result_df = pd.DataFrame(results)
 
     # ================= KPI =================
     st.subheader("📊 Overview")
-
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Houses", len(result_df))
     col2.metric("Delayed Houses", len(result_df[result_df["Delay"] > 0]))
@@ -276,17 +279,32 @@ def run_engine(conn, cur):
 
     # ================= PRIORITY =================
     st.subheader("🚨 Priority Houses")
+    st.dataframe(result_df.sort_values("Priority Score", ascending=False).head(5))
 
-    priority_df = result_df.sort_values("Priority Score", ascending=False).head(5)
-    st.dataframe(priority_df)
-
-    # ================= WARNINGS =================
+    # ================= EARLY WARNING =================
     st.subheader("🚨 Early Warnings")
-
     if early_warnings:
         st.dataframe(pd.DataFrame(early_warnings))
     else:
         st.success("All houses on track")
+
+    # ================= BOTTLENECK =================
+    stage_df = pd.DataFrame(stage_analysis)
+
+    if not stage_df.empty:
+        bottleneck = stage_df.groupby("Stage").agg({
+            "Actual": "mean",
+            "Planned": "mean",
+            "Delay": "mean"
+        }).sort_values("Delay", ascending=False)
+
+        st.subheader("🔥 Bottleneck Table")
+        st.dataframe(bottleneck)
+
+        st.subheader("📊 Bottleneck Chart")
+        st.bar_chart(bottleneck["Delay"])
+
+        st.error(f"🚨 Major Bottleneck: {bottleneck.index[0]}")
 
     # ================= FINAL =================
     st.subheader("🏠 House Intelligence")
