@@ -10,19 +10,20 @@ from upload import show_upload
 from delete import show_delete
 
 # ================= SESSION =================
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if "role" not in st.session_state:
-    st.session_state.role = None
-
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-
 if "page" not in st.session_state:
     st.session_state.page = "Tracking"
 
+# ================= HANDLE NAV CLICK =================
+query_params = st.query_params
+if "page" in query_params:
+    st.session_state.page = query_params["page"]
+
 # ================= LOGIN =================
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "role" not in st.session_state:
+    st.session_state.role = None
+
 def login():
     st.title("🔐 Login")
 
@@ -38,13 +39,9 @@ def login():
         if u in users and users[u]["password"] == p:
             st.session_state.logged_in = True
             st.session_state.role = users[u]["role"]
-            st.session_state.auth = True
             st.rerun()
         else:
             st.error("Invalid credentials")
-
-if st.session_state.get("auth"):
-    st.session_state.logged_in = True
 
 if not st.session_state.logged_in:
     login()
@@ -64,106 +61,80 @@ except:
     st.error("DB error")
     st.stop()
 
-# ================= CSS (MAX GAP REDUCTION) =================
-st.markdown("""
-<style>
-
-/* Sidebar color */
-[data-testid="stSidebar"] {
-    background-color: #1f4e79;
-}
-
-/* Remove container spacing */
-[data-testid="stSidebar"] .block-container {
-    padding: 0.2rem 0.3rem !important;
-}
-
-/* Remove vertical spacing between elements */
-[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div {
-    margin-bottom: 0px !important;
-    padding: 0px !important;
-}
-
-/* Text color */
-[data-testid="stSidebar"] * {
-    color: white !important;
-}
-
-/* Button wrapper */
-[data-testid="stSidebar"] .stButton {
-    margin: 0 !important;
-}
-
-/* Button style */
-[data-testid="stSidebar"] .stButton button {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 2px 4px !important;   /* 🔥 ultra tight */
-    margin: 0 !important;
-    font-size: 13px;
-    text-align: left;
-    height: auto;
-}
-
-/* Hover */
-[data-testid="stSidebar"] .stButton button:hover {
-    background: rgba(255,255,255,0.12) !important;
-}
-
-/* Active */
-.active button {
-    background: rgba(255,255,255,0.25) !important;
-    font-weight: 600;
-}
-
-/* Section titles */
-.sec {
-    font-size: 10px;
-    margin: 2px 0 !important;
-    opacity: 0.6;
-}
-
-/* Divider */
-[data-testid="stSidebar"] hr {
-    margin: 2px 0 !important;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-# ================= SIDEBAR =================
+# ================= SIDEBAR (ZERO GAP HTML) =================
 with st.sidebar:
 
-    st.markdown("**OperaFlow**")
-    st.markdown("<small style='opacity:0.7'>Enterprise Suite</small>", unsafe_allow_html=True)
-    st.markdown(f"👤 {st.session_state.role.upper()}")
+    page = st.session_state.page
 
-    def nav(label, page):
-        if st.session_state.page == page:
-            st.markdown('<div class="active">', unsafe_allow_html=True)
-        else:
-            st.markdown('<div>', unsafe_allow_html=True)
+    def link(label, value):
+        active = "active" if page == value else ""
+        return f"""
+        <a href="?page={value}" class="nav-item {active}">
+            {label}
+        </a>
+        """
 
-        if st.button(label, key=page):
-            st.session_state.page = page
-            st.rerun()
+    html = f"""
+    <style>
+    .nav {{
+        display: flex;
+        flex-direction: column;
+        gap: 0px;
+    }}
 
-        st.markdown('</div>', unsafe_allow_html=True)
+    .nav-item {{
+        padding: 6px 8px;
+        text-decoration: none;
+        color: white;
+        font-size: 13px;
+        border-radius: 4px;
+    }}
 
-    st.markdown('<div class="sec">OPERATIONS</div>', unsafe_allow_html=True)
-    nav("📍 Tracking", "Tracking")
-    nav("📦 Product Tracking", "Product Tracking")
-    nav("📊 Dashboard", "Dashboard")
+    .nav-item:hover {{
+        background: rgba(255,255,255,0.12);
+    }}
+
+    .active {{
+        background: rgba(255,255,255,0.25);
+        font-weight: 600;
+    }}
+
+    .section {{
+        font-size: 10px;
+        margin-top: 6px;
+        margin-bottom: 2px;
+        opacity: 0.6;
+    }}
+    </style>
+
+    <div>
+        <b>OperaFlow</b><br>
+        <span style="opacity:0.7;font-size:12px;">Enterprise Suite</span><br><br>
+        👤 {st.session_state.role.upper()}
+    </div>
+
+    <div class="nav">
+
+        <div class="section">OPERATIONS</div>
+        {link("📍 Tracking", "Tracking")}
+        {link("📦 Product Tracking", "Product Tracking")}
+        {link("📊 Dashboard", "Dashboard")}
+    """
 
     if st.session_state.role == "admin":
-        st.markdown('<div class="sec">MANAGEMENT</div>', unsafe_allow_html=True)
-        nav("⚙️ Scheduling Engine", "Scheduling Engine")
-        nav("📤 Upload Excel", "Upload Excel")
-        nav("📏 Measurement Update", "Measurement Update")
+        html += f"""
+        <div class="section">MANAGEMENT</div>
+        {link("⚙️ Scheduling Engine", "Scheduling Engine")}
+        {link("📤 Upload Excel", "Upload Excel")}
+        {link("📏 Measurement Update", "Measurement Update")}
 
-        st.markdown('<div class="sec">SYSTEM</div>', unsafe_allow_html=True)
-        nav("🗑 Delete Data", "Delete Data")
+        <div class="section">SYSTEM</div>
+        {link("🗑 Delete Data", "Delete Data")}
+        """
+
+    html += "</div>"
+
+    st.markdown(html, unsafe_allow_html=True)
 
     if st.button("🚪 Logout"):
         st.session_state.clear()
