@@ -59,9 +59,9 @@ if st.session_state.role == "admin":
             "Tracking",
             "Dashboard",
             "Product Tracking",
-            "Upload Excel",
             "Measurement Update",
             "Scheduling Engine",
+            "Upload Excel",
             "Delete Data"
         ]
     )
