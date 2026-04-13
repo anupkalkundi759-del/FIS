@@ -64,77 +64,75 @@ except:
 # ================= SIDEBAR (ZERO GAP HTML) =================
 with st.sidebar:
 
-    page = st.session_state.page
+    st.markdown("### 🏢 OperaFlow")
+    st.caption("Enterprise Suite")
 
-    def link(label, value):
-        active = "active" if page == value else ""
-        return f"""
-        <a href="?page={value}" class="nav-item {active}">
-            {label}
-        </a>
-        """
+    st.markdown(f"👤 {st.session_state.role.upper()}")
 
-    html = f"""
+    # ===== STYLE (TIGHT) =====
+    st.markdown("""
     <style>
-    .nav {{
-        display: flex;
-        flex-direction: column;
-        gap: 0px;
-    }}
+    /* kill vertical gaps properly */
+    [data-testid="stSidebar"] .stButton {
+        margin-bottom: -6px !important;
+    }
 
-    .nav-item {{
-        padding: 6px 8px;
-        text-decoration: none;
-        color: white;
+    /* button look */
+    [data-testid="stSidebar"] .stButton button {
+        padding: 4px 6px !important;
         font-size: 13px;
-        border-radius: 4px;
-    }}
+        text-align: left;
+        width: 100%;
+        background: transparent;
+        border: none;
+    }
 
-    .nav-item:hover {{
+    /* hover */
+    [data-testid="stSidebar"] .stButton button:hover {
         background: rgba(255,255,255,0.12);
-    }}
+    }
 
-    .active {{
-        background: rgba(255,255,255,0.25);
+    /* active */
+    .active button {
+        background: rgba(255,255,255,0.25) !important;
         font-weight: 600;
-    }}
+    }
 
-    .section {{
+    /* section titles */
+    .sec {
         font-size: 10px;
-        margin-top: 6px;
-        margin-bottom: 2px;
+        margin: 4px 0 0 0;
         opacity: 0.6;
-    }}
+    }
     </style>
+    """, unsafe_allow_html=True)
 
-    <div>
-        <b>OperaFlow</b><br>
-        <span style="opacity:0.7;font-size:12px;">Enterprise Suite</span><br><br>
-        👤 {st.session_state.role.upper()}
-    </div>
+    def nav(label, page):
+        if st.session_state.page == page:
+            st.markdown('<div class="active">', unsafe_allow_html=True)
+        else:
+            st.markdown('<div>', unsafe_allow_html=True)
 
-    <div class="nav">
+        if st.button(label, key=page):
+            st.session_state.page = page
+            st.rerun()
 
-        <div class="section">OPERATIONS</div>
-        {link("📍 Tracking", "Tracking")}
-        {link("📦 Product Tracking", "Product Tracking")}
-        {link("📊 Dashboard", "Dashboard")}
-    """
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ===== NAV =====
+    st.markdown('<div class="sec">OPERATIONS</div>', unsafe_allow_html=True)
+    nav("📍 Tracking", "Tracking")
+    nav("📦 Product Tracking", "Product Tracking")
+    nav("📊 Dashboard", "Dashboard")
 
     if st.session_state.role == "admin":
-        html += f"""
-        <div class="section">MANAGEMENT</div>
-        {link("⚙️ Scheduling Engine", "Scheduling Engine")}
-        {link("📤 Upload Excel", "Upload Excel")}
-        {link("📏 Measurement Update", "Measurement Update")}
+        st.markdown('<div class="sec">MANAGEMENT</div>', unsafe_allow_html=True)
+        nav("⚙️ Scheduling Engine", "Scheduling Engine")
+        nav("📤 Upload Excel", "Upload Excel")
+        nav("📏 Measurement Update", "Measurement Update")
 
-        <div class="section">SYSTEM</div>
-        {link("🗑 Delete Data", "Delete Data")}
-        """
-
-    html += "</div>"
-
-    st.markdown(html, unsafe_allow_html=True)
+        st.markdown('<div class="sec">SYSTEM</div>', unsafe_allow_html=True)
+        nav("🗑 Delete Data", "Delete Data")
 
     if st.button("🚪 Logout"):
         st.session_state.clear()
