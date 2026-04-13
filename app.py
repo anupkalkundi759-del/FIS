@@ -44,7 +44,7 @@ def login():
         else:
             st.error("Invalid credentials")
 
-# restore login (same session only)
+# restore login
 if st.session_state.get("auth", False):
     st.session_state.logged_in = True
 
@@ -67,24 +67,33 @@ except:
     st.error("❌ Database connection failed")
     st.stop()
 
-# ================= SIDEBAR STYLE =================
+# ================= SIDEBAR CSS (FIXED) =================
 st.markdown("""
 <style>
+
+/* Sidebar base */
 [data-testid="stSidebar"] {
     background-color: #1f4e79;
+    height: 100vh;
+    overflow: hidden;
 }
+
+/* Text color */
 [data-testid="stSidebar"] * {
     color: white !important;
 }
+
+/* Section titles */
 .section {
     font-size: 12px;
     margin-top: 18px;
     opacity: 0.7;
     font-weight: bold;
 }
+
+/* Buttons */
 [data-testid="stSidebar"] .stButton button {
     background-color: transparent;
-    color: white;
     border: none;
     text-align: left;
     padding: 10px;
@@ -97,14 +106,26 @@ st.markdown("""
 [data-testid="stSidebar"] .stButton button:focus {
     background-color: rgba(255,255,255,0.25);
 }
+
+/* Layout structure */
 .sidebar-container {
     display: flex;
     flex-direction: column;
     height: 100vh;
 }
+
+/* Scrollable area */
 .sidebar-top {
     flex-grow: 1;
+    overflow-y: auto;
+    padding-right: 5px;
 }
+
+/* Bottom fixed */
+.sidebar-bottom {
+    padding-top: 10px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -113,16 +134,14 @@ with st.sidebar:
 
     st.markdown('<div class="sidebar-container">', unsafe_allow_html=True)
 
-    # TOP CONTENT
+    # ===== TOP (SCROLLABLE) =====
     st.markdown('<div class="sidebar-top">', unsafe_allow_html=True)
 
     st.markdown("### 🏢 OperaFlow")
     st.caption("Enterprise Suite")
 
     st.markdown("---")
-
     st.markdown(f"👤 {st.session_state.role.upper()}")
-
     st.markdown("---")
 
     selected_page = None
@@ -158,16 +177,19 @@ with st.sidebar:
         if st.button("🗑 Delete Data"):
             selected_page = "Delete Data"
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)  # END TOP
 
-    # LOGOUT (BOTTOM)
+    # ===== BOTTOM (FIXED) =====
+    st.markdown('<div class="sidebar-bottom">', unsafe_allow_html=True)
+
     st.markdown("---")
 
     if st.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)  # END BOTTOM
+    st.markdown('</div>', unsafe_allow_html=True)  # END CONTAINER
 
 # ================= PAGE CONTROL =================
 if selected_page:
