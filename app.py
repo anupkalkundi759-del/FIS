@@ -9,7 +9,7 @@ from engine import run_engine
 from upload import show_upload
 from delete import show_delete
 
-# ================= SESSION INIT =================
+# ================= SESSION =================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
@@ -26,25 +26,24 @@ if "page" not in st.session_state:
 def login():
     st.title("🔐 Login")
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login"):
-
         users = {
             "worker": {"password": "123", "role": "worker"},
             "admin": {"password": "admin@123", "role": "admin"}
         }
 
-        if username in users and users[username]["password"] == password:
+        if u in users and users[u]["password"] == p:
             st.session_state.logged_in = True
-            st.session_state.role = users[username]["role"]
+            st.session_state.role = users[u]["role"]
             st.session_state.auth = True
             st.rerun()
         else:
             st.error("Invalid credentials")
 
-if st.session_state.get("auth", False):
+if st.session_state.get("auth"):
     st.session_state.logged_in = True
 
 if not st.session_state.logged_in:
@@ -62,86 +61,69 @@ try:
     )
     cur = conn.cursor()
 except:
-    st.error("❌ Database connection failed")
+    st.error("DB error")
     st.stop()
 
-# ================= SIDEBAR CSS (FINAL COMPACT) =================
+# ================= CSS =================
 st.markdown("""
 <style>
-
-/* Sidebar base */
 [data-testid="stSidebar"] {
     background-color: #1f4e79;
 }
 
-/* Reduce container padding */
+/* kill spacing */
 [data-testid="stSidebar"] .block-container {
-    padding-top: 0.3rem !important;
-    padding-bottom: 0.3rem !important;
+    padding: 0.4rem 0.4rem !important;
 }
 
-/* Text */
+/* text */
 [data-testid="stSidebar"] * {
     color: white !important;
 }
 
-/* Button wrapper spacing FIX */
+/* buttons tight */
 [data-testid="stSidebar"] .stButton {
     margin: 0px !important;
 }
-
-/* BUTTON (tight) */
 [data-testid="stSidebar"] .stButton button {
     background: transparent !important;
     border: none !important;
-    box-shadow: none !important;
-    width: 100%;
-    text-align: left;
     padding: 4px 6px !important;
-    border-radius: 4px;
     font-size: 13px;
+    text-align: left;
 }
 
-/* Hover */
+/* hover */
 [data-testid="stSidebar"] .stButton button:hover {
-    background-color: rgba(255,255,255,0.12) !important;
+    background: rgba(255,255,255,0.12) !important;
 }
 
-/* Active */
-.active-nav button {
-    background-color: rgba(255,255,255,0.25) !important;
+/* active */
+.active button {
+    background: rgba(255,255,255,0.25) !important;
     font-weight: 600;
 }
 
-/* Section title */
-.section-title {
+/* section */
+.sec {
     font-size: 10px;
-    margin: 4px 0px 2px 0px !important;
+    margin-top: 6px;
+    margin-bottom: 2px;
     opacity: 0.6;
 }
-
-/* Divider tight */
-[data-testid="stSidebar"] hr {
-    margin: 4px 0px !important;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
 # ================= SIDEBAR =================
 with st.sidebar:
 
-    st.markdown("### 🏢 OperaFlow")
-    st.markdown("<small style='opacity:0.7'>Enterprise Suite</small>", unsafe_allow_html=True)
-
-    st.markdown("---")
+    st.markdown("**OperaFlow**")
+    st.caption("Enterprise Suite")
     st.markdown(f"👤 {st.session_state.role.upper()}")
 
-    st.markdown("---")
-
-    def nav_item(label, page):
+    def nav(label, page):
         if st.session_state.page == page:
-            st.markdown('<div class="active-nav">', unsafe_allow_html=True)
+            st.markdown('<div class="active">', unsafe_allow_html=True)
         else:
             st.markdown('<div>', unsafe_allow_html=True)
 
@@ -151,23 +133,19 @@ with st.sidebar:
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # OPERATIONS
-    st.markdown('<div class="section-title">OPERATIONS</div>', unsafe_allow_html=True)
-    nav_item("📍 Tracking", "Tracking")
-    nav_item("📦 Product Tracking", "Product Tracking")
-    nav_item("📊 Dashboard", "Dashboard")
+    st.markdown('<div class="sec">OPERATIONS</div>', unsafe_allow_html=True)
+    nav("📍 Tracking", "Tracking")
+    nav("📦 Product Tracking", "Product Tracking")
+    nav("📊 Dashboard", "Dashboard")
 
-    # MANAGEMENT
     if st.session_state.role == "admin":
-        st.markdown('<div class="section-title">MANAGEMENT</div>', unsafe_allow_html=True)
-        nav_item("⚙️ Scheduling Engine", "Scheduling Engine")
-        nav_item("📤 Upload Excel", "Upload Excel")
-        nav_item("📏 Measurement Update", "Measurement Update")
+        st.markdown('<div class="sec">MANAGEMENT</div>', unsafe_allow_html=True)
+        nav("⚙️ Scheduling Engine", "Scheduling Engine")
+        nav("📤 Upload Excel", "Upload Excel")
+        nav("📏 Measurement Update", "Measurement Update")
 
-        st.markdown('<div class="section-title">SYSTEM</div>', unsafe_allow_html=True)
-        nav_item("🗑 Delete Data", "Delete Data")
-
-    st.markdown("---")
+        st.markdown('<div class="sec">SYSTEM</div>', unsafe_allow_html=True)
+        nav("🗑 Delete Data", "Delete Data")
 
     if st.button("🚪 Logout"):
         st.session_state.clear()
@@ -178,7 +156,6 @@ st.title("🏭 Factory Intelligence System")
 
 page = st.session_state.page
 
-# ================= ROUTING =================
 if page == "Tracking":
     show_tracking(conn, cur)
 
