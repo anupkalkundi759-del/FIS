@@ -44,11 +44,9 @@ def login():
         else:
             st.error("Invalid credentials")
 
-# restore session
 if st.session_state.get("auth", False):
     st.session_state.logged_in = True
 
-# ================= LOGIN CHECK =================
 if not st.session_state.logged_in:
     login()
     st.stop()
@@ -67,19 +65,19 @@ except:
     st.error("❌ Database connection failed")
     st.stop()
 
-# ================= SIDEBAR CSS =================
+# ================= SIDEBAR CSS (FINAL COMPACT) =================
 st.markdown("""
 <style>
 
-/* Sidebar color */
+/* Sidebar base */
 [data-testid="stSidebar"] {
     background-color: #1f4e79;
 }
 
-/* Reduce overall padding */
+/* Reduce container padding */
 [data-testid="stSidebar"] .block-container {
-    padding-top: 0.5rem !important;
-    padding-bottom: 0.5rem !important;
+    padding-top: 0.3rem !important;
+    padding-bottom: 0.3rem !important;
 }
 
 /* Text */
@@ -87,17 +85,21 @@ st.markdown("""
     color: white !important;
 }
 
-/* Buttons (compact) */
+/* Button wrapper spacing FIX */
+[data-testid="stSidebar"] .stButton {
+    margin: 0px !important;
+}
+
+/* BUTTON (tight) */
 [data-testid="stSidebar"] .stButton button {
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
     width: 100%;
     text-align: left;
-    padding: 5px 8px !important;
-    border-radius: 5px;
+    padding: 4px 6px !important;
+    border-radius: 4px;
     font-size: 13px;
-    margin: 2px 0px !important;
 }
 
 /* Hover */
@@ -111,17 +113,16 @@ st.markdown("""
     font-weight: 600;
 }
 
-/* Section titles */
+/* Section title */
 .section-title {
     font-size: 10px;
-    margin-top: 8px !important;
-    margin-bottom: 2px !important;
+    margin: 4px 0px 2px 0px !important;
     opacity: 0.6;
 }
 
-/* Divider */
+/* Divider tight */
 [data-testid="stSidebar"] hr {
-    margin: 6px 0px !important;
+    margin: 4px 0px !important;
 }
 
 </style>
