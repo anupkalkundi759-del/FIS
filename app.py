@@ -9,11 +9,17 @@ from engine import run_engine
 from upload import show_upload
 from delete import show_delete
 
-# ================= LOGIN =================
+# ================= SESSION INIT =================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.role = None
 
+# 🔥 persist login flag
+if "auth" not in st.session_state:
+    st.session_state.auth = False
+
+
+# ================= LOGIN =================
 def login():
     st.title("🔐 Login")
 
@@ -30,13 +36,22 @@ def login():
         if username in users and users[username]["password"] == password:
             st.session_state.logged_in = True
             st.session_state.role = users[username]["role"]
+            st.session_state.auth = True   # 🔥 persist
             st.rerun()
         else:
             st.error("Invalid credentials")
 
+
+# 🔥 restore login after refresh
+if st.session_state.get("auth", False):
+    st.session_state.logged_in = True
+
+
+# ================= LOGIN CHECK =================
 if not st.session_state.logged_in:
     login()
     st.stop()
+
 
 # ================= DB =================
 conn = psycopg2.connect(
@@ -48,80 +63,61 @@ conn = psycopg2.connect(
 )
 cur = conn.cursor()
 
-# ================= NAVIGATION =================
+
+# ================= SIDEBAR (CLEAN + HIGHLIGHT) =================
 st.sidebar.title("📂 Navigation")
 
-menu = {
-    "🏗 Execution": [
-        "📍 Tracking",
-        "📦 Product Tracking"
-    ],
-    "📊 Planning & Control": [
-        "📊 Dashboard",
-        "⚙️ Scheduling Engine"
-    ],
-    "🗂 Data Management": [
-        "📤 Upload Excel",
-        "🗑 Delete Data",
-        "📏 Measurement Update"
-    ]
-}
-
-# ================= ROLE FILTER =================
 if st.session_state.role == "admin":
-    allowed_pages = [
-        "📍 Tracking",
-        "📦 Product Tracking",
-        "📊 Dashboard",
-        "⚙️ Scheduling Engine",
-        "📤 Upload Excel",
-        "🗑 Delete Data",
-        "📏 Measurement Update"
-    ]
+    pages = {
+        "📍 Tracking": "Tracking",
+        "📦 Product Tracking": "Product Tracking",
+        "📊 Dashboard": "Dashboard",
+        "⚙️ Scheduling Engine": "Scheduling Engine",
+        "📤 Upload Excel": "Upload Excel",
+        "🗑 Delete Data": "Delete Data",
+        "📏 Measurement Update": "Measurement Update"
+    }
 else:
     # SHOPFLOOR
-    allowed_pages = [
-        "📍 Tracking",
-        "📦 Product Tracking"
-    ]
+    pages = {
+        "📍 Tracking": "Tracking",
+        "📦 Product Tracking": "Product Tracking"
+    }
 
-# ================= BUILD MENU =================
-all_options = []
+page = st.sidebar.radio("", list(pages.keys()))
+selected_page = pages[page]
 
-for section, items in menu.items():
-    st.sidebar.markdown(f"### {section}")
-    for item in items:
-        if item in allowed_pages:
-            all_options.append(item)
-
-page = st.sidebar.radio("", all_options)
 
 # ================= LOGOUT =================
 if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
     st.session_state.role = None
+    st.session_state.auth = False
     st.rerun()
 
+
+# ================= MAIN TITLE =================
 st.title("🏭 Factory Intelligence System")
 
+
 # ================= ROUTING =================
-if page == "📍 Tracking":
+if selected_page == "Tracking":
     show_tracking(conn, cur)
 
-elif page == "📊 Dashboard":
+elif selected_page == "Dashboard":
     show_dashboard(conn, cur)
 
-elif page == "📦 Product Tracking":
+elif selected_page == "Product Tracking":
     show_product_tracking(conn, cur)
 
-elif page == "📏 Measurement Update":
+elif selected_page == "Measurement Update":
     update_measurement(conn, cur)
 
-elif page == "⚙️ Scheduling Engine":
+elif selected_page == "Scheduling Engine":
     run_engine(conn, cur)
 
-elif page == "📤 Upload Excel":
+elif selected_page == "Upload Excel":
     show_upload(conn, cur)
 
-elif page == "🗑 Delete Data":
+elif selected_page == "Delete Data":
     show_delete(conn, cur)
