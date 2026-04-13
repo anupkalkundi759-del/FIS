@@ -65,53 +65,37 @@ except:
     st.error("❌ Database connection failed")
     st.stop()
 
-# ================= PRO SIDEBAR CSS =================
+# ================= SIDEBAR STYLE =================
 st.markdown("""
 <style>
-
-/* Sidebar */
 [data-testid="stSidebar"] {
     background-color: #1f4e79;
 }
-
-/* Remove default radio circles */
-[data-testid="stSidebar"] input[type="radio"] {
-    display: none;
-}
-
-/* Sidebar text */
 [data-testid="stSidebar"] * {
     color: white !important;
 }
 
-/* Section titles */
-.sidebar-section {
-    font-size: 11px;
-    font-weight: 600;
-    opacity: 0.6;
-    margin-top: 20px;
-    margin-bottom: 6px;
-}
-
-/* Menu item */
-.menu-item {
-    padding: 10px 12px;
+/* NAV BUTTON */
+.nav-btn button {
+    width: 100%;
+    text-align: left;
+    padding: 10px;
     border-radius: 8px;
-    margin-bottom: 4px;
-    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: white;
 }
 
-/* Active item */
-.menu-item-active {
-    background-color: rgba(255,255,255,0.2);
+/* HOVER */
+.nav-btn button:hover {
+    background-color: rgba(255,255,255,0.15);
+}
+
+/* ACTIVE */
+.active-btn button {
+    background-color: rgba(255,255,255,0.25) !important;
     font-weight: 600;
 }
-
-/* Hover */
-.menu-item:hover {
-    background-color: rgba(255,255,255,0.1);
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -124,47 +108,36 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(f"👤 {st.session_state.role.upper()}")
 
-    # ===== MENU STRUCTURE =====
-    menu_structure = {
-        "OPERATIONS": [
-            ("📍 Tracking", "Tracking"),
-            ("📦 Product Tracking", "Product Tracking"),
-            ("📊 Dashboard", "Dashboard")
-        ]
-    }
+    st.markdown("---")
 
+    # ===== NAV FUNCTION =====
+    def nav_item(label, page_name):
+        if st.session_state.page == page_name:
+            st.markdown('<div class="active-btn nav-btn">', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="nav-btn">', unsafe_allow_html=True)
+
+        if st.button(label, key=page_name):
+            st.session_state.page = page_name
+            st.rerun()
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ===== OPERATIONS =====
+    st.markdown("#### OPERATIONS")
+    nav_item("📍 Tracking", "Tracking")
+    nav_item("📦 Product Tracking", "Product Tracking")
+    nav_item("📊 Dashboard", "Dashboard")
+
+    # ===== MANAGEMENT =====
     if st.session_state.role == "admin":
-        menu_structure["MANAGEMENT"] = [
-            ("⚙️ Scheduling Engine", "Scheduling Engine"),
-            ("📤 Upload Excel", "Upload Excel"),
-            ("📏 Measurement Update", "Measurement Update")
-        ]
-        menu_structure["SYSTEM"] = [
-            ("🗑 Delete Data", "Delete Data")
-        ]
+        st.markdown("#### MANAGEMENT")
+        nav_item("⚙️ Scheduling Engine", "Scheduling Engine")
+        nav_item("📤 Upload Excel", "Upload Excel")
+        nav_item("📏 Measurement Update", "Measurement Update")
 
-    # ===== BUILD MENU =====
-    all_pages = []
-    labels = []
-
-    for section, items in menu_structure.items():
-
-        st.markdown(f'<div class="sidebar-section">{section}</div>', unsafe_allow_html=True)
-
-        for label, value in items:
-            all_pages.append(value)
-            labels.append(label)
-
-    # ===== RADIO (HIDDEN LOGIC) =====
-    selected = st.radio(
-        "",
-        all_pages,
-        index=all_pages.index(st.session_state.page),
-        key="nav",
-        label_visibility="collapsed"
-    )
-
-    st.session_state.page = selected
+        st.markdown("#### SYSTEM")
+        nav_item("🗑 Delete Data", "Delete Data")
 
     st.markdown("---")
 
