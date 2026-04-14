@@ -39,13 +39,10 @@ def show_upload(conn, cur):
         df["house_no"] = df["house_no"].astype(str).str.strip()
         df["product_code"] = df["product_code"].astype(str).str.strip()
 
-        # ✅ ADDED (ONLY THIS LINE)
         df["product_category"] = df.get("product_category", "").fillna("").astype(str).str.strip()
-
         df["orientation"] = df.get("orientation", "").fillna("").astype(str).str.strip()
         df["quantity"] = pd.to_numeric(df.get("quantity", 1), errors="coerce").fillna(1).astype(int)
 
-        # 🔥 FULL PRODUCT CODE (WITH ORIENTATION)
         df["full_code"] = df.apply(
             lambda x: f"{x['product_code']} ({x['orientation']})" if x["orientation"] else x["product_code"],
             axis=1
@@ -110,7 +107,6 @@ def show_upload(conn, cur):
         house_map = {(str(h).strip(), u): hid for hid, h, u in cur.fetchall()}
 
         # ================= PRODUCT MASTER =================
-        # 🔥 REPLACED BLOCK (ONLY CHANGE)
         product_master_df = df[["full_code", "product_category"]].drop_duplicates()
 
         for _, row in product_master_df.iterrows():
@@ -126,6 +122,20 @@ def show_upload(conn, cur):
 
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
+
+        # ================= DELETE EXISTING PRODUCTS =================
+        cur.execute("""
+            DELETE FROM products
+            WHERE house_id IN (
+                SELECT h.house_id
+                FROM houses h
+                JOIN units u ON h.unit_id = u.unit_id
+                JOIN projects p ON u.project_id = p.project_id
+                WHERE p.project_name = ANY(%s)
+            )
+        """, (list(project_set),))
+
+        conn.commit()
 
         # ================= PRODUCTS (CORE LOGIC) =================
         inserted_products = 0
