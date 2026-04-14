@@ -59,11 +59,28 @@ def show_dashboard(conn, cur):
 
     st.dataframe(df, use_container_width=True)
 
-    # ================= PROJECT SELECT =================
+    # ================= PROJECT + UNIT SELECT =================
     st.divider()
     st.subheader("📌 Project Detailed View")
 
     selected_project = st.selectbox("Select Project", df["Project"].tolist())
+
+    # -------- UNIT DROPDOWN --------
+    cur.execute("""
+        SELECT DISTINCT u.unit_name
+        FROM units u
+        JOIN projects p ON u.project_id = p.project_id
+        WHERE p.project_name = %s
+        ORDER BY u.unit_name
+    """, (selected_project,))
+
+    units = [row[0] for row in cur.fetchall()]
+
+    if not units:
+        st.warning("No units found for this project")
+        return
+
+    selected_unit = st.selectbox("Select Unit", units)
 
     # ================= HOUSE LEVEL =================
     st.subheader("🏠 House-Level Status")
@@ -96,10 +113,11 @@ def show_dashboard(conn, cur):
         LEFT JOIN stages s ON t.stage_id = s.stage_id
 
         WHERE p.project_name = %s
+        AND u.unit_name = %s
 
         GROUP BY h.house_no
         ORDER BY h.house_no
-    """, (selected_project,))
+    """, (selected_project, selected_unit))
 
     house_data = cur.fetchall()
 
