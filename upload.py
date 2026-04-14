@@ -123,17 +123,15 @@ def show_upload(conn, cur):
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
 
-        # ================= DELETE EXISTING PRODUCTS =================
-        cur.execute("""
-            DELETE FROM products
-            WHERE house_id IN (
-                SELECT h.house_id
-                FROM houses h
-                JOIN units u ON h.unit_id = u.unit_id
-                JOIN projects p ON u.project_id = p.project_id
-                WHERE p.project_name = ANY(%s)
-            )
-        """, (list(project_set),))
+        # ================= SAFE DELETE (ONLY HOUSES IN EXCEL) =================
+        for project_name, unit_name, house_no in house_set:
+            unit_id = unit_map[(unit_name, project_map[project_name])]
+            house_id = house_map[(house_no, unit_id)]
+
+            cur.execute("""
+                DELETE FROM products
+                WHERE house_id = %s
+            """, (house_id,))
 
         conn.commit()
 
