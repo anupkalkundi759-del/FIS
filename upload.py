@@ -48,7 +48,11 @@ def show_upload(conn, cur):
             axis=1
         )
 
-        df = df.drop_duplicates()
+        # 🔥 FIX: REMOVE drop_duplicates and use grouping
+        df = df.groupby(
+            ["project_name", "unit_name", "house_no", "full_code", "orientation", "product_category"],
+            as_index=False
+        )["quantity"].sum()
 
         total_rows = len(df)
 
@@ -123,7 +127,7 @@ def show_upload(conn, cur):
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
 
-        # ================= SAFE DELETE (ONLY HOUSES IN EXCEL) =================
+        # ================= SAFE DELETE =================
         for project_name, unit_name, house_no in house_set:
             unit_id = unit_map[(unit_name, project_map[project_name])]
             house_id = house_map[(house_no, unit_id)]
@@ -135,7 +139,7 @@ def show_upload(conn, cur):
 
         conn.commit()
 
-        # ================= PRODUCTS (CORE LOGIC) =================
+        # ================= PRODUCTS INSERT =================
         inserted_products = 0
         processed = 0
         loop_start = time.time()
@@ -144,18 +148,7 @@ def show_upload(conn, cur):
 
             try:
                 unit_id = unit_map[(row["unit_name"], project_map[row["project_name"]])]
-                key = (row["house_no"], unit_id)
-
-                if key not in house_map:
-                    st.error(f"❌ House mapping failed at row {i+1}")
-                    st.stop()
-
-                house_id = house_map[key]
-
-                if row["full_code"] not in product_map:
-                    st.error(f"❌ Product mapping failed at row {i+1}")
-                    st.stop()
-
+                house_id = house_map[(row["house_no"], unit_id)]
                 product_id = product_map[row["full_code"]]
 
                 for _ in range(row["quantity"]):
@@ -172,7 +165,6 @@ def show_upload(conn, cur):
 
                         elapsed = time.time() - loop_start
                         speed = processed / elapsed if elapsed > 0 else 0
-
                         remaining = total_items - processed
                         eta = remaining / speed if speed > 0 else 0
 
@@ -186,11 +178,7 @@ def show_upload(conn, cur):
 """)
 
             except Exception as e:
-                st.error(f"""
-❌ Error at row {i+1}
-
-{str(e)}
-""")
+                st.error(f"❌ Error at row {i+1}\n{str(e)}")
                 st.stop()
 
         conn.commit()
