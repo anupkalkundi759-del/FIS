@@ -3,18 +3,15 @@ def show_tracking(conn, cur):
 
     st.title("🏭 Production Tracker")
 
-    # ================= INLINE ROW =================
+    # ================= INLINE ROW (PROJECT / UNIT / HOUSE) =================
     col1, col2, col3 = st.columns(3)
 
-    # ================= PROJECT =================
     with col1:
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
         projects = cur.fetchall()
-
         project_dict = {p[1]: p[0] for p in projects}
         selected_project = st.selectbox("Select Project", list(project_dict.keys()))
 
-    # ================= UNIT =================
     with col2:
         cur.execute("""
             SELECT unit_id, unit_name 
@@ -22,11 +19,9 @@ def show_tracking(conn, cur):
             WHERE project_id=%s
         """, (project_dict[selected_project],))
         units = cur.fetchall()
-
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Select Unit", list(unit_dict.keys()))
 
-    # ================= HOUSE =================
     with col3:
         cur.execute("""
             SELECT house_id, house_no 
@@ -34,12 +29,11 @@ def show_tracking(conn, cur):
             WHERE unit_id=%s
         """, (unit_dict[selected_unit],))
         houses = cur.fetchall()
-
         house_dict = {h[1]: h[0] for h in houses}
         selected_house = st.selectbox("Select House", list(house_dict.keys()))
         house_id = house_dict[selected_house]
 
-    # ================= PRODUCTS (UNCHANGED) =================
+    # ================= PRODUCTS =================
     cur.execute("""
         SELECT 
             p.product_instance_id,
@@ -56,9 +50,7 @@ def show_tracking(conn, cur):
         st.warning("No products found")
         return
 
-    product_display = [p[1] for p in products]
     product_map = {f"{p[1]}_{i}": p[0] for i, p in enumerate(products)}
-
     selected_display = st.selectbox("Select Product", list(product_map.keys()))
     selected_product_instance_id = product_map[selected_display]
 
@@ -74,8 +66,6 @@ def show_tracking(conn, cur):
 
     result = cur.fetchone()
     current_stage = result[0] if result else "Not Started"
-
-    st.info(f"Last Completed Stage: {current_stage}")
 
     # ================= NEXT STAGE =================
     cur.execute("""
@@ -96,7 +86,14 @@ def show_tracking(conn, cur):
         except:
             next_stage = "Completed"
 
-    st.success(f"Next Allowed Stage: {next_stage}")
+    # ================= INLINE STATUS DISPLAY =================
+    col4, col5 = st.columns(2)
+
+    with col4:
+        st.info(f"Last Completed Stage: {current_stage}")
+
+    with col5:
+        st.success(f"Next Allowed Stage: {next_stage}")
 
     # ================= SELECT STAGE =================
     selected_stage = st.selectbox("Select Stage", stage_sequence)
