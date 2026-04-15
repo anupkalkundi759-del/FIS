@@ -4,15 +4,15 @@ def show_product_tracking(conn, cur):
 
     st.title("🔎 Product Tracking")
 
-    # ================= FILTERS =================
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # ================= FILTERS + SEARCH INLINE =================
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     # -------- PROJECT --------
     cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
     projects = ["All"] + [p[0] for p in cur.fetchall()]
     selected_project = col1.selectbox("Project", projects)
 
-    # -------- UNIT (depends on project) --------
+    # -------- UNIT --------
     if selected_project == "All":
         cur.execute("SELECT DISTINCT unit_name FROM units ORDER BY unit_name")
         units = ["All"] + [u[0] for u in cur.fetchall()]
@@ -28,7 +28,7 @@ def show_product_tracking(conn, cur):
 
     selected_unit = col2.selectbox("Unit", units)
 
-    # -------- HOUSE (depends on unit) --------
+    # -------- HOUSE --------
     if selected_unit == "All":
         cur.execute("SELECT DISTINCT house_no FROM houses ORDER BY house_no")
         houses = ["All"] + [h[0] for h in cur.fetchall()]
@@ -53,8 +53,8 @@ def show_product_tracking(conn, cur):
     statuses = ["All", "Not Started", "In Progress", "Completed"]
     selected_status = col5.selectbox("Status", statuses)
 
-    # -------- SEARCH --------
-    search = st.text_input("Search Product")
+    # -------- SEARCH (INLINE FIX) --------
+    search = col6.text_input("Search")
 
     # ================= QUERY =================
     query = """
