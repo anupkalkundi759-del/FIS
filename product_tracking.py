@@ -51,13 +51,14 @@ def show_product_tracking(conn, cur):
     statuses = ["All", "Not Started", "In Progress", "Completed"]
     selected_status = col5.selectbox("Status", statuses)
 
-    # SEARCH INLINE
+    # SEARCH
     search = col6.text_input("Search")
 
     # ================= QUERY =================
     query = """
         SELECT 
             pm.product_code,
+            pm.product_type,   -- ✅ TYPE BACK
             pr.project_name,
             u.unit_name,
             h.house_no,
@@ -73,7 +74,7 @@ def show_product_tracking(conn, cur):
         LEFT JOIN LATERAL (
             SELECT stage_id, status, timestamp
             FROM tracking_log
-            WHERE product_instance_id = p.id
+            WHERE product_instance_id = p.product_instance_id
             ORDER BY timestamp DESC
             LIMIT 1
         ) t ON TRUE
@@ -116,6 +117,7 @@ def show_product_tracking(conn, cur):
 
     df = pd.DataFrame(data, columns=[
         "Product",
+        "Type",   # ✅ BACK
         "Project",
         "Unit",
         "House",
@@ -128,7 +130,7 @@ def show_product_tracking(conn, cur):
         st.warning("No data found")
         return
 
-    # ================= DATE FORMAT =================
+    # ================= DATE =================
     df["Date"] = pd.to_datetime(df["Timestamp"], errors="coerce")
     df["Date"] = df["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
     df["Date"] = df["Date"].dt.strftime("%d-%m-%Y")
