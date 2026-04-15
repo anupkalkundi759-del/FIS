@@ -3,37 +3,43 @@ def show_tracking(conn, cur):
 
     st.title("🏭 Production Tracker")
 
-    # ================= PROJECT =================
-    cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
-    projects = cur.fetchall()
+    # ================= INLINE ROW =================
+    col1, col2, col3 = st.columns(3)
 
-    project_dict = {p[1]: p[0] for p in projects}
-    selected_project = st.selectbox("Select Project", list(project_dict.keys()))
+    # ================= PROJECT =================
+    with col1:
+        cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
+        projects = cur.fetchall()
+
+        project_dict = {p[1]: p[0] for p in projects}
+        selected_project = st.selectbox("Select Project", list(project_dict.keys()))
 
     # ================= UNIT =================
-    cur.execute("""
-        SELECT unit_id, unit_name 
-        FROM units 
-        WHERE project_id=%s
-    """, (project_dict[selected_project],))
-    units = cur.fetchall()
+    with col2:
+        cur.execute("""
+            SELECT unit_id, unit_name 
+            FROM units 
+            WHERE project_id=%s
+        """, (project_dict[selected_project],))
+        units = cur.fetchall()
 
-    unit_dict = {u[1]: u[0] for u in units}
-    selected_unit = st.selectbox("Select Unit", list(unit_dict.keys()))
+        unit_dict = {u[1]: u[0] for u in units}
+        selected_unit = st.selectbox("Select Unit", list(unit_dict.keys()))
 
     # ================= HOUSE =================
-    cur.execute("""
-        SELECT house_id, house_no 
-        FROM houses 
-        WHERE unit_id=%s
-    """, (unit_dict[selected_unit],))
-    houses = cur.fetchall()
+    with col3:
+        cur.execute("""
+            SELECT house_id, house_no 
+            FROM houses 
+            WHERE unit_id=%s
+        """, (unit_dict[selected_unit],))
+        houses = cur.fetchall()
 
-    house_dict = {h[1]: h[0] for h in houses}
-    selected_house = st.selectbox("Select House", list(house_dict.keys()))
-    house_id = house_dict[selected_house]
+        house_dict = {h[1]: h[0] for h in houses}
+        selected_house = st.selectbox("Select House", list(house_dict.keys()))
+        house_id = house_dict[selected_house]
 
-    # ================= PRODUCTS (FIXED) =================
+    # ================= PRODUCTS (UNCHANGED) =================
     cur.execute("""
         SELECT 
             p.product_instance_id,
@@ -50,12 +56,10 @@ def show_tracking(conn, cur):
         st.warning("No products found")
         return
 
-    # IMPORTANT: keep duplicates but map internally
     product_display = [p[1] for p in products]
     product_map = {f"{p[1]}_{i}": p[0] for i, p in enumerate(products)}
 
     selected_display = st.selectbox("Select Product", list(product_map.keys()))
-
     selected_product_instance_id = product_map[selected_display]
 
     # ================= CURRENT STAGE =================
@@ -69,7 +73,6 @@ def show_tracking(conn, cur):
     """, (selected_product_instance_id,))
 
     result = cur.fetchone()
-
     current_stage = result[0] if result else "Not Started"
 
     st.info(f"Last Completed Stage: {current_stage}")
@@ -97,10 +100,9 @@ def show_tracking(conn, cur):
 
     # ================= SELECT STAGE =================
     selected_stage = st.selectbox("Select Stage", stage_sequence)
-
     status = st.selectbox("Status", ["In Progress", "Completed"])
 
-    # ================= VALIDATION (FIXED) =================
+    # ================= VALIDATION =================
     if selected_stage != next_stage:
         st.error(f"You must complete '{next_stage}' first")
         return
