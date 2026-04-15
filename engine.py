@@ -36,38 +36,9 @@ def run_engine(conn, cur):
     # ================= CONFIG UI =================
     st.subheader("⚙️ House Configuration (SLA + Urgency)")
 
-    # -------- PROJECT --------
-    cur.execute("SELECT DISTINCT project_name FROM houses")
-    projects = [p[0] for p in cur.fetchall()]
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        selected_project = st.selectbox("Project", projects)
-
-    # -------- UNIT --------
-    cur.execute("""
-        SELECT DISTINCT unit_name 
-        FROM houses 
-        WHERE project_name = %s
-    """, (selected_project,))
-    units = [u[0] for u in cur.fetchall()]
-
-    with col2:
-        selected_unit = st.selectbox("Unit", units)
-
-    # -------- HOUSE --------
-    cur.execute("""
-        SELECT house_no 
-        FROM houses 
-        WHERE project_name = %s AND unit_name = %s
-    """, (selected_project, selected_unit))
+    cur.execute("SELECT DISTINCT house_no FROM houses")
     houses = [h[0] for h in cur.fetchall()]
 
-    with col3:
-        selected_house = st.selectbox("House", houses)
-
-    # -------- URGENCY + SLA --------
     urgency_map_ui = {
         "Low": 0,
         "Medium": 1,
@@ -75,13 +46,16 @@ def run_engine(conn, cur):
         "Critical": 3
     }
 
-    col4, col5 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
-    with col4:
+    with col1:
+        selected_house = st.selectbox("House", houses)
+
+    with col2:
         urgency_label = st.selectbox("Urgency", list(urgency_map_ui.keys()))
         urgency = urgency_map_ui[urgency_label]
 
-    with col5:
+    with col3:
         sla_date = st.date_input("SLA Deadline")
 
     if st.button("Save Configuration"):
