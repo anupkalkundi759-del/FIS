@@ -33,34 +33,10 @@ def run_engine(conn, cur):
     activity_df["days"] = activity_df["days"].astype(int)
     total_duration = int(activity_df["days"].sum())
 
-    # ================= PROJECT + UNIT =================
+    # ================= CONFIG UI =================
     st.subheader("⚙️ House Configuration (SLA + Urgency)")
 
-    cur.execute("SELECT DISTINCT project_name FROM houses")
-    projects = [p[0] for p in cur.fetchall()]
-
-    col0, col1, col2, col3 = st.columns(4)
-
-    with col0:
-        selected_project = st.selectbox("Project", projects)
-
-    cur.execute("""
-        SELECT DISTINCT unit 
-        FROM houses 
-        WHERE project_name = %s
-    """, (selected_project,))
-    units = [u[0] for u in cur.fetchall()]
-
-    with col1:
-        selected_unit = st.selectbox("Unit", units)
-
-    # ================= HOUSE =================
-    cur.execute("""
-        SELECT house_no 
-        FROM houses 
-        WHERE project_name = %s AND unit = %s
-    """, (selected_project, selected_unit))
-
+    cur.execute("SELECT DISTINCT house_no FROM houses")
     houses = [h[0] for h in cur.fetchall()]
 
     urgency_map_ui = {
@@ -70,15 +46,16 @@ def run_engine(conn, cur):
         "Critical": 3
     }
 
-    with col2:
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
         selected_house = st.selectbox("House", houses)
 
-    with col3:
+    with col2:
         urgency_label = st.selectbox("Urgency", list(urgency_map_ui.keys()))
         urgency = urgency_map_ui[urgency_label]
 
-    col4 = st.columns(1)[0]
-    with col4:
+    with col3:
         sla_date = st.date_input("SLA Deadline")
 
     if st.button("Save Configuration"):
@@ -99,7 +76,7 @@ def run_engine(conn, cur):
         for row in cur.fetchall()
     }
 
-    # ================= LOAD TRACKING (FILTERED) =================
+    # ================= LOAD TRACKING =================
     cur.execute("""
         SELECT 
             h.house_no,
@@ -110,9 +87,7 @@ def run_engine(conn, cur):
         JOIN houses h ON p.house_id = h.house_id
         JOIN tracking_log t ON t.product_instance_id = p.id
         JOIN stages s ON t.stage_id = s.stage_id
-        WHERE h.project_name = %s
-          AND h.unit = %s
-    """, (selected_project, selected_unit))
+    """)
 
     data = cur.fetchall()
 
@@ -184,6 +159,7 @@ def run_engine(conn, cur):
         else:
             start_date = df[df["house"] == house]["time"].min()
 
+        # ================= PRODUCTIVITY =================
         house_df = df[df["house"] == house].sort_values("seq").reset_index(drop=True)
 
         recent_rates = []
@@ -219,17 +195,20 @@ def run_engine(conn, cur):
 
         productivity_rate = max(0.7, min(productivity_rate, 1.5))
 
+        # ================= CONFIG =================
         config = config_map.get(house, {})
         urgency_val = config.get("urgency", 0)
         sla_date = config.get("sla")
 
         urgency_label_display = [k for k, v in urgency_map_ui.items() if v == urgency_val][0]
 
+        # ================= EXPECTED FINISH =================
         if sla_date:
             expected_finish = pd.to_datetime(sla_date)
         else:
             expected_finish = start_date + timedelta(days=int(total_duration))
 
+        # ================= PREDICTION =================
         if house_progress < 5:
             predicted_finish = None
             delay = None
@@ -238,6 +217,7 @@ def run_engine(conn, cur):
             predicted_finish = today + timedelta(days=int(remaining_days * productivity_rate))
             delay = (predicted_finish - expected_finish).days
 
+        # ================= DELAY DISPLAY =================
         if house_progress < 5:
             delay_display = "Not started"
         elif delay < 0:
@@ -247,7 +227,9 @@ def run_engine(conn, cur):
         else:
             delay_display = f"Delayed by {delay} days"
 
+        # ================= PRIORITY =================
         days_to_sla = (expected_finish - today).days
+
         delay_factor = max(0, delay) if delay is not None else 0
 
         priority_score = (
@@ -257,6 +239,7 @@ def run_engine(conn, cur):
             days_to_sla
         )
 
+        # ================= REASON =================
         if house_progress < 5:
             reason = "Not started"
         elif delay is not None and delay > 0:
@@ -270,6 +253,7 @@ def run_engine(conn, cur):
         else:
             reason = "On track"
 
+        # ================= EARLY WARNING =================
         stage_days = activity_df[activity_df["stage"] == current_stage]["days"]
         stage_days = int(stage_days.values[0]) if not stage_days.empty else 1
 
@@ -281,6 +265,7 @@ def run_engine(conn, cur):
                 "Issue": f"Delay in {current_stage}"
             })
 
+        # ================= RESULTS =================
         results.append({
             "House": house,
             "Stage": current_stage,
