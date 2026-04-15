@@ -7,7 +7,7 @@ def run_engine(conn, cur):
 
     today = datetime.now()
 
-    # ================= CONFIG TABLE =================
+    # ================= CONFIG =================
     cur.execute("""
         CREATE TABLE IF NOT EXISTS house_config (
             house_no TEXT PRIMARY KEY,
@@ -17,7 +17,7 @@ def run_engine(conn, cur):
     """)
     conn.commit()
 
-    # ================= LOAD ACTIVITIES =================
+    # ================= ACTIVITIES =================
     cur.execute("""
         SELECT activity_name, sequence_order, duration_days
         FROM activity_master
@@ -26,32 +26,34 @@ def run_engine(conn, cur):
     act = cur.fetchall()
 
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
-    activity_df["days"] = activity_df["days"].astype(int)
-    total_duration = int(activity_df["days"].sum())
+    total_stages = len(activity_df)
 
-    st.subheader("⚙️ House Configuration (SLA + Urgency)")
+    stage_map = dict(zip(activity_df["stage"], activity_df["seq"]))
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # ================= UI =================
+    st.subheader("⚙️ House Configuration")
+
+    c1, c2, c3, c4, c5 = st.columns(5)
 
     cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
     projects = cur.fetchall()
     project_dict = {p[1]: p[0] for p in projects}
-    selected_project = col1.selectbox("Project", list(project_dict.keys()))
+    selected_project = c1.selectbox("Project", list(project_dict.keys()))
 
     cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s", (project_dict[selected_project],))
     units = cur.fetchall()
     unit_dict = {u[1]: u[0] for u in units}
-    selected_unit = col2.selectbox("Unit", list(unit_dict.keys()))
+    selected_unit = c2.selectbox("Unit", list(unit_dict.keys()))
 
     cur.execute("SELECT house_no FROM houses WHERE unit_id=%s", (unit_dict[selected_unit],))
     houses = [h[0] for h in cur.fetchall()]
-    selected_house = col3.selectbox("House", houses)
+    selected_house = c3.selectbox("House", houses)
 
-    urgency_map_ui = {"Low":0,"Medium":1,"High":2,"Critical":3}
-    urgency_label = col4.selectbox("Urgency", list(urgency_map_ui.keys()))
-    urgency = urgency_map_ui[urgency_label]
+    urgency_map = {"Low":0,"Medium":1,"High":2,"Critical":3}
+    urgency_label = c4.selectbox("Urgency", list(urgency_map.keys()))
+    urgency_val = urgency_map[urgency_label]
 
-    sla_date = col5.date_input("SLA")
+    sla_date = c5.date_input("SLA")
 
     if st.button("Save Configuration"):
         cur.execute("""
@@ -60,91 +62,99 @@ def run_engine(conn, cur):
             ON CONFLICT (house_no)
             DO UPDATE SET urgency = EXCLUDED.urgency,
                           sla_date = EXCLUDED.sla_date
-        """, (selected_house, urgency, sla_date))
+        """, (selected_house, urgency_val, sla_date))
         conn.commit()
         st.success("Saved")
 
     # ================= LOAD CONFIG =================
     cur.execute("SELECT house_no, urgency, sla_date FROM house_config")
-    config_map = {row[0]: {"urgency": row[1], "sla": row[2]} for row in cur.fetchall()}
+    config_map = {r[0]: {"urgency": r[1], "sla": r[2]} for r in cur.fetchall()}
 
-    # ================= LOAD TRACKING =================
+    # ================= TRACKING =================
     cur.execute("""
-        SELECT h.house_no, s.stage_name, t.timestamp, s.sequence
+        SELECT h.house_no, p.product_instance_id, s.stage_name, s.sequence, t.timestamp
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
-        JOIN stages s ON t.stage_id = s.stage_id
+        LEFT JOIN tracking_log t ON p.product_instance_id = t.product_instance_id
+        LEFT JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
     """, (unit_dict[selected_unit],))
 
-    df = pd.DataFrame(cur.fetchall(), columns=["house","stage","time","seq"])
+    df = pd.DataFrame(cur.fetchall(), columns=["house","product","stage","seq","time"])
     df["time"] = pd.to_datetime(df["time"], errors="coerce")
 
     if df.empty:
         st.warning("No tracking data")
         return
 
+    # ================= BOTTLENECK =================
+    stage_count = df.groupby("stage")["product"].count().reset_index()
+    stage_count.columns = ["Stage", "Count"]
+    bottleneck_stage = stage_count.sort_values("Count", ascending=False).iloc[0]
+
+    # ================= CALC =================
     results = []
     early_warnings = []
-    stage_analysis = []
-
-    def priority_color(score):
-        if score >= 80: return "🔴 Critical"
-        elif score >= 50: return "🟠 High"
-        elif score >= 20: return "🟡 Medium"
-        else: return "🟢 Low"
 
     for house in df["house"].unique():
 
-        house_df = df[df["house"] == house].sort_values("seq")
+        house_df = df[df["house"] == house]
 
-        # ✅ Measurement = Start Date (UNCHANGED)
-        m_rows = house_df[house_df["stage"] == "Measurement"]
-        start_date = m_rows["time"].min() if not m_rows.empty else house_df["time"].min()
+        # -------- HOUSE PROGRESS (FIXED) --------
+        product_stage = house_df.groupby("product")["seq"].max().fillna(0)
 
-        progress = 0 if start_date is None else min(100, ((today - start_date).days / total_duration) * 100)
+        progress = (product_stage.sum() / (len(product_stage) * total_stages)) * 100 if len(product_stage) else 0
+
+        # -------- START DATE (Measurement) --------
+        m = house_df[house_df["stage"] == "Measurement"]
+        start_date = m["time"].min() if not m.empty else None
 
         config = config_map.get(house, {})
         sla = config.get("sla")
-        urgency_val = config.get("urgency", 0)
+        urgency = config.get("urgency", 0)
 
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        # ✅ FIXED PREDICTION (NO BLOCKING)
-        remaining_days = total_duration * (1 - progress / 100)
-        predicted_finish = today + timedelta(days=int(remaining_days))
+        # -------- PREDICTION --------
+        remaining = total_stages * (1 - progress / 100)
+        predicted_finish = today + timedelta(days=int(remaining))
 
         delay = (predicted_finish - expected_finish).days if expected_finish else None
 
-        # DELAY TEXT
-        if progress == 0:
-            delay_display = "Not started"
-        elif delay is None:
-            delay_display = "No SLA"
-        elif delay < 0:
-            delay_display = f"Ahead {abs(delay)} days"
-        elif delay == 0:
-            delay_display = "On time"
+        # -------- EARLY WARNING --------
+        if progress < 5:
+            early_warnings.append({"House": house, "Issue": "Not started"})
+        elif delay is not None and delay > 0:
+            early_warnings.append({"House": house, "Issue": f"Delayed {delay} days"})
+
+        # -------- PRIORITY --------
+        score = (100 - progress) + (urgency * 15)
+
+        if score >= 80:
+            priority = "🔴 Critical"
+        elif score >= 50:
+            priority = "🟠 High"
+        elif score >= 20:
+            priority = "🟡 Medium"
         else:
-            delay_display = f"Delayed {delay} days"
+            priority = "🟢 Low"
 
-        # EARLY WARNING
-        if not house_df.empty:
-            last_row = house_df.iloc[-1]
-            stage_days = activity_df[activity_df["stage"] == last_row["stage"]]["days"]
-            stage_days = int(stage_days.values[0]) if not stage_days.empty else 1
-
-            if (today - last_row["time"]).days > stage_days:
-                early_warnings.append({"House": house, "Issue": f"Delay in {last_row['stage']}"})
-
-        score = (100 - progress) + (urgency_val * 15)
-        priority = priority_color(score)
+        # -------- DELAY TEXT --------
+        if progress == 0:
+            delay_txt = "Not started"
+        elif delay is None:
+            delay_txt = "No SLA"
+        elif delay > 0:
+            delay_txt = f"Delayed {delay} days"
+        elif delay == 0:
+            delay_txt = "On time"
+        else:
+            delay_txt = f"Ahead {abs(delay)} days"
 
         results.append({
             "House": house,
             "Progress %": round(progress,1),
-            "Delay": delay_display,
+            "Delay": delay_txt,
             "SLA": expected_finish.date() if expected_finish else "Not Set",
             "Predicted Finish": predicted_finish.date(),
             "Urgency": urgency_label,
@@ -155,21 +165,26 @@ def run_engine(conn, cur):
 
     # ================= OVERVIEW =================
     st.subheader("📊 Overview")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Houses", len(result_df))
-    col2.metric("Delayed Houses", len(result_df[result_df["Delay"].str.contains("Delayed", na=False)]))
-    col3.metric("Avg Progress", round(result_df["Progress %"].mean(), 1))
+    a, b, c = st.columns(3)
+    a.metric("Total Houses", len(result_df))
+    b.metric("Delayed Houses", len(result_df[result_df["Delay"].str.contains("Delayed", na=False)]))
+    c.metric("Avg Progress", round(result_df["Progress %"].mean(), 1))
 
     # ================= PRIORITY =================
     st.subheader("🚨 Priority Houses")
-    st.dataframe(result_df.sort_values("Progress %").head(5))
+    st.dataframe(result_df.sort_values("Progress %").head(5), use_container_width=True)
 
-    # ================= EARLY WARNINGS =================
+    # ================= EARLY WARNING =================
     st.subheader("🚨 Early Warnings")
     if early_warnings:
-        st.dataframe(pd.DataFrame(early_warnings))
+        st.dataframe(pd.DataFrame(early_warnings), use_container_width=True)
     else:
-        st.success("No bottlenecks - all stages performing within plan")
+        st.success("All houses on track")
+
+    # ================= BOTTLENECK =================
+    st.subheader("🚧 Bottleneck Analysis")
+    st.dataframe(stage_count, use_container_width=True)
+    st.error(f"Bottleneck Stage: {bottleneck_stage['Stage']} ({bottleneck_stage['Count']} products)")
 
     # ================= MAIN =================
     st.subheader("🏠 House Intelligence")
