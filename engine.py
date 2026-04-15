@@ -33,38 +33,40 @@ def run_engine(conn, cur):
     activity_df["days"] = activity_df["days"].astype(int)
     total_duration = int(activity_df["days"].sum())
 
-    # ================= PROJECT =================
     st.subheader("⚙️ House Configuration (SLA + Urgency)")
 
-    cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
-    projects = cur.fetchall()
-    project_dict = {p[1]: p[0] for p in projects}
+    # ================= INLINE DROPDOWNS =================
+    col1, col2, col3, col4, col5 = st.columns(5)
 
-    selected_project = st.selectbox("Project", list(project_dict.keys()))
+    # PROJECT
+    with col1:
+        cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
+        projects = cur.fetchall()
+        project_dict = {p[1]: p[0] for p in projects}
+        selected_project = st.selectbox("Project", list(project_dict.keys()))
 
-    # ================= UNIT =================
-    cur.execute("""
-        SELECT unit_id, unit_name 
-        FROM units 
-        WHERE project_id=%s
-    """, (project_dict[selected_project],))
+    # UNIT
+    with col2:
+        cur.execute("""
+            SELECT unit_id, unit_name 
+            FROM units 
+            WHERE project_id=%s
+        """, (project_dict[selected_project],))
+        units = cur.fetchall()
+        unit_dict = {u[1]: u[0] for u in units}
+        selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    units = cur.fetchall()
-    unit_dict = {u[1]: u[0] for u in units}
+    # HOUSE
+    with col3:
+        cur.execute("""
+            SELECT house_no 
+            FROM houses 
+            WHERE unit_id=%s
+        """, (unit_dict[selected_unit],))
+        houses = [h[0] for h in cur.fetchall()]
+        selected_house = st.selectbox("House", houses)
 
-    selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
-
-    # ================= HOUSE =================
-    cur.execute("""
-        SELECT house_no 
-        FROM houses 
-        WHERE unit_id=%s
-    """, (unit_dict[selected_unit],))
-
-    houses = [h[0] for h in cur.fetchall()]
-    selected_house = st.selectbox("House", houses)
-
-    # ================= URGENCY =================
+    # URGENCY
     urgency_map_ui = {
         "Low": 0,
         "Medium": 1,
@@ -72,15 +74,15 @@ def run_engine(conn, cur):
         "Critical": 3
     }
 
-    col1, col2 = st.columns(2)
-
-    with col1:
+    with col4:
         urgency_label = st.selectbox("Urgency", list(urgency_map_ui.keys()))
         urgency = urgency_map_ui[urgency_label]
 
-    with col2:
-        sla_date = st.date_input("SLA Deadline")
+    # SLA
+    with col5:
+        sla_date = st.date_input("SLA")
 
+    # SAVE BUTTON
     if st.button("Save Configuration"):
         cur.execute("""
             INSERT INTO house_config (house_no, urgency, sla_date)
@@ -99,7 +101,7 @@ def run_engine(conn, cur):
         for row in cur.fetchall()
     }
 
-    # ================= LOAD TRACKING (FIXED) =================
+    # ================= LOAD TRACKING =================
     cur.execute("""
         SELECT 
             h.house_no,
@@ -165,11 +167,9 @@ def run_engine(conn, cur):
         else:
             return "🟢 Low"
 
-    # ================= HOUSE LOOP =================
     for house in prod_df["house"].unique():
 
         house_products = prod_df[prod_df["house"] == house]
-
         house_progress = house_products["progress"].mean()
 
         min_row = house_products.loc[house_products["seq"].idxmin()]
@@ -295,25 +295,21 @@ def run_engine(conn, cur):
 
     result_df = pd.DataFrame(results)
 
-    # ================= KPI =================
     st.subheader("📊 Overview")
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Houses", len(result_df))
     col2.metric("Delayed Houses", len(result_df[result_df["Delay"].str.contains("Delayed", na=False)]))
     col3.metric("Avg Progress", round(result_df["Progress %"].mean(), 1))
 
-    # ================= PRIORITY =================
     st.subheader("🚨 Priority Houses")
     st.dataframe(result_df.sort_values("Priority Score", ascending=False).head(5))
 
-    # ================= EARLY WARNING =================
     st.subheader("🚨 Early Warnings")
     if early_warnings:
         st.dataframe(pd.DataFrame(early_warnings))
     else:
         st.success("No bottlenecks - all stages performing within plan")
 
-    # ================= BOTTLENECK =================
     stage_df = pd.DataFrame(stage_analysis)
 
     if not stage_df.empty:
@@ -325,6 +321,5 @@ def run_engine(conn, cur):
         else:
             st.success("No bottlenecks - all stages performing within plan")
 
-    # ================= FINAL =================
     st.subheader("🏠 House Intelligence")
     st.dataframe(result_df, use_container_width=True)
