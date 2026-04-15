@@ -5,10 +5,10 @@ def show_delete(conn, cur):
 
     delete_type = st.radio(
         "Delete Level",
-        ["Project", "Unit", "House"]
+        ["Project", "Unit", "House", "Product"]
     )
 
-    # PROJECT
+    # ================= PROJECT =================
     cur.execute("SELECT project_id, project_name FROM projects")
     projects = cur.fetchall()
 
@@ -20,12 +20,14 @@ def show_delete(conn, cur):
     selected_project = st.selectbox("Project", list(project_dict.keys()))
     project_id = project_dict[selected_project]
 
+    # ================= PROJECT DELETE =================
     if delete_type == "Project":
         if st.button("Delete Project"):
             cur.execute("DELETE FROM projects WHERE project_id=%s", (project_id,))
             conn.commit()
             st.success("Project Deleted")
 
+    # ================= UNIT DELETE =================
     elif delete_type == "Unit":
         cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s", (project_id,))
         units = cur.fetchall()
@@ -39,19 +41,72 @@ def show_delete(conn, cur):
                 conn.commit()
                 st.success("Unit Deleted")
 
+    # ================= HOUSE DELETE =================
     elif delete_type == "House":
         cur.execute("""
-            SELECT h.house_id
+            SELECT h.house_id, h.house_no
             FROM houses h
             JOIN units u ON h.unit_id = u.unit_id
             WHERE u.project_id=%s
         """, (project_id,))
-        houses = [h[0] for h in cur.fetchall()]
+        houses = cur.fetchall()
 
         if houses:
-            selected_house = st.selectbox("House", houses)
+            house_dict = {h[1]: h[0] for h in houses}
+            selected_house = st.selectbox("House", list(house_dict.keys()))
+            house_id = house_dict[selected_house]
 
             if st.button("Delete House"):
-                cur.execute("DELETE FROM houses WHERE house_id=%s", (selected_house,))
+                cur.execute("DELETE FROM houses WHERE house_id=%s", (house_id,))
                 conn.commit()
                 st.success("House Deleted")
+
+    # ================= PRODUCT DELETE =================
+    elif delete_type == "Product":
+
+        # UNIT
+        cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s", (project_id,))
+        units = cur.fetchall()
+
+        if not units:
+            st.warning("No units found")
+            return
+
+        unit_dict = {u[1]: u[0] for u in units}
+        selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
+        unit_id = unit_dict[selected_unit]
+
+        # HOUSE
+        cur.execute("SELECT house_id, house_no FROM houses WHERE unit_id=%s", (unit_id,))
+        houses = cur.fetchall()
+
+        if not houses:
+            st.warning("No houses found")
+            return
+
+        house_dict = {h[1]: h[0] for h in houses}
+        selected_house = st.selectbox("House", list(house_dict.keys()))
+        house_id = house_dict[selected_house]
+
+        # PRODUCT
+        cur.execute("""
+            SELECT p.product_instance_id, pm.product_code
+            FROM products p
+            JOIN products_master pm ON p.product_id = pm.product_id
+            WHERE p.house_id=%s
+        """, (house_id,))
+
+        products = cur.fetchall()
+
+        if not products:
+            st.warning("No products found")
+            return
+
+        product_dict = {f"{p[1]}_{i}": p[0] for i, p in enumerate(products)}
+        selected_product = st.selectbox("Product", list(product_dict.keys()))
+        product_id = product_dict[selected_product]
+
+        if st.button("Delete Product"):
+            cur.execute("DELETE FROM products WHERE product_instance_id=%s", (product_id,))
+            conn.commit()
+            st.success("Product Deleted")
