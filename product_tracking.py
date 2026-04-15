@@ -4,7 +4,7 @@ def show_product_tracking(conn, cur):
 
     st.title("🔎 Product Tracking")
 
-    # ================= INLINE FILTER + SEARCH =================
+    # ================= INLINE FILTERS + SEARCH =================
     col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     # PROJECT
@@ -22,6 +22,7 @@ def show_product_tracking(conn, cur):
             FROM units u
             JOIN projects p ON u.project_id = p.project_id
             WHERE p.project_name = %s
+            ORDER BY u.unit_name
         """, (selected_project,))
         units = ["All"] + [u[0] for u in cur.fetchall()]
 
@@ -37,6 +38,7 @@ def show_product_tracking(conn, cur):
             FROM houses h
             JOIN units u ON h.unit_id = u.unit_id
             WHERE u.unit_name = %s
+            ORDER BY h.house_no
         """, (selected_unit,))
         houses = ["All"] + [h[0] for h in cur.fetchall()]
 
@@ -51,20 +53,23 @@ def show_product_tracking(conn, cur):
     statuses = ["All", "Not Started", "In Progress", "Completed"]
     selected_status = col5.selectbox("Status", statuses)
 
-    # SEARCH
+    # SEARCH INLINE
     search = col6.text_input("Search")
 
     # ================= QUERY =================
     query = """
         SELECT 
             pm.product_code,
-            pm.product_type,   -- ✅ TYPE BACK
+            pm.product_category,
+            p.orientation,
             pr.project_name,
             u.unit_name,
             h.house_no,
+
             COALESCE(s.stage_name, 'Not Started') AS stage,
             COALESCE(t.status, 'Not Started') AS status,
             t.timestamp
+
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
         JOIN houses h ON p.house_id = h.house_id
@@ -116,14 +121,9 @@ def show_product_tracking(conn, cur):
     data = cur.fetchall()
 
     df = pd.DataFrame(data, columns=[
-        "Product",
-        "Type",   # ✅ BACK
-        "Project",
-        "Unit",
-        "House",
-        "Stage",
-        "Status",
-        "Timestamp"
+        "Product", "Type", "Orientation",
+        "Project", "Unit", "House",
+        "Stage", "Status", "Timestamp"
     ])
 
     if df.empty:
@@ -134,7 +134,6 @@ def show_product_tracking(conn, cur):
     df["Date"] = pd.to_datetime(df["Timestamp"], errors="coerce")
     df["Date"] = df["Date"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
     df["Date"] = df["Date"].dt.strftime("%d-%m-%Y")
-
     df = df.drop(columns=["Timestamp"])
 
     # ================= PROGRESS =================
