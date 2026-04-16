@@ -6,6 +6,15 @@ def run_engine(conn, cur):
     st.title("⚙️ Scheduling Intelligence Engine")
     today = datetime.now()
 
+    # ================= CONFIG =================
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS house_config (
+            house_no TEXT PRIMARY KEY,
+            sla_date DATE
+        )
+    """)
+    conn.commit()
+
     # ================= ACTIVITIES =================
     cur.execute("""
         SELECT activity_name, sequence_order, duration_days
@@ -20,12 +29,14 @@ def run_engine(conn, cur):
 
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     total_duration = activity_df["days"].sum()
+    total_seq = activity_df["seq"].max()
+    first_stage = activity_df.iloc[0]["stage"]
 
     # ================= PROJECT =================
     col1, col2 = st.columns(2)
 
     with col1:
-        cur.execute("SELECT project_id, project_name FROM projects")
+        cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
         projects = cur.fetchall()
         project_dict = {p[1]: p[0] for p in projects}
         selected_project = st.selectbox("Project", list(project_dict.keys()))
@@ -44,8 +55,13 @@ def run_engine(conn, cur):
                 (unit_dict[selected_unit],))
     houses = [h[0] for h in cur.fetchall()]
 
-    selected_house = st.selectbox("House", houses)
-    sla_date = st.date_input("SLA (Optional)")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        selected_house = st.selectbox("House", houses)
+
+    with col2:
+        sla_date = st.date_input("SLA (Optional)")
 
     if st.button("Save SLA"):
         cur.execute("""
@@ -62,7 +78,11 @@ def run_engine(conn, cur):
 
     # ================= TRACKING =================
     cur.execute("""
-        SELECT h.house_no, s.stage_name, t.timestamp, s.sequence
+        SELECT 
+            h.house_no,
+            s.stage_name,
+            t.timestamp,
+            s.sequence
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
         JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
@@ -70,93 +90,148 @@ def run_engine(conn, cur):
         WHERE h.unit_id = %s
     """, (unit_dict[selected_unit],))
 
-    rows = cur.fetchall()
-
-    df = pd.DataFrame(rows, columns=["house","stage","time","seq"])
+    df = pd.DataFrame(cur.fetchall(), columns=["house","stage","time","seq"])
 
     if df.empty:
-        st.warning("No tracking data available")
+        st.warning("No tracking data")
+        return
 
-    # 🔴 ALWAYS RUN STRUCTURE
+    df["time"] = pd.to_datetime(df["time"])
+
     results = []
     early_warnings = []
-    stage_delay_list = []
+    movement_summary = []
 
-    if not df.empty:
-        df["time"] = pd.to_datetime(df["time"])
+    # ================= STAGE MOVEMENT =================
+    for house in df["house"].unique():
+        house_df = df[df["house"] == house]
+        movement_summary.append({
+            "House": house,
+            "Stages Reached": house_df["seq"].nunique(),
+            "Max Stage": house_df["seq"].max()
+        })
 
-        for house in df["house"].unique():
+    movement_df = pd.DataFrame(movement_summary)
 
-            house_df = df[df["house"] == house].sort_values("time")
+    # ================= MAIN LOOP =================
+    for house in df["house"].unique():
 
-            start_date = house_df["time"].min()
+        house_df = df[df["house"] == house].sort_values("time")
 
-            latest = house_df.loc[house_df["time"].idxmax()]
-            current_stage = latest["stage"]
-            current_seq = latest["seq"]
+        meas = house_df[house_df["stage"] == first_stage]
+        if meas.empty:
+            continue
 
-            # -------- PROGRESS --------
-            completed_weight = activity_df[
-                activity_df["seq"] <= current_seq
-            ]["days"].sum()
+        start_date = meas["time"].min()
 
-            progress = (completed_weight / total_duration) * 100
+        # -------- CURRENT STAGE --------
+        latest_row = house_df.loc[house_df["time"].idxmax()]
+        current_stage = latest_row["stage"]
 
-            # -------- PLANNED --------
-            planned_finish = start_date + timedelta(days=int(total_duration))
+        # -------- PROGRESS --------
+        max_seq_reached = house_df["seq"].max()
+        progress = (max_seq_reached / total_seq) * 100
 
-            # -------- ACTUAL --------
-            elapsed_days = (today - start_date).days
+        # -------- PLANNED --------
+        planned_finish = start_date + timedelta(days=int(total_duration))
 
-            # -------- VARIANCE --------
-            variance = elapsed_days - completed_weight
+        # -------- PREDICTION (STABLE) --------
+        if progress < 20 or current_stage == first_stage:
+            predicted = planned_finish
+        else:
+            remaining_days = activity_df[activity_df["seq"] > max_seq_reached]["days"].sum()
+            predicted = today + timedelta(days=int(remaining_days))
 
-            # -------- PREDICTION --------
-            if completed_weight < 5:
-                predicted = planned_finish
-            else:
-                remaining = total_duration - completed_weight
-                productivity = elapsed_days / max(1, completed_weight)
-                predicted = today + timedelta(days=int(remaining * productivity))
+        # -------- DELAY --------
+        delay_days = (predicted - planned_finish).days
 
-            # -------- DELAY --------
-            delay_days = (predicted - planned_finish).days
+        if delay_days < 0:
+            delay_display = f"Ahead {abs(delay_days)}d"
+        elif delay_days == 0:
+            delay_display = "On time"
+        else:
+            delay_display = f"Delay {delay_days}d"
 
-            if delay_days > 0:
-                delay_display = f"Delay {delay_days}d"
-            elif delay_days < 0:
-                delay_display = f"Ahead {abs(delay_days)}d"
-            else:
-                delay_display = "On time"
+        # -------- SLA + PRIORITY --------
+        sla = config_map.get(house)
+        expected_finish = pd.to_datetime(sla) if sla else None
 
-            # -------- SLA --------
-            sla = config_map.get(house)
-            expected_finish = pd.to_datetime(sla) if sla else None
+        def get_priority(score):
+            if score >= 80: return "🔴 Critical"
+            elif score >= 50: return "🟠 High"
+            elif score >= 20: return "🟡 Medium"
+            else: return "🟢 Low"
 
-            if expected_finish and predicted > expected_finish:
-                early_warnings.append({
-                    "House": house,
-                    "Delay": (predicted - expected_finish).days
-                })
+        if expected_finish:
+            sla_delay = (predicted - expected_finish).days
+            priority = get_priority(max(0, sla_delay)*10)
+        else:
+            priority = None
 
-            results.append({
+        # -------- EARLY WARNING --------
+        if expected_finish and predicted > expected_finish:
+            early_warnings.append({
                 "House": house,
                 "Stage": current_stage,
-                "Progress %": round(progress,1),
-                "Delay": delay_display,
                 "Predicted Finish": predicted.date(),
-                "Variance": variance
+                "SLA": expected_finish.date(),
+                "Delay (days)": (predicted - expected_finish).days
             })
+
+        # -------- REASON --------
+        if progress < 5:
+            reason = "Just started"
+        elif progress < 40:
+            reason = "In progress"
+        elif progress < 90:
+            reason = "Advanced stage"
+        else:
+            reason = "Near completion"
+
+        results.append({
+            "House": house,
+            "Stage": current_stage,
+            "Progress %": round(progress,1),
+            "Delay": delay_display,
+            "Predicted Finish": predicted.date(),
+            "SLA": expected_finish,
+            "Priority": priority,
+            "Reason": reason
+        })
 
     result_df = pd.DataFrame(results)
 
+    # ================= SMART BOTTLENECK =================
+    unique_stages = df["seq"].nunique()
+
+    if unique_stages == 1:
+        bottleneck_msg = "⚠️ Project still in initial stage (Measurement)"
+    else:
+        latest_house_stage = df.loc[df.groupby("house")["time"].idxmax()]
+        stage_counts = latest_house_stage.groupby("stage").size()
+        bottleneck_stage = stage_counts.idxmax()
+        bottleneck_msg = f"Most Congested Stage: {bottleneck_stage}"
+
     # ================= OUTPUT =================
 
+    st.subheader("🚨 Priority Table (SLA Only)")
+    priority_df = result_df[result_df["SLA"].notna()]
+    st.dataframe(priority_df[["House","Stage","Delay","SLA","Priority","Reason"]])
+
     st.subheader("🏠 House Intelligence")
-    st.dataframe(result_df)
+    st.dataframe(result_df[["House","Stage","Progress %","Delay","Predicted Finish","Reason"]])
 
     st.subheader("🚨 Early Warning")
     if early_warnings:
         st.dataframe(pd.DataFrame(early_warnings))
     else:
         st.success("No early risks")
+
+    st.subheader("📊 Stage Movement Summary")
+    st.dataframe(movement_df)
+
+    st.subheader("🚧 Bottleneck")
+    if unique_stages == 1:
+        st.warning(bottleneck_msg)
+    else:
+        st.error(bottleneck_msg)
