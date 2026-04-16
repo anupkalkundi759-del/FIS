@@ -70,7 +70,12 @@ def run_engine(conn, cur):
         conn.commit()
         st.success("Saved")
 
-    cur.execute("SELECT house_no, sla_date FROM house_config")
+    # ✅ FIXED: Scoped SLA fetch
+    cur.execute("""
+        SELECT house_no, sla_date 
+        FROM house_config
+        WHERE house_no = ANY(%s)
+    """, (houses,))
     config_map = {r[0]: r[1] for r in cur.fetchall()}
 
     # ================= TRACKING =================
@@ -98,28 +103,23 @@ def run_engine(conn, cur):
 
         house_df = df[df["house"] == house]
 
-        # -------- START DATE --------
         meas = house_df[house_df["stage"] == "Measurement"]
         if meas.empty:
             continue
 
         start_date = meas["time"].min()
 
-        # -------- PROGRESS (FIXED MODEL) --------
+        # ✅ FIXED current stage
+        house_df_sorted = house_df.sort_values("seq")
+        current = house_df_sorted.iloc[-1]
+        current_stage = current["stage"]
+
         max_seq_reached = house_df["seq"].max()
         progress = (max_seq_reached / total_seq) * 100
 
-        # -------- CURRENT STAGE --------
-        current = house_df.loc[house_df["seq"].idxmax()]
-        current_stage = current["stage"]
-
-        # -------- ELAPSED --------
         elapsed_days = max(1, (today - start_date).days)
-
-        # -------- SPEED --------
         speed = progress / elapsed_days
 
-        # -------- PREDICTION --------
         if speed == 0:
             predicted = start_date + timedelta(days=int(total_duration))
         else:
@@ -127,10 +127,8 @@ def run_engine(conn, cur):
             days_needed = remaining / speed
             predicted = today + timedelta(days=int(days_needed))
 
-        # -------- PLANNED --------
         planned_finish = start_date + timedelta(days=int(total_duration))
 
-        # -------- DELAY --------
         delay_days = (predicted - planned_finish).days
 
         if delay_days < 0:
@@ -140,24 +138,24 @@ def run_engine(conn, cur):
         else:
             delay_display = f"Delay {delay_days}d"
 
-        # -------- SLA --------
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        # -------- PRIORITY --------
-        def get_priority(score):
-            if score >= 80: return "🔴 Critical"
-            elif score >= 50: return "🟠 High"
-            elif score >= 20: return "🟡 Medium"
-            else: return "🟢 Low"
-
+        # ✅ FIXED PRIORITY LOGIC
         if expected_finish:
             sla_delay = (predicted - expected_finish).days
-            priority = get_priority(max(0, sla_delay)*10)
+
+            if sla_delay > 5:
+                priority = "🔴 Critical"
+            elif sla_delay > 2:
+                priority = "🟠 High"
+            elif sla_delay > 0:
+                priority = "🟡 Medium"
+            else:
+                priority = "🟢 On Track"
         else:
             priority = None
 
-        # -------- REASON --------
         if progress < 5:
             reason = "Just started"
         elif delay_days > 0:
@@ -167,7 +165,6 @@ def run_engine(conn, cur):
         else:
             reason = "On track"
 
-        # -------- EARLY WARNING --------
         if expected_finish and predicted > expected_finish:
             early_warnings.append({
                 "House": house,
