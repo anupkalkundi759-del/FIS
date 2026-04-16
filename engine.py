@@ -116,10 +116,9 @@ def run_engine(conn, cur):
 
         start_date = meas["time"].min()
 
-        # -------- PROGRESS (REAL DATA BASED) --------
+        # -------- PROGRESS (REAL BASED) --------
         total = len(house_data)
         completed = len(house_data[house_data["stage"] == "Measurement"])
-
         progress = (completed / total) * 100 if total else 0
 
         # -------- CURRENT STAGE --------
@@ -127,30 +126,25 @@ def run_engine(conn, cur):
         current_stage = latest["stage"]
         current_time = latest["time"]
 
-        # -------- PRODUCTIVITY (SIMPLE SAFE) --------
-        productivity = 1  # keep stable (no fake fluctuation)
+        # -------- PLANNED FINISH --------
+        planned_finish = start_date + timedelta(days=total_duration)
+
+        # -------- PREDICTED FINISH --------
+        predicted = planned_finish  # simple baseline (no fake logic)
+
+        # -------- DELAY (BASED ON PLAN, NOT SLA) --------
+        delay_days = (predicted - planned_finish).days
+
+        if delay_days < 0:
+            delay_display = f"Ahead {abs(delay_days)}d"
+        elif delay_days == 0:
+            delay_display = "On time"
+        else:
+            delay_display = f"Delay {delay_days}d"
 
         # -------- SLA --------
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
-
-        # -------- PREDICTION --------
-        remaining = total_duration * (1 - progress / 100)
-        predicted = start_date + timedelta(days=int(total_duration))
-
-        delay = None
-        if expected_finish:
-            delay = (predicted - expected_finish).days
-
-        # -------- DELAY DISPLAY --------
-        if expected_finish is None:
-            delay_display = "No SLA"
-        elif delay < 0:
-            delay_display = f"Ahead {abs(delay)}d"
-        elif delay == 0:
-            delay_display = "On time"
-        else:
-            delay_display = f"Delay {delay}d"
 
         # -------- PRIORITY (ONLY SLA) --------
         def get_priority(score):
@@ -162,25 +156,24 @@ def run_engine(conn, cur):
         if expected_finish is None:
             priority = None
         else:
-            priority_score = max(0, delay) * 10
+            sla_delay = (planned_finish - expected_finish).days
+            priority_score = max(0, sla_delay) * 10
             priority = get_priority(priority_score)
 
         # -------- REASON --------
         if progress == 0:
             reason = "Not started"
-        elif expected_finish and delay and delay > 0:
-            reason = "Will miss SLA"
         elif progress < 30:
             reason = "Slow progress"
         else:
             reason = "On track"
 
         # -------- EARLY WARNING --------
-        if expected_finish and predicted > expected_finish:
+        if expected_finish and planned_finish > expected_finish:
             early_warnings.append({
                 "House": house,
-                "Issue": "Will be delayed",
-                "Delay (days)": delay
+                "Issue": "Will miss SLA",
+                "Delay (days)": (planned_finish - expected_finish).days
             })
 
         # -------- BOTTLENECK --------
@@ -194,7 +187,7 @@ def run_engine(conn, cur):
             "Progress %": round(progress, 1),
             "Delay": delay_display,
             "SLA": expected_finish,
-            "Predicted Finish": predicted.date(),
+            "Predicted Finish": planned_finish.date(),
             "Priority": priority,
             "Reason": reason
         })
