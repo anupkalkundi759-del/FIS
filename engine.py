@@ -73,76 +73,85 @@ def run_engine(conn, cur):
         conn.commit()
         st.success("Saved")
 
-    cur.execute("SELECT house_no, sla_date FROM house_config")
+    # FIXED: Only fetch SLA for current houses
+    cur.execute("""
+        SELECT house_no, sla_date 
+        FROM house_config
+        WHERE house_no = ANY(%s)
+    """, (houses,))
     config_map = {r[0]: r[1] for r in cur.fetchall()}
 
-    # ================= TRACKING =================
+    # ================= TRACKING (FIXED - LEFT JOIN) =================
     cur.execute("""
         SELECT 
             h.house_no,
             s.stage_name,
             t.timestamp,
             s.sequence
-        FROM products p
-        JOIN houses h ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
-        JOIN stages s ON t.stage_id = s.stage_id
+        FROM houses h
+        LEFT JOIN products p ON p.house_id = h.house_id
+        LEFT JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
+        LEFT JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
     """, (unit_dict[selected_unit],))
 
     df = pd.DataFrame(cur.fetchall(), columns=["house","stage","time","seq"])
 
     if df.empty:
-        st.warning("No tracking data")
+        st.warning("No data available")
         return
 
-    df["time"] = pd.to_datetime(df["time"])
+    df["time"] = pd.to_datetime(df["time"], errors="coerce")
 
     results = []
     early_warnings = []
-    movement_summary = []
-
-    # ================= STAGE MOVEMENT =================
-    for house in df["house"].unique():
-        house_df = df[df["house"] == house]
-        movement_summary.append({
-            "House": house,
-            "Stages Reached": house_df["seq"].nunique(),
-            "Max Stage": house_df["seq"].max()
-        })
-
-    movement_df = pd.DataFrame(movement_summary)
 
     # ================= MAIN LOOP =================
     for house in df["house"].unique():
 
-        house_df = df[df["house"] == house].sort_values("time")
+        house_df = df[df["house"] == house].dropna(subset=["time"])
+
+        # -------- NO TRACKING --------
+        if house_df.empty:
+            results.append({
+                "House": house,
+                "Stage": "Not Started",
+                "Progress %": 0,
+                "Delay": "Not started",
+                "Predicted Finish": None,
+                "SLA": None,
+                "Priority": None,
+                "Reason": "No activity"
+            })
+            continue
+
+        house_df = house_df.sort_values("time")
 
         meas = house_df[house_df["stage"] == first_stage]
         if meas.empty:
-            continue
+            start_date = house_df["time"].min()
+        else:
+            start_date = meas["time"].min()
 
-        start_date = meas["time"].min()
-
-        # -------- CURRENT STAGE --------
+        # CURRENT STAGE
         latest_row = house_df.loc[house_df["time"].idxmax()]
         current_stage = latest_row["stage"]
 
-        # -------- PROGRESS --------
+        # PROGRESS
         max_seq_reached = house_df["seq"].max()
         progress = (max_seq_reached / total_seq) * 100
 
-        # -------- PLANNED --------
+        # PLANNED
         planned_finish = start_date + timedelta(days=int(total_duration))
 
-        # -------- PREDICTION (STABLE) --------
+        # PREDICTION
         if progress < 20 or current_stage == first_stage:
             predicted = planned_finish
         else:
             remaining_days = activity_df[activity_df["seq"] > max_seq_reached]["days"].sum()
             predicted = today + timedelta(days=int(remaining_days))
 
-        # -------- DELAY --------
+        # DELAY
         delay_days = (predicted - planned_finish).days
 
         if delay_days < 0:
@@ -152,7 +161,7 @@ def run_engine(conn, cur):
         else:
             delay_display = f"Delay {delay_days}d"
 
-        # -------- SLA + PRIORITY --------
+        # SLA + PRIORITY
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
@@ -164,11 +173,11 @@ def run_engine(conn, cur):
 
         if expected_finish:
             sla_delay = (predicted - expected_finish).days
-            priority = get_priority(max(0, sla_delay)*10)
+            priority = get_priority(max(0, sla_delay) * 10)
         else:
             priority = None
 
-        # -------- EARLY WARNING --------
+        # EARLY WARNING
         if expected_finish and predicted > expected_finish:
             early_warnings.append({
                 "House": house,
@@ -178,7 +187,7 @@ def run_engine(conn, cur):
                 "Delay (days)": (predicted - expected_finish).days
             })
 
-        # -------- REASON --------
+        # REASON
         if progress < 5:
             reason = "Just started"
         elif progress < 40:
@@ -201,13 +210,13 @@ def run_engine(conn, cur):
 
     result_df = pd.DataFrame(results)
 
-    # ================= SMART BOTTLENECK =================
+    # ================= BOTTLENECK =================
     unique_stages = df["seq"].nunique()
 
-    if unique_stages == 1:
+    if unique_stages <= 1:
         bottleneck_msg = "⚠️ Project still in initial stage (Measurement)"
     else:
-        latest_house_stage = df.loc[df.groupby("house")["time"].idxmax()]
+        latest_house_stage = df.dropna(subset=["time"]).loc[df.groupby("house")["time"].idxmax()]
         stage_counts = latest_house_stage.groupby("stage").size()
         bottleneck_stage = stage_counts.idxmax()
         bottleneck_msg = f"Most Congested Stage: {bottleneck_stage}"
@@ -227,11 +236,8 @@ def run_engine(conn, cur):
     else:
         st.success("No early risks")
 
-    st.subheader("📊 Stage Movement Summary")
-    st.dataframe(movement_df)
-
     st.subheader("🚧 Bottleneck")
-    if unique_stages == 1:
+    if unique_stages <= 1:
         st.warning(bottleneck_msg)
     else:
         st.error(bottleneck_msg)
