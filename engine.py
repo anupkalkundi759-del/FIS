@@ -70,12 +70,13 @@ def run_engine(conn, cur):
         conn.commit()
         st.success("Saved")
 
-    # ✅ FIXED: Scoped SLA fetch
+    # ================= SLA FETCH (FIXED 🔥) =================
     cur.execute("""
-        SELECT house_no, sla_date 
-        FROM house_config
-        WHERE house_no = ANY(%s)
-    """, (houses,))
+        SELECT hc.house_no, hc.sla_date
+        FROM house_config hc
+        JOIN houses h ON hc.house_no = h.house_no
+        WHERE h.unit_id = %s
+    """, (unit_dict[selected_unit],))
     config_map = {r[0]: r[1] for r in cur.fetchall()}
 
     # ================= TRACKING =================
@@ -89,6 +90,7 @@ def run_engine(conn, cur):
     """, (unit_dict[selected_unit],))
 
     df = pd.DataFrame(cur.fetchall(), columns=["house","stage","time","seq"])
+
     if df.empty:
         st.warning("No tracking data")
         return
@@ -109,7 +111,6 @@ def run_engine(conn, cur):
 
         start_date = meas["time"].min()
 
-        # ✅ FIXED current stage
         house_df_sorted = house_df.sort_values("seq")
         current = house_df_sorted.iloc[-1]
         current_stage = current["stage"]
@@ -141,7 +142,7 @@ def run_engine(conn, cur):
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        # ✅ FIXED PRIORITY LOGIC
+        # ================= PRIORITY =================
         if expected_finish:
             sla_delay = (predicted - expected_finish).days
 
@@ -185,11 +186,8 @@ def run_engine(conn, cur):
 
     result_df = pd.DataFrame(results)
 
-    # ================= BOTTLENECK =================
-    stage_counts = df.groupby("stage").size()
-    bottleneck_stage = stage_counts.idxmax()
-
     # ================= OUTPUT =================
+
     st.subheader("🚨 Priority Table (SLA Only)")
     priority_df = result_df[result_df["SLA"].notna()]
     st.dataframe(priority_df[["House","Stage","Delay","SLA","Priority","Reason"]])
@@ -204,4 +202,6 @@ def run_engine(conn, cur):
         st.success("No early risks")
 
     st.subheader("🚧 Bottleneck")
+    stage_counts = df.groupby("stage").size()
+    bottleneck_stage = stage_counts.idxmax()
     st.error(f"Most Congested Stage: {bottleneck_stage}")
