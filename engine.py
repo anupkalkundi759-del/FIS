@@ -50,7 +50,7 @@ def run_engine(conn, cur):
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    # ================= SLA =================
+    # ================= SLA ASSIGNMENT =================
     st.subheader("⚙️ SLA Assignment")
 
     cur.execute("SELECT house_no FROM houses WHERE unit_id=%s", (unit_dict[selected_unit],))
@@ -77,7 +77,7 @@ def run_engine(conn, cur):
         conn.commit()
         st.success("Saved")
 
-    # ================= LOAD SLA =================
+    # ================= LOAD CONFIG =================
     cur.execute("SELECT house_no, sla_date FROM house_config")
     config_map = {r[0]: r[1] for r in cur.fetchall()}
 
@@ -99,15 +99,16 @@ def run_engine(conn, cur):
     df = pd.DataFrame(cur.fetchall(), columns=["house", "product", "stage", "time", "seq"])
 
     if df.empty:
-        st.warning("⚠️ No tracking data available")
-
+        st.warning("No tracking data at all")
+    
     df["time"] = pd.to_datetime(df["time"], errors="coerce")
 
-    # ================= PROCESS =================
+    # ================= HOUSE LEVEL =================
     results = []
     early_warnings = []
     stuck_stages = []
 
+    # IMPORTANT: loop ALL houses (not just df houses)
     for house in houses:
 
         house_data = df[df["house"] == house] if not df.empty else pd.DataFrame()
@@ -115,12 +116,12 @@ def run_engine(conn, cur):
         # -------- START DATE --------
         meas = house_data[house_data["stage"] == "Measurement"] if not house_data.empty else pd.DataFrame()
 
-        if not meas.empty:
-            start_date = meas["time"].min()
-        else:
+        if meas.empty:
             start_date = today
+        else:
+            start_date = meas["time"].min()
 
-        # -------- PROGRESS --------
+        # -------- PROGRESS (HYBRID) --------
         total_stages = len(activity_df)
         total_products = house_data["product"].nunique() if not house_data.empty else 0
 
@@ -137,19 +138,28 @@ def run_engine(conn, cur):
 
         progress = (progress_sum / total_stages) * 100 if total_stages else 0
 
-        # -------- CURRENT STAGE SAFE --------
-        valid_data = house_data.dropna(subset=["seq"]) if not house_data.empty else pd.DataFrame()
-
-        if not valid_data.empty:
-            latest = valid_data.sort_values("seq").iloc[-1]
+        # -------- CURRENT STAGE --------
+        if not house_data.empty:
+            latest = house_data.sort_values("seq").dropna(subset=["seq"]).iloc[-1]
             current_stage = latest["stage"]
             current_time = latest["time"]
         else:
             current_stage = "Not started"
             current_time = today
 
-        # -------- FINISH --------
+        # -------- PLANNED FINISH --------
         planned_finish = start_date + timedelta(days=total_duration)
+        predicted = planned_finish
+
+        # -------- DELAY --------
+        delay_days = (predicted - planned_finish).days
+
+        if delay_days < 0:
+            delay_display = f"Ahead {abs(delay_days)}d"
+        elif delay_days == 0:
+            delay_display = "On time"
+        else:
+            delay_display = f"Delay {delay_days}d"
 
         # -------- SLA --------
         sla = config_map.get(house)
@@ -187,15 +197,15 @@ def run_engine(conn, cur):
 
         # -------- BOTTLENECK --------
         if current_stage != "Not started":
-            stage_days = activity_df[activity_df["stage"] == current_stage]["days"].values
-            if len(stage_days) > 0:
-                if (today - current_time).days > stage_days[0]:
-                    stuck_stages.append(current_stage)
+            stage_days = activity_df[activity_df["stage"] == current_stage]["days"].values[0]
+            if (today - current_time).days > stage_days:
+                stuck_stages.append(current_stage)
 
         results.append({
             "House": house,
             "Stage": current_stage,
             "Progress %": round(progress, 1),
+            "Delay": delay_display,
             "SLA": expected_finish,
             "Predicted Finish": planned_finish.date(),
             "Priority": priority,
@@ -208,18 +218,12 @@ def run_engine(conn, cur):
 
     st.subheader("🚨 Priority Table (SLA Only)")
     priority_df = result_df[result_df["SLA"].notna()]
-
-    if priority_df.empty:
-        st.info("No SLA data available")
-    else:
-        st.dataframe(priority_df[["House","Stage","SLA","Priority","Reason"]])
+    priority_df = priority_df[["House","Stage","Delay","SLA","Priority","Reason"]]
+    st.dataframe(priority_df)
 
     st.subheader("🏠 House Intelligence")
-
-    if result_df.empty:
-        st.info("No house data")
-    else:
-        st.dataframe(result_df)
+    house_df = result_df[["House","Stage","Progress %","Delay","Predicted Finish","Reason"]]
+    st.dataframe(house_df)
 
     st.subheader("🚨 Early Warning")
     if early_warnings:
