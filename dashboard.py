@@ -15,6 +15,12 @@ def show_dashboard(conn, cur):
 
             COUNT(DISTINCT pr.product_instance_id) AS total_products,
 
+            -- ✅ NEW: COMPLETED
+            COUNT(DISTINCT CASE 
+                WHEN s.stage_name = 'Final Assembly' AND t.status = 'Completed'
+                THEN pr.product_instance_id
+            END) AS completed,
+
             COUNT(DISTINCT CASE 
                 WHEN s.stage_name = 'Dispatch' AND t.status = 'Completed' 
                 THEN pr.product_instance_id 
@@ -52,6 +58,7 @@ def show_dashboard(conn, cur):
         "Project",
         "Total Houses",
         "Total Products",
+        "Completed",          # ✅ added
         "Dispatched",
         "Pending",
         "Last Dispatch Time"
