@@ -4,7 +4,7 @@ def show_product_tracking(conn, cur):
 
     st.title("🔎 Product Tracking")
 
-    # ================= FILTERS =================
+    # ================= MAIN FILTERS =================
     col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
@@ -48,7 +48,7 @@ def show_product_tracking(conn, cur):
 
     search = col6.text_input("Search")
 
-    # ================= MAIN QUERY =================
+    # ================= MAIN TABLE =================
     query = """
         SELECT 
             pm.product_code,
@@ -102,8 +102,6 @@ def show_product_tracking(conn, cur):
         query += " AND pm.product_code ILIKE %s"
         params.append(f"%{search}%")
 
-    query += " ORDER BY pr.project_name, u.unit_name, h.house_no"
-
     cur.execute(query, tuple(params))
     data = cur.fetchall()
 
@@ -122,41 +120,32 @@ def show_product_tracking(conn, cur):
     df["Date & Time"] = df["Date & Time"].dt.strftime("%d-%m-%Y %H:%M")
     df = df.drop(columns=["Timestamp"])
 
-    # ================= PROGRESS =================
-    stage_order = {
-        "Measurement": 1,
-        "Cutting": 2,
-        "Production": 3,
-        "Pre Assembly": 4,
-        "Polishing": 5,
-        "Final Assembly": 6,
-        "Dispatch": 7
-    }
-
-    TOTAL_STAGES = len(stage_order)
-
-    def calculate_progress(row):
-        stage = row["Stage"]
-        status = row["Status"]
-
-        if stage not in stage_order:
-            return 0
-
-        base = (stage_order[stage] - 1) / TOTAL_STAGES * 100
-
-        if status == "Completed":
-            return round((stage_order[stage] / TOTAL_STAGES) * 100, 1)
-        elif status == "In Progress":
-            return round(base + (100 / TOTAL_STAGES) * 0.5, 1)
-        else:
-            return round(base, 1)
-
-    df["Progress %"] = df.apply(calculate_progress, axis=1)
-
     st.dataframe(df, use_container_width=True)
 
-    # ================= PRODUCT STATUS BREAKDOWN =================
+    # ================= NEW BREAKDOWN FILTER =================
     st.divider()
+    st.subheader("🎯 Breakdown Filters")
+
+    b1, b2 = st.columns(2)
+
+    with b1:
+        breakdown_project = st.selectbox("Project (Breakdown)", projects, key="b_proj")
+
+    with b2:
+        if breakdown_project == "All":
+            breakdown_units = ["All"]
+        else:
+            cur.execute("""
+                SELECT DISTINCT u.unit_name
+                FROM units u
+                JOIN projects p ON u.project_id = p.project_id
+                WHERE p.project_name = %s
+            """, (breakdown_project,))
+            breakdown_units = ["All"] + [u[0] for u in cur.fetchall()]
+
+        breakdown_unit = st.selectbox("Unit (Breakdown)", breakdown_units, key="b_unit")
+
+    # ================= PRODUCT STATUS BREAKDOWN =================
     st.subheader("📊 Product Status Breakdown")
 
     query2 = """
@@ -165,7 +154,6 @@ def show_product_tracking(conn, cur):
                 p.id,
                 pr.project_name,
                 u.unit_name,
-                h.house_no,
                 pm.product_code,
                 s.stage_name,
                 t.status,
@@ -185,17 +173,13 @@ def show_product_tracking(conn, cur):
 
     params2 = []
 
-    if selected_project != "All":
+    if breakdown_project != "All":
         query2 += " AND pr.project_name = %s"
-        params2.append(selected_project)
+        params2.append(breakdown_project)
 
-    if selected_unit != "All":
+    if breakdown_unit != "All":
         query2 += " AND u.unit_name = %s"
-        params2.append(selected_unit)
-
-    if selected_house != "All":
-        query2 += " AND h.house_no = %s"
-        params2.append(selected_house)
+        params2.append(breakdown_unit)
 
     query2 += """
         )
