@@ -30,6 +30,9 @@ def run_engine(conn, cur):
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     activity_df["days"] = activity_df["days"].astype(int)
 
+    # ✅ USE DB DURATION
+    total_duration = activity_df["days"].sum()
+
     # ================= PROJECT / UNIT =================
     col1, col2 = st.columns(2)
 
@@ -137,21 +140,9 @@ def run_engine(conn, cur):
         current_stage = latest["stage"]
         current_time = latest["time"]
 
-        # -------- CONTROLLED DURATION --------
-        MIN_DAYS = 20
-        MAX_DAYS = 25
-
-        planned_finish = start_date + timedelta(days=MIN_DAYS)
-
-        elapsed_days = (today - start_date).days
-
-        if progress > 10 and elapsed_days > 2:
-            rate = progress / elapsed_days
-            forecast_total_days = 100 / rate
-            forecast_total_days = max(MIN_DAYS, min(forecast_total_days, MAX_DAYS))
-            predicted_finish = start_date + timedelta(days=int(forecast_total_days))
-        else:
-            predicted_finish = planned_finish
+        # ✅ PURE DB-DRIVEN TIMELINE
+        planned_finish = start_date + timedelta(days=int(total_duration))
+        predicted_finish = planned_finish
 
         # -------- REMAINING DAYS --------
         remaining_days = (predicted_finish - today).days
