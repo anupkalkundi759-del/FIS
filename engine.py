@@ -107,12 +107,14 @@ def run_engine(conn, cur):
 
     # ================= HOUSE LEVEL =================
     results = []
-    alerts = []
+    early_warnings = []
+    stuck_stages = []
 
     for house in df["house"].unique():
 
         house_data = df[df["house"] == house]
 
+        # -------- START DATE --------
         meas = house_data[house_data["stage"] == "Measurement"]
         if meas.empty:
             continue
@@ -131,17 +133,19 @@ def run_engine(conn, cur):
 
         progress = (progress_sum / total_stages) * 100 if total_stages else 0
 
+        # -------- CURRENT STAGE --------
         latest = house_data.sort_values("seq").iloc[-1]
         current_stage = latest["stage"]
         current_time = latest["time"]
 
-        # -------- TIMELINE --------
+        # -------- TIMELINE (DB DRIVEN) --------
         planned_finish = start_date + timedelta(days=int(total_duration))
         predicted_finish = planned_finish
 
+        # -------- REMAINING DAYS --------
         remaining_days = (predicted_finish - today).days
 
-        # -------- ALERT LOGIC --------
+        # -------- ALERT --------
         if remaining_days < 0:
             alert = "🔴 Overdue"
         elif remaining_days <= 3:
@@ -153,13 +157,35 @@ def run_engine(conn, cur):
 
         # -------- DELAY --------
         delay_days = (predicted_finish - planned_finish).days
-        delay_display = "On time" if delay_days == 0 else f"Delay {delay_days}d"
 
+        if delay_days < 0:
+            delay_display = f"Ahead {abs(delay_days)}d"
+        elif delay_days == 0:
+            delay_display = "On time"
+        else:
+            delay_display = f"Delay {delay_days}d"
+
+        # -------- SLA --------
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
+        # -------- PRIORITY --------
+        def get_priority(score):
+            if score >= 80: return "🔴 Critical"
+            elif score >= 50: return "🟠 High"
+            elif score >= 20: return "🟡 Medium"
+            else: return "🟢 Low"
+
+        if expected_finish is None:
+            priority = None
+        else:
+            sla_delay = (predicted_finish - expected_finish).days
+            priority_score = max(0, sla_delay) * 10
+            priority = get_priority(priority_score)
+
+        # -------- EARLY WARNING --------
         if expected_finish and predicted_finish > expected_finish:
-            alerts.append({
+            early_warnings.append({
                 "House": house,
                 "Issue": "Will miss SLA",
                 "Delay (days)": (predicted_finish - expected_finish).days
@@ -168,12 +194,9 @@ def run_engine(conn, cur):
         # -------- BOTTLENECK --------
         stage_days = activity_df[activity_df["stage"] == current_stage]["days"].values[0]
         if (today - current_time).days > stage_days:
-            alerts.append({
-                "House": house,
-                "Issue": f"Stuck in {current_stage}",
-                "Delay (days)": (today - current_time).days
-            })
+            stuck_stages.append(current_stage)
 
+        # -------- RESULT --------
         results.append({
             "House": house,
             "Stage": current_stage,
@@ -181,18 +204,31 @@ def run_engine(conn, cur):
             "Remaining Days": remaining_days,
             "Status Alert": alert,
             "Delay": delay_display,
-            "Predicted Finish": predicted_finish.date()
+            "Predicted Finish": predicted_finish.date(),
+            "Priority": priority,
+            "Reason": "In progress" if progress > 0 else "Not started"
         })
 
     result_df = pd.DataFrame(results)
 
     # ================= OUTPUT =================
 
-    st.subheader("🚨 Alerts Summary")
-    if alerts:
-        st.dataframe(pd.DataFrame(alerts))
-    else:
-        st.success("No major alerts")
+    st.subheader("🚨 Priority Table (SLA Only)")
+    priority_df = result_df[result_df["Priority"].notna()]
+    st.dataframe(priority_df[["House","Stage","Remaining Days","Status Alert","Delay","Priority"]])
 
     st.subheader("🏠 House Intelligence")
     st.dataframe(result_df)
+
+    st.subheader("🚨 Early Warning")
+    if early_warnings:
+        st.dataframe(pd.DataFrame(early_warnings))
+    else:
+        st.success("No early risks")
+
+    st.subheader("🚧 Bottleneck")
+    if stuck_stages:
+        bottleneck = pd.Series(stuck_stages).value_counts().idxmax()
+        st.error(f"Most Stuck Stage: {bottleneck}")
+    else:
+        st.success("No bottleneck detected")
