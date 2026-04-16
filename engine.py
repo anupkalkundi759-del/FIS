@@ -50,7 +50,7 @@ def run_engine(conn, cur):
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    # ================= SLA ASSIGNMENT =================
+    # ================= SLA ASSIGNMENT (OLD SIMPLE) =================
     st.subheader("⚙️ SLA Assignment")
 
     cur.execute("SELECT house_no FROM houses WHERE unit_id=%s", (unit_dict[selected_unit],))
@@ -62,10 +62,7 @@ def run_engine(conn, cur):
         selected_house = st.selectbox("House", houses)
 
     with col2:
-        use_sla = st.checkbox("Set SLA")
-        sla_date = None
-        if use_sla:
-            sla_date = st.date_input("SLA Date")
+        sla_date = st.date_input("SLA (Optional)", value=None)
 
     if st.button("Save SLA"):
         if sla_date:
@@ -76,8 +73,7 @@ def run_engine(conn, cur):
                 DO UPDATE SET sla_date = EXCLUDED.sla_date
             """, (selected_house, sla_date))
         else:
-            cur.execute("DELETE FROM house_config WHERE house_no = %s", (selected_house,))
-        
+            cur.execute("DELETE FROM house_config WHERE house_no=%s", (selected_house,))
         conn.commit()
         st.success("Saved")
 
@@ -124,20 +120,18 @@ def run_engine(conn, cur):
 
         start_date = meas["time"].min()
 
-        # -------- TOTAL PRODUCTS --------
+        # -------- PROGRESS (HYBRID LOGIC) --------
+        total_stages = len(activity_df)
         total_products = house_data["product"].nunique()
 
-        # -------- PROGRESS (STRICT STAGE COMPLETION) --------
-        total_stages = len(activity_df)
-        completed_stages = 0
+        progress_sum = 0
 
         for stage in activity_df["stage"]:
             stage_products = house_data[house_data["stage"] == stage]["product"].nunique()
+            stage_completion = stage_products / total_products if total_products else 0
+            progress_sum += stage_completion
 
-            if stage_products == total_products:
-                completed_stages += 1
-
-        progress = (completed_stages / total_stages) * 100 if total_stages else 0
+        progress = (progress_sum / total_stages) * 100 if total_stages else 0
 
         # -------- CURRENT STAGE --------
         latest = house_data.sort_values("seq").iloc[-1]
@@ -146,7 +140,6 @@ def run_engine(conn, cur):
 
         # -------- PLANNED FINISH --------
         planned_finish = start_date + timedelta(days=total_duration)
-
         predicted = planned_finish
 
         # -------- DELAY --------
