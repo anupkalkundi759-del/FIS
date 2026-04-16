@@ -102,6 +102,8 @@ def show_product_tracking(conn, cur):
         query += " AND pm.product_code ILIKE %s"
         params.append(f"%{search}%")
 
+    query += " ORDER BY pr.project_name, u.unit_name, h.house_no"
+
     cur.execute(query, tuple(params))
     data = cur.fetchall()
 
@@ -153,16 +155,17 @@ def show_product_tracking(conn, cur):
 
     st.dataframe(df, use_container_width=True)
 
-    # ================= NEW: PRODUCT STATUS BREAKDOWN =================
+    # ================= PRODUCT STATUS BREAKDOWN =================
     st.divider()
     st.subheader("📊 Product Status Breakdown")
 
-    cur.execute("""
+    query2 = """
         WITH latest_stage AS (
             SELECT 
                 p.id,
                 pr.project_name,
                 u.unit_name,
+                h.house_no,
                 pm.product_code,
                 s.stage_name,
                 t.status,
@@ -177,6 +180,24 @@ def show_product_tracking(conn, cur):
             JOIN projects pr ON u.project_id = pr.project_id
             LEFT JOIN tracking_log t ON t.product_instance_id = p.id
             LEFT JOIN stages s ON t.stage_id = s.stage_id
+            WHERE 1=1
+    """
+
+    params2 = []
+
+    if selected_project != "All":
+        query2 += " AND pr.project_name = %s"
+        params2.append(selected_project)
+
+    if selected_unit != "All":
+        query2 += " AND u.unit_name = %s"
+        params2.append(selected_unit)
+
+    if selected_house != "All":
+        query2 += " AND h.house_no = %s"
+        params2.append(selected_house)
+
+    query2 += """
         )
         SELECT 
             project_name,
@@ -194,8 +215,9 @@ def show_product_tracking(conn, cur):
         WHERE rn = 1
         GROUP BY project_name, unit_name, product_code
         ORDER BY project_name, unit_name, product_code
-    """)
+    """
 
+    cur.execute(query2, tuple(params2))
     status_data = cur.fetchall()
 
     if status_data:
@@ -205,3 +227,5 @@ def show_product_tracking(conn, cur):
             "Cutting", "Production", "Pre Assembly", "Polishing", "Final Assembly"
         ])
         st.dataframe(status_df, use_container_width=True)
+    else:
+        st.warning("No product status data available")
