@@ -29,7 +29,6 @@ def run_engine(conn, cur):
 
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     activity_df["days"] = activity_df["days"].astype(int)
-    total_duration = int(activity_df["days"].sum())
 
     # ================= PROJECT / UNIT =================
     col1, col2 = st.columns(2)
@@ -50,7 +49,7 @@ def run_engine(conn, cur):
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    # ================= SLA ASSIGNMENT =================
+    # ================= SLA =================
     st.subheader("⚙️ SLA Assignment")
 
     cur.execute("SELECT house_no FROM houses WHERE unit_id=%s", (unit_dict[selected_unit],))
@@ -120,7 +119,7 @@ def run_engine(conn, cur):
 
         start_date = meas["time"].min()
 
-        # -------- PROGRESS (HYBRID LOGIC) --------
+        # -------- PROGRESS --------
         total_stages = len(activity_df)
         total_products = house_data["product"].nunique()
 
@@ -149,13 +148,13 @@ def run_engine(conn, cur):
         if progress > 10 and elapsed_days > 2:
             rate = progress / elapsed_days
             forecast_total_days = 100 / rate
-
-            # 🔴 CONTROL LIMIT
             forecast_total_days = max(MIN_DAYS, min(forecast_total_days, MAX_DAYS))
-
             predicted_finish = start_date + timedelta(days=int(forecast_total_days))
         else:
             predicted_finish = planned_finish
+
+        # -------- REMAINING DAYS --------
+        remaining_days = (predicted_finish - today).days
 
         # -------- DELAY --------
         delay_days = (predicted_finish - planned_finish).days
@@ -210,6 +209,7 @@ def run_engine(conn, cur):
             "House": house,
             "Stage": current_stage,
             "Progress %": round(progress, 1),
+            "Remaining Days": remaining_days,
             "Delay": delay_display,
             "SLA": expected_finish,
             "Predicted Finish": predicted_finish.date(),
@@ -223,12 +223,10 @@ def run_engine(conn, cur):
 
     st.subheader("🚨 Priority Table (SLA Only)")
     priority_df = result_df[result_df["SLA"].notna()]
-    priority_df = priority_df[["House","Stage","Delay","SLA","Priority","Reason"]]
-    st.dataframe(priority_df)
+    st.dataframe(priority_df[["House","Stage","Remaining Days","Delay","SLA","Priority","Reason"]])
 
     st.subheader("🏠 House Intelligence")
-    house_df = result_df[["House","Stage","Progress %","Delay","Predicted Finish","Reason"]]
-    st.dataframe(house_df)
+    st.dataframe(result_df[["House","Stage","Progress %","Remaining Days","Delay","Predicted Finish","Reason"]])
 
     st.subheader("🚨 Early Warning")
     if early_warnings:
