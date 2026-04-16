@@ -96,7 +96,7 @@ def run_engine(conn, cur):
     # ================= MAIN LOOP =================
     for house in df["house"].unique():
 
-        house_df = df[df["house"] == house]
+        house_df = df[df["house"] == house].sort_values("time")
 
         # -------- START DATE --------
         meas = house_df[house_df["stage"] == "Measurement"]
@@ -105,7 +105,7 @@ def run_engine(conn, cur):
 
         start_date = meas["time"].min()
 
-        # -------- PROGRESS (FIXED MODEL) --------
+        # -------- PROGRESS --------
         max_seq_reached = house_df["seq"].max()
         progress = (max_seq_reached / total_seq) * 100
 
@@ -113,22 +113,47 @@ def run_engine(conn, cur):
         current = house_df.loc[house_df["seq"].idxmax()]
         current_stage = current["stage"]
 
-        # -------- ELAPSED --------
-        elapsed_days = max(1, (today - start_date).days)
-
-        # -------- SPEED --------
-        speed = progress / elapsed_days
-
-        # -------- PREDICTION --------
-        if speed == 0:
-            predicted = start_date + timedelta(days=int(total_duration))
-        else:
-            remaining = 100 - progress
-            days_needed = remaining / speed
-            predicted = today + timedelta(days=int(days_needed))
-
         # -------- PLANNED --------
         planned_finish = start_date + timedelta(days=int(total_duration))
+
+        # -------- STAGE PERFORMANCE --------
+        stage_perf = []
+
+        house_df_sorted = house_df.sort_values("seq")
+
+        for i in range(len(house_df_sorted)-1):
+            s1 = house_df_sorted.iloc[i]
+            s2 = house_df_sorted.iloc[i+1]
+
+            actual_days = (s2["time"] - s1["time"]).days
+
+            planned_days = activity_df[
+                activity_df["stage"] == s1["stage"]
+            ]["days"].values[0]
+
+            if planned_days > 0:
+                stage_perf.append(actual_days / planned_days)
+
+        # -------- PRODUCTIVITY FACTOR --------
+        if len(stage_perf) >= 2:
+            productivity = sum(stage_perf[-2:]) / 2
+        elif stage_perf:
+            productivity = stage_perf[-1]
+        else:
+            productivity = 1
+
+        productivity = max(0.7, min(productivity, 1.5))
+
+        # -------- REMAINING WORK --------
+        remaining_stages = activity_df[activity_df["seq"] > max_seq_reached]
+        remaining_days = remaining_stages["days"].sum()
+
+        # -------- SMART PREDICTION --------
+        if progress < 20 or current_stage == "Measurement":
+            predicted = planned_finish
+        else:
+            adjusted_remaining = remaining_days * productivity
+            predicted = today + timedelta(days=int(adjusted_remaining))
 
         # -------- DELAY --------
         delay_days = (predicted - planned_finish).days
@@ -189,7 +214,8 @@ def run_engine(conn, cur):
     result_df = pd.DataFrame(results)
 
     # ================= BOTTLENECK =================
-    stage_counts = df.groupby("stage").size()
+    latest_stage_df = df.sort_values("time").groupby("house").tail(1)
+    stage_counts = latest_stage_df.groupby("stage").size()
     bottleneck_stage = stage_counts.idxmax()
 
     # ================= OUTPUT =================
