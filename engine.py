@@ -62,15 +62,22 @@ def run_engine(conn, cur):
         selected_house = st.selectbox("House", houses)
 
     with col2:
-        sla_date = st.date_input("SLA (Optional)")
+        use_sla = st.checkbox("Set SLA")
+        sla_date = None
+        if use_sla:
+            sla_date = st.date_input("SLA Date")
 
     if st.button("Save SLA"):
-        cur.execute("""
-            INSERT INTO house_config (house_no, sla_date)
-            VALUES (%s, %s)
-            ON CONFLICT (house_no)
-            DO UPDATE SET sla_date = EXCLUDED.sla_date
-        """, (selected_house, sla_date))
+        if sla_date:
+            cur.execute("""
+                INSERT INTO house_config (house_no, sla_date)
+                VALUES (%s, %s)
+                ON CONFLICT (house_no)
+                DO UPDATE SET sla_date = EXCLUDED.sla_date
+            """, (selected_house, sla_date))
+        else:
+            cur.execute("DELETE FROM house_config WHERE house_no = %s", (selected_house,))
+        
         conn.commit()
         st.success("Saved")
 
@@ -82,6 +89,7 @@ def run_engine(conn, cur):
     cur.execute("""
         SELECT 
             h.house_no,
+            p.product_instance_id,
             s.stage_name,
             t.timestamp,
             s.sequence
@@ -92,7 +100,7 @@ def run_engine(conn, cur):
         WHERE h.unit_id = %s
     """, (unit_dict[selected_unit],))
 
-    df = pd.DataFrame(cur.fetchall(), columns=["house", "stage", "time", "seq"])
+    df = pd.DataFrame(cur.fetchall(), columns=["house", "product", "stage", "time", "seq"])
 
     if df.empty:
         st.warning("No tracking data")
@@ -109,17 +117,27 @@ def run_engine(conn, cur):
 
         house_data = df[df["house"] == house]
 
-        # -------- START DATE (STRICT) --------
+        # -------- START DATE --------
         meas = house_data[house_data["stage"] == "Measurement"]
         if meas.empty:
             continue
 
         start_date = meas["time"].min()
 
-        # -------- PROGRESS (REAL BASED) --------
-        total = len(house_data)
-        completed = len(house_data[house_data["stage"] == "Measurement"])
-        progress = (completed / total) * 100 if total else 0
+        # -------- TOTAL PRODUCTS --------
+        total_products = house_data["product"].nunique()
+
+        # -------- PROGRESS (STRICT STAGE COMPLETION) --------
+        total_stages = len(activity_df)
+        completed_stages = 0
+
+        for stage in activity_df["stage"]:
+            stage_products = house_data[house_data["stage"] == stage]["product"].nunique()
+
+            if stage_products == total_products:
+                completed_stages += 1
+
+        progress = (completed_stages / total_stages) * 100 if total_stages else 0
 
         # -------- CURRENT STAGE --------
         latest = house_data.sort_values("seq").iloc[-1]
@@ -129,10 +147,9 @@ def run_engine(conn, cur):
         # -------- PLANNED FINISH --------
         planned_finish = start_date + timedelta(days=total_duration)
 
-        # -------- PREDICTED FINISH --------
-        predicted = planned_finish  # simple baseline (no fake logic)
+        predicted = planned_finish
 
-        # -------- DELAY (BASED ON PLAN, NOT SLA) --------
+        # -------- DELAY --------
         delay_days = (predicted - planned_finish).days
 
         if delay_days < 0:
@@ -146,7 +163,7 @@ def run_engine(conn, cur):
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        # -------- PRIORITY (ONLY SLA) --------
+        # -------- PRIORITY --------
         def get_priority(score):
             if score >= 80: return "🔴 Critical"
             elif score >= 50: return "🟠 High"
@@ -163,10 +180,10 @@ def run_engine(conn, cur):
         # -------- REASON --------
         if progress == 0:
             reason = "Not started"
-        elif progress < 30:
-            reason = "Slow progress"
+        elif progress < 100:
+            reason = "In progress"
         else:
-            reason = "On track"
+            reason = "Completed"
 
         # -------- EARLY WARNING --------
         if expected_finish and planned_finish > expected_finish:
