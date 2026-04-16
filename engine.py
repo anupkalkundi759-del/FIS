@@ -41,8 +41,11 @@ def run_engine(conn, cur):
         selected_project = st.selectbox("Project", list(project_dict.keys()))
 
     with col2:
-        cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s",
-                    (project_dict[selected_project],))
+        cur.execute("""
+            SELECT unit_id, unit_name 
+            FROM units 
+            WHERE project_id=%s
+        """, (project_dict[selected_project],))
         units = cur.fetchall()
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
@@ -55,8 +58,10 @@ def run_engine(conn, cur):
     houses = [h[0] for h in cur.fetchall()]
 
     col1, col2 = st.columns(2)
+
     with col1:
         selected_house = st.selectbox("House", houses)
+
     with col2:
         sla_date = st.date_input("SLA (Optional)")
 
@@ -75,7 +80,11 @@ def run_engine(conn, cur):
 
     # ================= TRACKING =================
     cur.execute("""
-        SELECT h.house_no, s.stage_name, t.timestamp, s.sequence
+        SELECT 
+            h.house_no,
+            s.stage_name,
+            t.timestamp,
+            s.sequence
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
         JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
@@ -84,6 +93,7 @@ def run_engine(conn, cur):
     """, (unit_dict[selected_unit],))
 
     df = pd.DataFrame(cur.fetchall(), columns=["house","stage","time","seq"])
+
     if df.empty:
         st.warning("No tracking data")
         return
@@ -96,7 +106,7 @@ def run_engine(conn, cur):
     # ================= MAIN LOOP =================
     for house in df["house"].unique():
 
-        house_df = df[df["house"] == house].sort_values("time")
+        house_df = df[df["house"] == house]
 
         # -------- START DATE --------
         meas = house_df[house_df["stage"] == "Measurement"]
@@ -105,28 +115,26 @@ def run_engine(conn, cur):
 
         start_date = meas["time"].min()
 
+        # -------- CURRENT STAGE (FIXED) --------
+        latest_row = house_df.loc[house_df["time"].idxmax()]
+        current_stage = latest_row["stage"]
+
         # -------- PROGRESS --------
         max_seq_reached = house_df["seq"].max()
         progress = (max_seq_reached / total_seq) * 100
 
-        # -------- CURRENT STAGE --------
-        current = house_df.loc[house_df["seq"].idxmax()]
-        current_stage = current["stage"]
-
         # -------- PLANNED --------
         planned_finish = start_date + timedelta(days=int(total_duration))
 
-        # -------- STAGE PERFORMANCE --------
-        stage_perf = []
-
+        # -------- STAGE-BASED PREDICTION --------
         house_df_sorted = house_df.sort_values("seq")
+        stage_perf = []
 
         for i in range(len(house_df_sorted)-1):
             s1 = house_df_sorted.iloc[i]
             s2 = house_df_sorted.iloc[i+1]
 
             actual_days = (s2["time"] - s1["time"]).days
-
             planned_days = activity_df[
                 activity_df["stage"] == s1["stage"]
             ]["days"].values[0]
@@ -134,7 +142,6 @@ def run_engine(conn, cur):
             if planned_days > 0:
                 stage_perf.append(actual_days / planned_days)
 
-        # -------- PRODUCTIVITY FACTOR --------
         if len(stage_perf) >= 2:
             productivity = sum(stage_perf[-2:]) / 2
         elif stage_perf:
@@ -144,16 +151,15 @@ def run_engine(conn, cur):
 
         productivity = max(0.7, min(productivity, 1.5))
 
-        # -------- REMAINING WORK --------
+        # -------- REMAINING --------
         remaining_stages = activity_df[activity_df["seq"] > max_seq_reached]
         remaining_days = remaining_stages["days"].sum()
 
-        # -------- SMART PREDICTION --------
+        # -------- STABILIZED PREDICTION --------
         if progress < 20 or current_stage == "Measurement":
             predicted = planned_finish
         else:
-            adjusted_remaining = remaining_days * productivity
-            predicted = today + timedelta(days=int(adjusted_remaining))
+            predicted = today + timedelta(days=int(remaining_days * productivity))
 
         # -------- DELAY --------
         delay_days = (predicted - planned_finish).days
@@ -213,12 +219,17 @@ def run_engine(conn, cur):
 
     result_df = pd.DataFrame(results)
 
-    # ================= BOTTLENECK =================
-    latest_stage_df = df.sort_values("time").groupby("house").tail(1)
-    stage_counts = latest_stage_df.groupby("stage").size()
-    bottleneck_stage = stage_counts.idxmax()
+    # ================= FIXED BOTTLENECK =================
+    latest_house_stage = df.loc[df.groupby("house")["time"].idxmax()]
+    stage_counts = latest_house_stage.groupby("stage").size()
+
+    if not stage_counts.empty:
+        bottleneck_stage = stage_counts.idxmax()
+    else:
+        bottleneck_stage = "No active work"
 
     # ================= OUTPUT =================
+
     st.subheader("🚨 Priority Table (SLA Only)")
     priority_df = result_df[result_df["SLA"].notna()]
     st.dataframe(priority_df[["House","Stage","Delay","SLA","Priority","Reason"]])
