@@ -21,46 +21,33 @@ def run_engine(conn, cur):
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     total_duration = activity_df["days"].sum()
     total_seq = activity_df["seq"].max()
-    first_stage = activity_df.iloc[0]["stage"]
 
-    # ================= SINGLE CONTROL ROW =================
+    # ================= CONTROL ROW =================
     col1, col2, col3, col4, col5 = st.columns(5)
 
-    # PROJECT
     with col1:
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
         projects = cur.fetchall()
         project_dict = {p[1]: p[0] for p in projects}
         selected_project = st.selectbox("Project", list(project_dict.keys()))
 
-    # UNIT
     with col2:
-        cur.execute("""
-            SELECT unit_id, unit_name 
-            FROM units 
-            WHERE project_id=%s
-        """, (project_dict[selected_project],))
+        cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s",
+                    (project_dict[selected_project],))
         units = cur.fetchall()
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    # HOUSES
-    cur.execute("""
-        SELECT house_no 
-        FROM houses 
-        WHERE unit_id=%s
-    """, (unit_dict[selected_unit],))
+    cur.execute("SELECT house_no FROM houses WHERE unit_id=%s",
+                (unit_dict[selected_unit],))
     houses = [h[0] for h in cur.fetchall()]
 
-    # HOUSE
     with col3:
         selected_house = st.selectbox("House", houses)
 
-    # SLA
     with col4:
         sla_date = st.date_input("SLA")
 
-    # SAVE BUTTON
     with col5:
         if st.button("💾 Save"):
             cur.execute("""
@@ -72,7 +59,7 @@ def run_engine(conn, cur):
             conn.commit()
             st.success("Saved")
 
-    # ================= SLA FETCH =================
+    # ================= SLA =================
     cur.execute("""
         SELECT house_no, sla_date 
         FROM house_config
@@ -110,14 +97,13 @@ def run_engine(conn, cur):
 
         house_df = df[df["house"] == house].dropna(subset=["time"])
 
-        # 👉 ONLY ACTIVE HOUSES
+        # ONLY ACTIVE HOUSES
         if house_df.empty:
             continue
 
         house_df = house_df.sort_values("time")
 
         start_date = house_df["time"].min()
-
         latest_row = house_df.loc[house_df["time"].idxmax()]
         current_stage = latest_row["stage"]
 
@@ -143,25 +129,7 @@ def run_engine(conn, cur):
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        priority = None
-        if expected_finish:
-            sla_delay = (predicted - expected_finish).days
-
-            if sla_delay > 5:
-                priority = "🔴 Critical"
-            elif sla_delay > 2:
-                priority = "🟠 High"
-            elif sla_delay > 0:
-                priority = "🟡 Medium"
-            else:
-                priority = "🟢 Low"
-
-            if predicted > expected_finish:
-                early_warnings.append({
-                    "House": house,
-                    "Stage": current_stage,
-                    "Delay": sla_delay
-                })
+        reason = "In Progress"
 
         results.append({
             "House": house,
@@ -169,10 +137,55 @@ def run_engine(conn, cur):
             "Progress %": round(progress, 1),
             "Delay": delay_display,
             "Predicted Finish": predicted.date(),
-            "Reason": "Active"
+            "SLA": expected_finish,
+            "Reason": reason
         })
 
+        # EARLY WARNING
+        if expected_finish and predicted > expected_finish:
+            early_warnings.append({
+                "House": house,
+                "Stage": current_stage,
+                "Delay (days)": (predicted - expected_finish).days
+            })
+
     result_df = pd.DataFrame(results)
+
+    # ================= PRIORITY TABLE =================
+    priority_rows = []
+
+    for row in results:
+        house = row["House"]
+        predicted = row["Predicted Finish"]
+
+        sla = config_map.get(house)
+        if not sla or not predicted:
+            continue
+
+        expected_finish = pd.to_datetime(sla)
+        predicted_dt = pd.to_datetime(predicted)
+
+        sla_delay = (predicted_dt - expected_finish).days
+
+        if sla_delay > 5:
+            priority = "🔴 Critical"
+        elif sla_delay > 2:
+            priority = "🟠 High"
+        elif sla_delay > 0:
+            priority = "🟡 Medium"
+        else:
+            priority = "🟢 Low"
+
+        priority_rows.append({
+            "House": house,
+            "Stage": row["Stage"],
+            "Delay": row["Delay"],
+            "SLA": expected_finish.date(),
+            "Priority": priority,
+            "Reason": row["Reason"]
+        })
+
+    priority_df = pd.DataFrame(priority_rows)
 
     # ================= BOTTLENECK =================
     valid_df = df.dropna(subset=["time"])
@@ -185,8 +198,15 @@ def run_engine(conn, cur):
         bottleneck_msg = f"Most Congested Stage: {stage_counts.idxmax()}"
 
     # ================= OUTPUT =================
+
+    st.subheader("🚨 Priority Table (SLA Based)")
+    if not priority_df.empty:
+        st.dataframe(priority_df)
+    else:
+        st.info("No SLA risks")
+
     st.subheader("🏠 House Intelligence")
-    st.dataframe(result_df)
+    st.dataframe(result_df[["House","Stage","Progress %","Delay","Predicted Finish","Reason"]])
 
     st.subheader("🚨 Early Warning")
     if early_warnings:
