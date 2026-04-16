@@ -32,9 +32,6 @@ def run_engine(conn, cur):
 
     total_duration = activity_df["days"].sum()
 
-    # cumulative planned curve
-    activity_df["cum_days"] = activity_df["days"].cumsum()
-
     # ================= PROJECT / UNIT =================
     col1, col2 = st.columns(2)
 
@@ -126,21 +123,17 @@ def run_engine(conn, cur):
             current_stage = "Not started"
             current_time = today
 
-        # -------- DURATION BASED PROGRESS --------
+        # -------- PROGRESS (DURATION BASED) --------
         completed_duration = 0
+        total_products = house_data["product"].nunique() if not house_data.empty else 0
 
         for _, row in activity_df.iterrows():
             stage = row["stage"]
             stage_days = row["days"]
 
             stage_products = house_data[house_data["stage"] == stage]["product"].nunique() if not house_data.empty else 0
-            total_products = house_data["product"].nunique() if not house_data.empty else 0
 
-            if total_products > 0:
-                completion_ratio = stage_products / total_products
-            else:
-                completion_ratio = 0
-
+            completion_ratio = stage_products / total_products if total_products else 0
             completed_duration += stage_days * completion_ratio
 
         progress = (completed_duration / total_duration) * 100 if total_duration else 0
@@ -148,7 +141,7 @@ def run_engine(conn, cur):
         # -------- PLANNED FINISH --------
         planned_finish = start_date + timedelta(days=int(total_duration))
 
-        # -------- FORECAST (REAL) --------
+        # -------- FORECAST --------
         elapsed_days = (today - start_date).days
 
         if progress > 0 and elapsed_days > 0:
@@ -172,7 +165,7 @@ def run_engine(conn, cur):
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        # -------- PRIORITY (ONLY SLA) --------
+        # -------- PRIORITY --------
         def get_priority(score):
             if score >= 80: return "🔴 Critical"
             elif score >= 50: return "🟠 High"
@@ -224,6 +217,7 @@ def run_engine(conn, cur):
 
     # ================= OUTPUT =================
 
+    # 🔴 PRIORITY TABLE → ONLY SLA
     st.subheader("🚨 Priority Table (SLA Only)")
     priority_df = result_df[result_df["SLA"].notna()]
 
@@ -232,15 +226,24 @@ def run_engine(conn, cur):
     else:
         st.info("No SLA houses")
 
+    # 🔴 HOUSE INTELLIGENCE → ONLY STARTED
     st.subheader("🏠 House Intelligence")
-    st.dataframe(result_df)
 
+    house_df = result_df[result_df["Stage"] != "Not started"]
+
+    if house_df.empty:
+        st.info("No started houses")
+    else:
+        st.dataframe(house_df[["House","Stage","Progress %","Delay","Predicted Finish","Reason"]])
+
+    # 🔴 EARLY WARNING
     st.subheader("🚨 Early Warning")
     if early_warnings:
         st.dataframe(pd.DataFrame(early_warnings))
     else:
         st.success("No early risks")
 
+    # 🔴 BOTTLENECK
     st.subheader("🚧 Bottleneck")
     if stuck_stages:
         bottleneck = pd.Series(stuck_stages).value_counts().idxmax()
