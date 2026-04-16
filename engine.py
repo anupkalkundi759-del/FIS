@@ -11,7 +11,6 @@ def run_engine(conn, cur):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS house_config (
             house_no TEXT PRIMARY KEY,
-            urgency INT DEFAULT 0,
             sla_date DATE
         )
     """)
@@ -52,35 +51,36 @@ def run_engine(conn, cur):
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    # ================= HOUSE CONFIG =================
-    st.subheader("⚙️ SLA & Urgency Assignment")
+    # ================= SLA ASSIGNMENT =================
+    st.subheader("⚙️ SLA Assignment")
 
     cur.execute("""
         SELECT house_no FROM houses WHERE unit_id=%s
     """, (unit_dict[selected_unit],))
     houses = [h[0] for h in cur.fetchall()]
 
-    urgency_map = {"Low":0, "Medium":1, "High":2, "Critical":3}
+    col1, col2 = st.columns(2)
 
-    selected_house = st.selectbox("House", houses)
-    urgency_label = st.selectbox("Urgency", list(urgency_map.keys()))
-    sla_date = st.date_input("SLA (Optional)")
+    with col1:
+        selected_house = st.selectbox("House", houses)
 
-    if st.button("Save"):
+    with col2:
+        sla_date = st.date_input("SLA (Optional)")
+
+    if st.button("Save SLA"):
         cur.execute("""
-            INSERT INTO house_config (house_no, urgency, sla_date)
-            VALUES (%s, %s, %s)
+            INSERT INTO house_config (house_no, sla_date)
+            VALUES (%s, %s)
             ON CONFLICT (house_no)
-            DO UPDATE SET urgency = EXCLUDED.urgency,
-                          sla_date = EXCLUDED.sla_date
-        """, (selected_house, urgency_map[urgency_label], sla_date))
+            DO UPDATE SET sla_date = EXCLUDED.sla_date
+        """, (selected_house, sla_date))
         conn.commit()
         st.success("Saved")
 
     # ================= LOAD CONFIG =================
-    cur.execute("SELECT house_no, urgency, sla_date FROM house_config")
+    cur.execute("SELECT house_no, sla_date FROM house_config")
     config_map = {
-        r[0]: {"urgency": r[1], "sla": r[2]}
+        r[0]: r[1]
         for r in cur.fetchall()
     }
 
@@ -119,7 +119,12 @@ def run_engine(conn, cur):
         stage_days = int(stage_days.values[0]) if not stage_days.empty else 1
 
         days_spent = max(0, (today - time).days)
-        progress_stage = min(days_spent / stage_days, 1)
+
+        # ✅ MINIMUM BASELINE FIX
+        if days_spent == 0:
+            progress_stage = 0.05
+        else:
+            progress_stage = min(days_spent / stage_days, 1)
 
         completed += stage_days * progress_stage
         progress = (completed / total_duration) * 100
@@ -143,17 +148,15 @@ def run_engine(conn, cur):
 
         house_df = prod_df[prod_df["house"] == house]
 
-        # -------- START DATE (STRICT) --------
+        # -------- STRICT START --------
         meas = df[(df["house"] == house) & (df["stage"] == "Measurement")]
         if meas.empty:
             continue
 
         start_date = meas["time"].min()
 
-        # -------- PROGRESS --------
         progress = house_df["progress"].mean()
 
-        # -------- CURRENT STAGE --------
         current = house_df.loc[house_df["seq"].idxmin()]
         current_stage = current["stage"]
         current_time = current["time"]
@@ -176,11 +179,8 @@ def run_engine(conn, cur):
         productivity = sum(rates[-2:])/2 if len(rates)>=2 else 1
         productivity = max(0.7, min(productivity, 1.5))
 
-        # -------- CONFIG --------
-        config = config_map.get(house, {})
-        urgency = config.get("urgency", 0)
-        sla = config.get("sla")
-
+        # -------- SLA --------
+        sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
         # -------- PREDICTION --------
@@ -191,28 +191,36 @@ def run_engine(conn, cur):
         if expected_finish:
             delay = (predicted - expected_finish).days
 
-        # -------- PRIORITY --------
-        priority_score = (
-            (max(0, delay or 0) * 5) +
-            (urgency * 20) +
-            max(0, 50 - progress)
-        )
+        # -------- DELAY DISPLAY --------
+        if expected_finish is None:
+            delay_display = "No SLA"
+        elif delay < 0:
+            delay_display = f"Ahead {abs(delay)}d"
+        elif delay == 0:
+            delay_display = "On time"
+        else:
+            delay_display = f"Delay {delay}d"
 
+        # -------- PRIORITY --------
         def get_priority(score):
             if score >= 80: return "🔴 Critical"
             elif score >= 50: return "🟠 High"
             elif score >= 20: return "🟡 Medium"
             else: return "🟢 Low"
 
+        if expected_finish is None:
+            priority = "No SLA"
+        else:
+            priority_score = max(0, delay) * 10
+            priority = get_priority(priority_score)
+
         # -------- REASON --------
         if progress < 5:
             reason = "Not started"
-        elif delay and delay > 0:
+        elif expected_finish and delay > 0:
             reason = "Will miss SLA"
-        elif urgency >= 2:
-            reason = "High urgency"
         else:
-            reason = "Normal"
+            reason = "On track"
 
         # -------- EARLY WARNING --------
         if expected_finish and predicted > expected_finish:
@@ -231,20 +239,19 @@ def run_engine(conn, cur):
             "House": house,
             "Stage": current_stage,
             "Progress %": round(progress,1),
-            "Delay": delay,
+            "Delay": delay_display,
             "SLA": expected_finish,
             "Predicted Finish": predicted.date(),
-            "Urgency": urgency,
-            "Priority": get_priority(priority_score),
+            "Priority": priority,
             "Reason": reason
         })
 
     result_df = pd.DataFrame(results)
 
-    # ================= OUTPUTS =================
+    # ================= OUTPUT =================
 
     st.subheader("🚨 Priority Table")
-    priority_df = result_df[["House","Stage","Delay","SLA","Urgency","Priority","Reason"]]
+    priority_df = result_df[["House","Stage","Delay","SLA","Priority","Reason"]]
     st.dataframe(priority_df)
 
     st.subheader("🏠 House Intelligence")
@@ -252,7 +259,10 @@ def run_engine(conn, cur):
     st.dataframe(house_df)
 
     st.subheader("🚨 Early Warning")
-    st.dataframe(pd.DataFrame(early_warnings))
+    if early_warnings:
+        st.dataframe(pd.DataFrame(early_warnings))
+    else:
+        st.success("No early risks")
 
     st.subheader("🚧 Bottleneck")
     if stuck_stages:
