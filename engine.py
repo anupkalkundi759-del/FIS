@@ -50,7 +50,7 @@ def run_engine(conn, cur):
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    # ================= SLA ASSIGNMENT (OLD SIMPLE) =================
+    # ================= SLA ASSIGNMENT =================
     st.subheader("⚙️ SLA Assignment")
 
     cur.execute("SELECT house_no FROM houses WHERE unit_id=%s", (unit_dict[selected_unit],))
@@ -138,12 +138,27 @@ def run_engine(conn, cur):
         current_stage = latest["stage"]
         current_time = latest["time"]
 
-        # -------- PLANNED FINISH --------
-        planned_finish = start_date + timedelta(days=total_duration)
-        predicted = planned_finish
+        # -------- CONTROLLED DURATION --------
+        MIN_DAYS = 20
+        MAX_DAYS = 25
+
+        planned_finish = start_date + timedelta(days=MIN_DAYS)
+
+        elapsed_days = (today - start_date).days
+
+        if progress > 10 and elapsed_days > 2:
+            rate = progress / elapsed_days
+            forecast_total_days = 100 / rate
+
+            # 🔴 CONTROL LIMIT
+            forecast_total_days = max(MIN_DAYS, min(forecast_total_days, MAX_DAYS))
+
+            predicted_finish = start_date + timedelta(days=int(forecast_total_days))
+        else:
+            predicted_finish = planned_finish
 
         # -------- DELAY --------
-        delay_days = (predicted - planned_finish).days
+        delay_days = (predicted_finish - planned_finish).days
 
         if delay_days < 0:
             delay_display = f"Ahead {abs(delay_days)}d"
@@ -166,7 +181,7 @@ def run_engine(conn, cur):
         if expected_finish is None:
             priority = None
         else:
-            sla_delay = (planned_finish - expected_finish).days
+            sla_delay = (predicted_finish - expected_finish).days
             priority_score = max(0, sla_delay) * 10
             priority = get_priority(priority_score)
 
@@ -179,11 +194,11 @@ def run_engine(conn, cur):
             reason = "Completed"
 
         # -------- EARLY WARNING --------
-        if expected_finish and planned_finish > expected_finish:
+        if expected_finish and predicted_finish > expected_finish:
             early_warnings.append({
                 "House": house,
                 "Issue": "Will miss SLA",
-                "Delay (days)": (planned_finish - expected_finish).days
+                "Delay (days)": (predicted_finish - expected_finish).days
             })
 
         # -------- BOTTLENECK --------
@@ -197,7 +212,7 @@ def run_engine(conn, cur):
             "Progress %": round(progress, 1),
             "Delay": delay_display,
             "SLA": expected_finish,
-            "Predicted Finish": planned_finish.date(),
+            "Predicted Finish": predicted_finish.date(),
             "Priority": priority,
             "Reason": reason
         })
