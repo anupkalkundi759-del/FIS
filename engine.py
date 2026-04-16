@@ -50,7 +50,7 @@ def run_engine(conn, cur):
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    # ================= SLA ASSIGNMENT (OLD SIMPLE) =================
+    # ================= SLA ASSIGNMENT =================
     st.subheader("⚙️ SLA Assignment")
 
     cur.execute("SELECT house_no FROM houses WHERE unit_id=%s", (unit_dict[selected_unit],))
@@ -91,52 +91,61 @@ def run_engine(conn, cur):
             s.sequence
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
-        JOIN stages s ON t.stage_id = s.stage_id
+        LEFT JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
+        LEFT JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
     """, (unit_dict[selected_unit],))
 
     df = pd.DataFrame(cur.fetchall(), columns=["house", "product", "stage", "time", "seq"])
 
     if df.empty:
-        st.warning("No tracking data")
-        return
-
-    df["time"] = pd.to_datetime(df["time"])
+        st.warning("No tracking data at all")
+    
+    df["time"] = pd.to_datetime(df["time"], errors="coerce")
 
     # ================= HOUSE LEVEL =================
     results = []
     early_warnings = []
     stuck_stages = []
 
-    for house in df["house"].unique():
+    # IMPORTANT: loop ALL houses (not just df houses)
+    for house in houses:
 
-        house_data = df[df["house"] == house]
+        house_data = df[df["house"] == house] if not df.empty else pd.DataFrame()
 
         # -------- START DATE --------
-        meas = house_data[house_data["stage"] == "Measurement"]
+        meas = house_data[house_data["stage"] == "Measurement"] if not house_data.empty else pd.DataFrame()
+
         if meas.empty:
-            continue
+            start_date = today
+        else:
+            start_date = meas["time"].min()
 
-        start_date = meas["time"].min()
-
-        # -------- PROGRESS (HYBRID LOGIC) --------
+        # -------- PROGRESS (HYBRID) --------
         total_stages = len(activity_df)
-        total_products = house_data["product"].nunique()
+        total_products = house_data["product"].nunique() if not house_data.empty else 0
 
         progress_sum = 0
 
         for stage in activity_df["stage"]:
-            stage_products = house_data[house_data["stage"] == stage]["product"].nunique()
+            if not house_data.empty:
+                stage_products = house_data[house_data["stage"] == stage]["product"].nunique()
+            else:
+                stage_products = 0
+
             stage_completion = stage_products / total_products if total_products else 0
             progress_sum += stage_completion
 
         progress = (progress_sum / total_stages) * 100 if total_stages else 0
 
         # -------- CURRENT STAGE --------
-        latest = house_data.sort_values("seq").iloc[-1]
-        current_stage = latest["stage"]
-        current_time = latest["time"]
+        if not house_data.empty:
+            latest = house_data.sort_values("seq").dropna(subset=["seq"]).iloc[-1]
+            current_stage = latest["stage"]
+            current_time = latest["time"]
+        else:
+            current_stage = "Not started"
+            current_time = today
 
         # -------- PLANNED FINISH --------
         planned_finish = start_date + timedelta(days=total_duration)
@@ -187,9 +196,10 @@ def run_engine(conn, cur):
             })
 
         # -------- BOTTLENECK --------
-        stage_days = activity_df[activity_df["stage"] == current_stage]["days"].values[0]
-        if (today - current_time).days > stage_days:
-            stuck_stages.append(current_stage)
+        if current_stage != "Not started":
+            stage_days = activity_df[activity_df["stage"] == current_stage]["days"].values[0]
+            if (today - current_time).days > stage_days:
+                stuck_stages.append(current_stage)
 
         results.append({
             "House": house,
