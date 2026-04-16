@@ -29,6 +29,7 @@ def run_engine(conn, cur):
 
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     total_duration = activity_df["days"].sum()
+    total_seq = activity_df["seq"].max()
 
     # ================= PROJECT =================
     col1, col2 = st.columns(2)
@@ -91,33 +92,36 @@ def run_engine(conn, cur):
 
     results = []
     early_warnings = []
-    stage_delay_list = []
-    bottleneck_list = []
 
+    # ================= MAIN LOOP =================
     for house in df["house"].unique():
 
-        house_df = df[df["house"] == house].sort_values("time")
+        house_df = df[df["house"] == house]
 
-        # -------- START --------
+        # -------- START DATE --------
         meas = house_df[house_df["stage"] == "Measurement"]
         if meas.empty:
             continue
 
         start_date = meas["time"].min()
 
-        # -------- PROGRESS --------
-        total = len(house_df)
-        completed = len(meas)
-        progress = (completed / total) * 100 if total else 0
+        # -------- PROGRESS (FIXED MODEL) --------
+        max_seq_reached = house_df["seq"].max()
+        progress = (max_seq_reached / total_seq) * 100
 
-        # -------- ELAPSED TIME --------
+        # -------- CURRENT STAGE --------
+        current = house_df.loc[house_df["seq"].idxmax()]
+        current_stage = current["stage"]
+
+        # -------- ELAPSED --------
         elapsed_days = max(1, (today - start_date).days)
 
         # -------- SPEED --------
-        speed = progress / elapsed_days  # % per day
+        speed = progress / elapsed_days
 
+        # -------- PREDICTION --------
         if speed == 0:
-            predicted = start_date + timedelta(days=total_duration)
+            predicted = start_date + timedelta(days=int(total_duration))
         else:
             remaining = 100 - progress
             days_needed = remaining / speed
@@ -135,31 +139,6 @@ def run_engine(conn, cur):
             delay_display = "On time"
         else:
             delay_display = f"Delay {delay_days}d"
-
-        # -------- CURRENT STAGE --------
-        current = house_df.sort_values("seq").iloc[-1]
-        current_stage = current["stage"]
-
-        # -------- STAGE DELAY ANALYSIS --------
-        for i in range(len(house_df)-1):
-            t1 = house_df.iloc[i]["time"]
-            t2 = house_df.iloc[i+1]["time"]
-            stage = house_df.iloc[i]["stage"]
-
-            actual = (t2 - t1).days
-            planned = activity_df[activity_df["stage"] == stage]["days"].values[0]
-
-            stage_delay_list.append({
-                "Stage": stage,
-                "Delay": actual - planned
-            })
-
-        # -------- BOTTLENECK --------
-        stage_days = activity_df[activity_df["stage"] == current_stage]["days"].values[0]
-        days_in_stage = (today - current["time"]).days
-
-        if days_in_stage > stage_days:
-            bottleneck_list.append(current_stage)
 
         # -------- SLA --------
         sla = config_map.get(house)
@@ -179,12 +158,12 @@ def run_engine(conn, cur):
             priority = None
 
         # -------- REASON --------
-        if progress == 0:
-            reason = "Not started"
+        if progress < 5:
+            reason = "Just started"
         elif delay_days > 0:
             reason = "Delayed execution"
-        elif progress < 30:
-            reason = "Slow progress"
+        elif progress < 40:
+            reason = "In progress"
         else:
             reason = "On track"
 
@@ -209,8 +188,11 @@ def run_engine(conn, cur):
 
     result_df = pd.DataFrame(results)
 
-    # ================= OUTPUT =================
+    # ================= BOTTLENECK =================
+    stage_counts = df.groupby("stage").size()
+    bottleneck_stage = stage_counts.idxmax()
 
+    # ================= OUTPUT =================
     st.subheader("🚨 Priority Table (SLA Only)")
     priority_df = result_df[result_df["SLA"].notna()]
     st.dataframe(priority_df[["House","Stage","Delay","SLA","Priority","Reason"]])
@@ -225,13 +207,4 @@ def run_engine(conn, cur):
         st.success("No early risks")
 
     st.subheader("🚧 Bottleneck")
-    if bottleneck_list:
-        bottleneck = pd.Series(bottleneck_list).value_counts().idxmax()
-        st.error(f"Most Stuck Stage: {bottleneck}")
-    else:
-        st.success("No bottleneck detected")
-
-    st.subheader("📉 Stage Delay Contribution")
-    if stage_delay_list:
-        stage_df = pd.DataFrame(stage_delay_list)
-        st.dataframe(stage_df.groupby("Stage")["Delay"].mean().sort_values(ascending=False))
+    st.error(f"Most Congested Stage: {bottleneck_stage}")
