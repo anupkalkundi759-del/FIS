@@ -6,15 +6,6 @@ def run_engine(conn, cur):
     st.title("⚙️ Scheduling Intelligence Engine")
     today = datetime.now()
 
-    # ================= CONFIG =================
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS house_config (
-            house_no TEXT PRIMARY KEY,
-            sla_date DATE
-        )
-    """)
-    conn.commit()
-
     # ================= ACTIVITIES =================
     cur.execute("""
         SELECT activity_name, sequence_order, duration_days
@@ -42,17 +33,31 @@ def run_engine(conn, cur):
         selected_project = st.selectbox("Project", list(project_dict.keys()))
 
     with col2:
-        cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s",
-                    (project_dict[selected_project],))
+        cur.execute("""
+            SELECT unit_id, unit_name 
+            FROM units 
+            WHERE project_id=%s
+        """, (project_dict[selected_project],))
         units = cur.fetchall()
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    # ================= SLA =================
-    st.subheader("⚙️ SLA Assignment")
+    # ================= FILTER MODE =================
+    st.subheader("⚙️ Filters")
+    show_mode = st.radio(
+        "Display Mode",
+        ["Active Houses Only", "All Houses"],
+        horizontal=True
+    )
 
-    cur.execute("SELECT house_no FROM houses WHERE unit_id=%s",
-                (unit_dict[selected_unit],))
+    # ================= SLA =================
+    st.subheader("📅 SLA Assignment")
+
+    cur.execute("""
+        SELECT house_no 
+        FROM houses 
+        WHERE unit_id=%s
+    """, (unit_dict[selected_unit],))
     houses = [h[0] for h in cur.fetchall()]
 
     col1, col2 = st.columns(2)
@@ -73,7 +78,7 @@ def run_engine(conn, cur):
         conn.commit()
         st.success("Saved")
 
-    # FIXED: Only fetch SLA for current houses
+    # Fetch SLA only for current scope
     cur.execute("""
         SELECT house_no, sla_date 
         FROM house_config
@@ -81,7 +86,7 @@ def run_engine(conn, cur):
     """, (houses,))
     config_map = {r[0]: r[1] for r in cur.fetchall()}
 
-    # ================= TRACKING (FIXED - LEFT JOIN) =================
+    # ================= TRACKING =================
     cur.execute("""
         SELECT 
             h.house_no,
@@ -106,62 +111,61 @@ def run_engine(conn, cur):
     results = []
     early_warnings = []
 
-    # ================= MAIN LOOP =================
+    # ================= MAIN ENGINE =================
     for house in df["house"].unique():
 
         house_df = df[df["house"] == house].dropna(subset=["time"])
 
-        # -------- NO TRACKING --------
+        # FILTER LOGIC
         if house_df.empty:
-            results.append({
-                "House": house,
-                "Stage": "Not Started",
-                "Progress %": 0,
-                "Delay": "Not started",
-                "Predicted Finish": None,
-                "SLA": None,
-                "Priority": None,
-                "Reason": "No activity"
-            })
-            continue
+            if show_mode == "Active Houses Only":
+                continue
+            else:
+                results.append({
+                    "House": house,
+                    "Stage": "Not Started",
+                    "Progress %": 0,
+                    "Delay": "-",
+                    "Predicted Finish": None,
+                    "SLA": None,
+                    "Priority": None,
+                    "Reason": "No activity"
+                })
+                continue
 
         house_df = house_df.sort_values("time")
 
+        # START DATE
         meas = house_df[house_df["stage"] == first_stage]
-        if meas.empty:
-            start_date = house_df["time"].min()
-        else:
-            start_date = meas["time"].min()
+        start_date = meas["time"].min() if not meas.empty else house_df["time"].min()
 
         # CURRENT STAGE
         latest_row = house_df.loc[house_df["time"].idxmax()]
         current_stage = latest_row["stage"]
 
         # PROGRESS
-        max_seq_reached = house_df["seq"].max()
-        progress = (max_seq_reached / total_seq) * 100
+        max_seq = house_df["seq"].max()
+        progress = (max_seq / total_seq) * 100
 
-        # PLANNED
+        # PLANNED FINISH
         planned_finish = start_date + timedelta(days=int(total_duration))
 
-        # PREDICTION
-        if progress < 20 or current_stage == first_stage:
+        # SMART PREDICTION
+        if progress < 20:
             predicted = planned_finish
         else:
-            remaining_days = activity_df[activity_df["seq"] > max_seq_reached]["days"].sum()
+            remaining_days = activity_df[activity_df["seq"] > max_seq]["days"].sum()
             predicted = today + timedelta(days=int(remaining_days))
 
         # DELAY
         delay_days = (predicted - planned_finish).days
+        delay_display = (
+            f"Ahead {abs(delay_days)}d" if delay_days < 0
+            else "On time" if delay_days == 0
+            else f"Delay {delay_days}d"
+        )
 
-        if delay_days < 0:
-            delay_display = f"Ahead {abs(delay_days)}d"
-        elif delay_days == 0:
-            delay_display = "On time"
-        else:
-            delay_display = f"Delay {delay_days}d"
-
-        # SLA + PRIORITY
+        # SLA
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
@@ -171,21 +175,19 @@ def run_engine(conn, cur):
             elif score >= 20: return "🟡 Medium"
             else: return "🟢 Low"
 
+        priority = None
         if expected_finish:
             sla_delay = (predicted - expected_finish).days
             priority = get_priority(max(0, sla_delay) * 10)
-        else:
-            priority = None
 
-        # EARLY WARNING
-        if expected_finish and predicted > expected_finish:
-            early_warnings.append({
-                "House": house,
-                "Stage": current_stage,
-                "Predicted Finish": predicted.date(),
-                "SLA": expected_finish.date(),
-                "Delay (days)": (predicted - expected_finish).days
-            })
+            if predicted > expected_finish:
+                early_warnings.append({
+                    "House": house,
+                    "Stage": current_stage,
+                    "Predicted Finish": predicted.date(),
+                    "SLA": expected_finish.date(),
+                    "Delay (days)": (predicted - expected_finish).days
+                })
 
         # REASON
         if progress < 5:
@@ -200,7 +202,7 @@ def run_engine(conn, cur):
         results.append({
             "House": house,
             "Stage": current_stage,
-            "Progress %": round(progress,1),
+            "Progress %": round(progress, 1),
             "Delay": delay_display,
             "Predicted Finish": predicted.date(),
             "SLA": expected_finish,
@@ -211,15 +213,19 @@ def run_engine(conn, cur):
     result_df = pd.DataFrame(results)
 
     # ================= BOTTLENECK =================
-    unique_stages = df["seq"].nunique()
+    valid_df = df.dropna(subset=["time"])
 
-    if unique_stages <= 1:
-        bottleneck_msg = "⚠️ Project still in initial stage (Measurement)"
+    if valid_df.empty:
+        bottleneck_msg = "No active work"
     else:
-        latest_house_stage = df.dropna(subset=["time"]).loc[df.groupby("house")["time"].idxmax()]
-        stage_counts = latest_house_stage.groupby("stage").size()
-        bottleneck_stage = stage_counts.idxmax()
-        bottleneck_msg = f"Most Congested Stage: {bottleneck_stage}"
+        latest = valid_df.loc[valid_df.groupby("house")["time"].idxmax()]
+        stage_counts = latest.groupby("stage").size()
+
+        if len(stage_counts) == 1:
+            bottleneck_msg = "⚠️ All houses stuck in initial stage"
+        else:
+            bottleneck_stage = stage_counts.idxmax()
+            bottleneck_msg = f"Most Congested Stage: {bottleneck_stage}"
 
     # ================= OUTPUT =================
 
@@ -237,7 +243,4 @@ def run_engine(conn, cur):
         st.success("No early risks")
 
     st.subheader("🚧 Bottleneck")
-    if unique_stages <= 1:
-        st.warning(bottleneck_msg)
-    else:
-        st.error(bottleneck_msg)
+    st.info(bottleneck_msg)
