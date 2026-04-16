@@ -129,8 +129,6 @@ def run_engine(conn, cur):
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        reason = "In Progress"
-
         results.append({
             "House": house,
             "Stage": current_stage,
@@ -138,7 +136,7 @@ def run_engine(conn, cur):
             "Delay": delay_display,
             "Predicted Finish": predicted.date(),
             "SLA": expected_finish,
-            "Reason": reason
+            "Reason": "In Progress"
         })
 
         # EARLY WARNING
@@ -151,7 +149,7 @@ def run_engine(conn, cur):
 
     result_df = pd.DataFrame(results)
 
-    # ================= PRIORITY TABLE =================
+    # ================= PRIORITY TABLE (FIXED) =================
     priority_rows = []
 
     for row in results:
@@ -159,7 +157,7 @@ def run_engine(conn, cur):
         predicted = row["Predicted Finish"]
 
         sla = config_map.get(house)
-        if not sla or not predicted:
+        if sla is None:
             continue
 
         expected_finish = pd.to_datetime(sla)
@@ -174,7 +172,7 @@ def run_engine(conn, cur):
         elif sla_delay > 0:
             priority = "🟡 Medium"
         else:
-            priority = "🟢 Low"
+            priority = "🟢 On Track"
 
         priority_rows.append({
             "House": house,
@@ -182,7 +180,7 @@ def run_engine(conn, cur):
             "Delay": row["Delay"],
             "SLA": expected_finish.date(),
             "Priority": priority,
-            "Reason": row["Reason"]
+            "SLA Deviation (days)": sla_delay
         })
 
     priority_df = pd.DataFrame(priority_rows)
@@ -200,10 +198,7 @@ def run_engine(conn, cur):
     # ================= OUTPUT =================
 
     st.subheader("🚨 Priority Table (SLA Based)")
-    if not priority_df.empty:
-        st.dataframe(priority_df)
-    else:
-        st.info("No SLA risks")
+    st.dataframe(priority_df)
 
     st.subheader("🏠 House Intelligence")
     st.dataframe(result_df[["House","Stage","Progress %","Delay","Predicted Finish","Reason"]])
