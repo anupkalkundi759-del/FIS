@@ -84,12 +84,12 @@ def run_engine(conn, cur):
         for row in cur.fetchall()
     }
 
-    # ================= TRACKING =================
+    # ================= FIXED TRACKING QUERY =================
     cur.execute("""
         SELECT h.house_no, s.stage_name, t.timestamp, s.sequence
-        FROM products p
+        FROM tracking_log t
+        JOIN products p ON t.product_instance_id = p.product_instance_id
         JOIN houses h ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
     """, (unit_dict[selected_unit],))
@@ -155,7 +155,11 @@ def run_engine(conn, cur):
         current_stage = min_row["stage"]
         current_time = min_row["time"]
 
-        measurement_rows = df[(df["house"] == house) & (df["stage"] == "Measurement")]
+        measurement_rows = df[
+            (df["house"] == house) &
+            (df["stage"].str.contains("Measurement", case=False, na=False))
+        ]
+
         start_date = measurement_rows["time"].min() if not measurement_rows.empty else df[df["house"] == house]["time"].min()
 
         house_df = df[df["house"] == house].sort_values("seq").reset_index(drop=True)
@@ -193,10 +197,8 @@ def run_engine(conn, cur):
 
         urgency_label_display = [k for k, v in urgency_map_ui.items() if v == urgency_val][0]
 
-        # ===== SLA =====
         expected_finish = pd.to_datetime(sla_date) if sla_date else None
 
-        # ===== PREDICTION =====
         if house_progress < 5:
             predicted_finish = None
             delay = None
@@ -205,7 +207,6 @@ def run_engine(conn, cur):
             predicted_finish = today + timedelta(days=int(remaining_days * productivity_rate))
             delay = (predicted_finish - expected_finish).days if expected_finish else None
 
-        # ===== DELAY DISPLAY =====
         if house_progress < 5:
             delay_display = "Not started"
         elif delay is None:
@@ -217,7 +218,6 @@ def run_engine(conn, cur):
         else:
             delay_display = f"Delayed by {delay} days"
 
-        # ===== PRIORITY =====
         delay_factor = max(0, delay) if delay is not None else 0
         priority_score = (delay_factor * 3) + (100 - house_progress) + (urgency_val * 20)
 
@@ -283,7 +283,7 @@ def run_engine(conn, cur):
 
     result_df = pd.DataFrame(results)
 
-    # ===== PRIORITY TABLE =====
+    # ===== PRIORITY =====
     st.subheader("🚨 Priority Houses")
     priority_df = result_df[result_df["SLA"].notna()]
     st.dataframe(priority_df[["House","Stage","Delay","SLA","Priority","Reason_Priority"]])
