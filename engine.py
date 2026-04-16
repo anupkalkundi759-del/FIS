@@ -24,6 +24,10 @@ def run_engine(conn, cur):
     """)
     act = cur.fetchall()
 
+    if not act:
+        st.error("No activity master found")
+        return
+
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     total_duration = activity_df["days"].sum()
 
@@ -65,8 +69,7 @@ def run_engine(conn, cur):
         start_date = meas["time"].min() if not meas.empty else hdf["time"].min()
 
         # ---------- CURRENT STAGE ----------
-        current_row = hdf.iloc[-1]
-        current_stage = current_row["stage"]
+        current_stage = hdf.iloc[-1]["stage"]
 
         # ---------- PROGRESS ----------
         completed_days = 0
@@ -77,7 +80,9 @@ def run_engine(conn, cur):
             s2 = hdf.iloc[i + 1]
 
             actual = (s2["time"] - s1["time"]).days
-            planned = int(activity_df[activity_df["stage"] == s1["stage"]]["days"].values[0])
+
+            planned_series = activity_df[activity_df["stage"] == s1["stage"]]["days"]
+            planned = int(planned_series.values[0]) if not planned_series.empty else 1
 
             delay = actual - planned
             delays.append(delay)
@@ -91,8 +96,8 @@ def run_engine(conn, cur):
 
         # ---------- PRODUCTIVITY ----------
         if delays:
-            productivity = sum(delays[-2:]) / max(len(delays[-2:]), 1)
-            productivity = max(0.8, min(1.5, 1 + productivity / 10))
+            avg_delay = sum(delays[-2:]) / max(len(delays[-2:]), 1)
+            productivity = max(0.8, min(1.5, 1 + avg_delay / 10))
         else:
             productivity = 1
 
@@ -137,8 +142,7 @@ def run_engine(conn, cur):
                     "Reason": reason
                 })
 
-        # ---------- PRIORITY ----------
-        # purely based on delay + progress (no urgency)
+        # ---------- PRIORITY SCORE (INTERNAL ONLY) ----------
         priority_score = (
             max(0, delay_days) * 3 +
             (100 - progress)
@@ -168,12 +172,20 @@ def run_engine(conn, cur):
     # ================= PRIORITY TABLE =================
     st.subheader("🚨 Priority Table (SLA Only)")
 
-    priority_df = result_df[result_df["SLA"].notna()][[
-        "House", "Stage", "Delay", "SLA",
-        "Priority", "Reason"
-    ]]
+    priority_df = result_df[result_df["SLA"].notna()].copy()
 
-    st.dataframe(priority_df.sort_values("Priority Score", ascending=False))
+    if not priority_df.empty:
+        priority_df = priority_df.sort_values("Priority Score", ascending=False)
+        priority_df = priority_df.drop(columns=["Priority Score"])
+
+        priority_df = priority_df[[
+            "House", "Stage", "Delay", "SLA",
+            "Priority", "Reason"
+        ]]
+
+        st.dataframe(priority_df)
+    else:
+        st.info("No SLA houses configured")
 
     # ================= HOUSE INTELLIGENCE =================
     st.subheader("🏠 House Intelligence")
