@@ -84,15 +84,23 @@ def run_engine(conn, cur):
         for row in cur.fetchall()
     }
 
-    # ================= FIXED TRACKING QUERY =================
+    # ================= 🔥 HOUSE-BASED TRACKING FIX =================
+    cur.execute("SELECT house_no FROM houses WHERE unit_id=%s",
+                (unit_dict[selected_unit],))
+    house_list = [h[0] for h in cur.fetchall()]
+
+    if not house_list:
+        st.warning("No houses found for this unit")
+        return
+
     cur.execute("""
         SELECT h.house_no, s.stage_name, t.timestamp, s.sequence
         FROM tracking_log t
         JOIN products p ON t.product_instance_id = p.product_instance_id
         JOIN houses h ON p.house_id = h.house_id
         JOIN stages s ON t.stage_id = s.stage_id
-        WHERE h.unit_id = %s
-    """, (unit_dict[selected_unit],))
+        WHERE h.house_no = ANY(%s)
+    """, (house_list,))
 
     data = cur.fetchall()
 
@@ -102,6 +110,9 @@ def run_engine(conn, cur):
 
     df = pd.DataFrame(data, columns=["house", "stage", "time", "seq"])
     df["time"] = pd.to_datetime(df["time"], errors="coerce")
+
+    # DEBUG (remove later)
+    st.write("DEBUG ROW COUNT:", len(df))
 
     # ================= PROGRESS =================
     product_progress = []
@@ -225,7 +236,6 @@ def run_engine(conn, cur):
             days_to_sla = (expected_finish - today).days
             priority_score += max(0, 10 - days_to_sla)
 
-        # ===== REASONS =====
         if house_progress < 5:
             reason_priority = "Not started"
         elif expected_finish and predicted_finish and predicted_finish > expected_finish:
@@ -250,7 +260,6 @@ def run_engine(conn, cur):
         else:
             reason_intel = "On track"
 
-        # ===== EARLY WARNING =====
         stage_days = int(activity_df[activity_df["stage"] == current_stage]["days"].values[0])
         days_in_stage = (today - current_time).days
 
@@ -283,34 +292,16 @@ def run_engine(conn, cur):
 
     result_df = pd.DataFrame(results)
 
-    # ===== PRIORITY =====
     st.subheader("🚨 Priority Houses")
     priority_df = result_df[result_df["SLA"].notna()]
     st.dataframe(priority_df[["House","Stage","Delay","SLA","Priority","Reason_Priority"]])
 
-    # ===== EARLY WARNING =====
     st.subheader("🚨 Early Warnings")
     if early_warnings:
         st.dataframe(pd.DataFrame(early_warnings))
     else:
         st.success("No early risks detected")
 
-    # ===== BOTTLENECK =====
-    stage_df = pd.DataFrame(stage_analysis)
-    if not stage_df.empty:
-        count_df = stage_df["Stage"].value_counts()
-        delay_df = stage_df.groupby("Stage")["Delay"].mean()
-
-        combined = pd.concat([count_df, delay_df], axis=1)
-        combined.columns = ["Volume", "Avg Delay"]
-        combined["Score"] = combined["Volume"] * combined["Avg Delay"]
-
-        top = combined.sort_values("Score", ascending=False)
-        if not top.empty and top.iloc[0]["Score"] > 0:
-            st.error(f"🚨 Bottleneck: {top.index[0]}")
-            st.dataframe(combined.sort_values("Score", ascending=False))
-
-    # ===== HOUSE INTELLIGENCE =====
     st.subheader("🏠 House Intelligence")
     st.dataframe(result_df[[
         "House","Stage","Progress %","Delay","Predicted Finish","Reason_Intel"
