@@ -63,7 +63,7 @@ def run_engine(conn, cur):
         selected_house = st.selectbox("House", houses)
 
     with col2:
-        sla_date = st.date_input"(SLA)", value=None)
+        sla_date = st.date_input("SLA(Optional)", value=None)
 
     if st.button("Save SLA"):
         if sla_date:
