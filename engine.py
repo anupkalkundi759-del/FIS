@@ -100,8 +100,9 @@ def run_engine(conn, cur):
     else:
         df = pd.DataFrame(columns=["house","stage","start","end"])
 
-    # 🔥 AUTO DELETE SLA IF TRACKING CLEARED
+    # ================= 🔥 CRITICAL FIX =================
     if df.empty:
+        # Delete SLA also
         cur.execute("""
             DELETE FROM house_config
             WHERE house_no IN (
@@ -110,18 +111,20 @@ def run_engine(conn, cur):
         """, (unit_dict[selected_unit],))
         conn.commit()
 
+        st.warning("No tracking data available. SLA evaluation not started.")
+        return   # 🚨 STOP ENGINE COMPLETELY
+
+    # ================= ENGINE =================
     results = []
     sla_results = []
     stage_delay_summary = {}
 
-    all_houses = set(df["house"].unique()) if not df.empty else set()
-    all_houses = all_houses.union(set(config_map.keys()))
+    all_houses = set(df["house"].unique())
 
-    # ================= ENGINE =================
     for house in all_houses:
 
-        house_data = df[df["house"] == house] if not df.empty else pd.DataFrame(columns=["house","stage","start","end"])
-        start_date = house_data["start"].min() if not house_data.empty else today
+        house_data = df[df["house"] == house]
+        start_date = house_data["start"].min()
 
         current_pointer = start_date
         earned_duration = 0
@@ -131,7 +134,7 @@ def run_engine(conn, cur):
             stage = row["stage"]
             duration = row["days"]
 
-            stage_data = house_data[house_data["stage"] == stage] if not house_data.empty else pd.DataFrame()
+            stage_data = house_data[house_data["stage"] == stage]
             planned_finish = current_pointer + timedelta(days=duration)
 
             if not stage_data.empty:
@@ -150,9 +153,8 @@ def run_engine(conn, cur):
                 current_pointer = planned_finish
 
         predicted_finish = current_pointer
-        planned_finish_total = start_date + timedelta(days=total_duration)
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
-        current_stage = house_data.iloc[-1]["stage"] if not house_data.empty else "Not Started"
+        current_stage = house_data.iloc[-1]["stage"]
 
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
@@ -194,7 +196,7 @@ def run_engine(conn, cur):
             stage_delay_summary[stage]["delay"] += delay
             stage_delay_summary[stage]["count"] += 1
 
-    # ================= SLA OUTPUT =================
+    # ================= OUTPUT =================
     st.subheader("🚨 Priority Table (SLA Only)")
     sla_df = pd.DataFrame(sla_results)
 
@@ -204,12 +206,8 @@ def run_engine(conn, cur):
 
     st.dataframe(sla_df)
 
-    # ================= HOUSE INTELLIGENCE =================
     st.subheader("🏠 House Intelligence (Non-SLA Only)")
-    if results:
-        st.dataframe(pd.DataFrame(results))
-    else:
-        st.info("All houses are under SLA monitoring")
+    st.dataframe(pd.DataFrame(results)) if results else st.info("All houses are under SLA monitoring")
 
     # ================= EARLY WARNING =================
     early_data = []
@@ -232,11 +230,13 @@ def run_engine(conn, cur):
     ]
 
     st.subheader("🧠 Stage Delay Insight")
+
     if insight_data:
         insight_df = pd.DataFrame(insight_data).sort_values(by="Total Delay", ascending=False)
         st.dataframe(insight_df)
 
         top = insight_df.iloc[0]
+
         st.subheader("🚀 Top Delayed Stage")
         st.error(f"{top['Stage']} → {top['Total Delay']} days ({top['Affected Houses']} houses)")
 
