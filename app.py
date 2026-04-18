@@ -50,7 +50,7 @@ def login():
         .logo-text {
             font-size: 18px;
             font-weight: 600;
-            margin-top: 10px;
+            margin-top: 5px;
         }
 
         .title {
