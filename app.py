@@ -44,7 +44,7 @@ def login():
         /* LEFT */
         .left-box {
             text-align: center;
-            margin-top: 15px;
+            margin-top: 25px;
         }
 
         .logo-text {
