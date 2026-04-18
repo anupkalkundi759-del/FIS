@@ -106,7 +106,7 @@ def login():
         st.markdown('<div class="left-box">', unsafe_allow_html=True)
 
         logo = remove_white_bg("logo.png")
-        st.image(logo, width=160)
+        st.image(logo, width=180)
 
         st.markdown("""
             <div class="logo-text">
