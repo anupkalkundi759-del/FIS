@@ -116,7 +116,7 @@ def login():
 
         st.markdown("""
             <div class="title">
-                Where nature meets <span class="highlight">design</span>
+                Total Environment <span class="highlight">Machine Craft</span>
             </div>
         """, unsafe_allow_html=True)
 
