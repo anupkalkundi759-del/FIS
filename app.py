@@ -11,7 +11,7 @@ if "role" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state.page = "Tracking"
 
-# ================= LOGIN (PRO UI) =================
+# ================= LOGIN (CLEAN UI) =================
 def login():
 
     # ===== CSS =====
@@ -21,92 +21,89 @@ def login():
             background: #f5f2eb;
         }
 
-        /* LEFT PANEL */
-        .left-panel {
-            background: linear-gradient(135deg, #0f3d2e, #1b5e3c);
-            color: white;
-            padding: 60px;
-            height: 100vh;
+        /* REMOVE TOP SPACE */
+        .block-container {
+            padding-top: 2rem;
         }
 
-        .left-title {
-            font-size: 42px;
-            margin-top: 100px;
+        /* LEFT SIDE */
+        .left {
+            padding: 80px 60px;
+        }
+
+        .title {
+            font-size: 46px;
+            margin-top: 120px;
             line-height: 1.2;
+            color: #333;
         }
 
         .highlight {
-            color: #f5a623;
+            color: #f57c00;
         }
 
-        .stats {
-            margin-top: 40px;
-            font-size: 18px;
+        /* RIGHT SIDE */
+        .right {
+            padding: 80px 60px;
         }
 
-        /* RIGHT PANEL */
-        .right-panel {
-            background: #f5f2eb;
-            padding: 80px;
-            height: 100vh;
-        }
-
-        .login-heading {
-            font-size: 32px;
+        .heading {
+            font-size: 30px;
             font-weight: bold;
             margin-bottom: 10px;
         }
 
         .subtext {
-            color: gray;
+            color: #666;
             margin-bottom: 30px;
         }
 
+        /* INPUT */
         .stTextInput>div>div>input {
             border-radius: 10px;
             height: 45px;
         }
 
+        /* BUTTON */
         .stButton>button {
-            width: 100%;
-            height: 50px;
-            border-radius: 10px;
             background-color: #f57c00;
             color: white;
-            font-weight: bold;
+            height: 45px;
+            border-radius: 10px;
             border: none;
+            width: 140px;
+            font-weight: 600;
+        }
+
+        /* LOGO FIX (remove white box effect slightly) */
+        img {
+            background: transparent !important;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    # ===== SPLIT SCREEN =====
+    # ===== LAYOUT =====
     col1, col2 = st.columns([1, 1])
 
-    # ===== LEFT SIDE =====
+    # ===== LEFT =====
     with col1:
-        st.markdown('<div class="left-panel">', unsafe_allow_html=True)
+        st.markdown('<div class="left">', unsafe_allow_html=True)
 
-        st.image("logo.png", width=120)
+        st.image("logo.png", width=160)
 
         st.markdown("""
-            <div class="left-title">
+            <div class="title">
                 Where nature meets <span class="highlight">design</span>
-            </div>
-
-            <div class="stats">
-                32+ Years<br>
-                120+ Projects<br>
-                4,500+ Families
             </div>
         """, unsafe_allow_html=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ===== RIGHT SIDE =====
+    # ===== RIGHT =====
     with col2:
-        st.markdown('<div class="right-panel">', unsafe_allow_html=True)
+        st.markdown('<div class="right">', unsafe_allow_html=True)
 
-        st.markdown('<div class="login-heading">Sign in to your account</div>', unsafe_allow_html=True)
+        st.markdown('<div class="heading">Sign in to your account</div>', unsafe_allow_html=True)
         st.markdown('<div class="subtext">Factory Intelligence System — Authorized access only</div>', unsafe_allow_html=True)
 
         u = st.text_input("Username")
