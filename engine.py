@@ -29,7 +29,7 @@ def run_engine(conn, cur):
 
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     activity_df["days"] = activity_df["days"].astype(int)
-    total_duration = int(activity_df["days"].sum())  # 🔥 FIXED
+    total_duration = int(activity_df["days"].sum())
 
     # ================= PROJECT / UNIT =================
     col1, col2 = st.columns(2)
@@ -105,6 +105,7 @@ def run_engine(conn, cur):
     df["time"] = pd.to_datetime(df["time"])
 
     results = []
+    sla_results = []
     early_warnings = []
     stuck_stages = []
 
@@ -135,17 +136,15 @@ def run_engine(conn, cur):
         current_stage = latest["stage"]
         current_time = latest["time"]
 
-        # ================= SMART PREDICTION =================
-        elapsed_days = (today - start_date).days
-
-        if progress > 1:  # 🔥 avoid explosion for tiny progress
-            estimated_total_days = elapsed_days / (progress / 100)
-            estimated_total_days = min(estimated_total_days, total_duration * 3)  # cap
-            predicted_finish = start_date + timedelta(days=int(estimated_total_days))
+        # ================= FIXED PREDICTION =================
+        if progress > 0:
+            remaining_ratio = (100 - progress) / 100
+            remaining_days = total_duration * remaining_ratio
+            predicted_finish = today + timedelta(days=int(remaining_days))
         else:
-            predicted_finish = start_date + timedelta(days=int(total_duration))
+            predicted_finish = start_date + timedelta(days=total_duration)
 
-        planned_finish = start_date + timedelta(days=int(total_duration))
+        planned_finish = start_date + timedelta(days=total_duration)
 
         # ================= SLA =================
         sla = config_map.get(house)
@@ -153,25 +152,19 @@ def run_engine(conn, cur):
 
         # ================= REMAINING DAYS =================
         if expected_finish is not None:
-            remaining_days = (expected_finish - today).days
+            rem_days = (expected_finish - today).days
         else:
-            remaining_days = (predicted_finish - today).days
+            rem_days = (predicted_finish - today).days
 
         # ================= ALERT =================
-        if remaining_days < 0:
+        if rem_days < 0:
             alert = "🔴 Overdue"
-        elif remaining_days <= 3:
+        elif rem_days <= 3:
             alert = "🟠 At Risk"
-        elif remaining_days <= 7:
+        elif rem_days <= 7:
             alert = "🟡 Approaching"
         else:
             alert = "🟢 Safe"
-
-        # ================= SLA STATUS =================
-        if expected_finish:
-            sla_status = "On Track" if predicted_finish <= expected_finish else "Delay"
-        else:
-            sla_status = None
 
         # ================= DELAY =================
         delay_days = (predicted_finish - planned_finish).days
@@ -183,57 +176,50 @@ def run_engine(conn, cur):
         else:
             delay_display = f"Delay {delay_days}d"
 
-        # ================= PRIORITY =================
-        def get_priority(score):
-            if score >= 80: return "🔴 Critical"
-            elif score >= 50: return "🟠 High"
-            elif score >= 20: return "🟡 Medium"
-            else: return "🟢 Low"
+        # ================= SLA TABLE DATA =================
+        if expected_finish is not None:
+            sla_status = "On Track" if predicted_finish <= expected_finish else "Delay"
 
-        if expected_finish is None:
-            priority = None
-        else:
-            sla_delay = (predicted_finish - expected_finish).days
-            priority_score = max(0, sla_delay) * 10
-            priority = get_priority(priority_score)
-
-        # ================= EARLY WARNING =================
-        if expected_finish and predicted_finish > expected_finish:
-            early_warnings.append({
+            sla_results.append({
                 "House": house,
-                "Issue": "Will miss SLA",
-                "Delay (days)": int((predicted_finish - expected_finish).days)
+                "Stage": current_stage,
+                "Remaining Days": int(rem_days),
+                "Predicted Finish": predicted_finish.date(),
+                "SLA Date": expected_finish.date(),
+                "SLA Status": sla_status,
+                "Priority": "🟢 Low" if sla_status == "On Track" else "🔴 High"
             })
+
+            if predicted_finish > expected_finish:
+                early_warnings.append({
+                    "House": house,
+                    "Issue": "Will miss SLA",
+                    "Delay (days)": int((predicted_finish - expected_finish).days)
+                })
 
         # ================= BOTTLENECK =================
         stage_days = activity_df[activity_df["stage"] == current_stage]["days"].values[0]
         if (today - current_time).days > stage_days:
             stuck_stages.append(current_stage)
 
-        # ================= RESULT =================
+        # ================= HOUSE INTELLIGENCE (NO SLA) =================
         results.append({
             "House": house,
             "Stage": current_stage,
             "Progress %": round(progress, 1),
-            "Remaining Days": int(remaining_days),
+            "Remaining Days": int(rem_days),
             "Status Alert": alert,
             "Delay": delay_display,
-            "Predicted Finish": predicted_finish.date(),
-            "SLA Date": expected_finish.date() if expected_finish is not None else None,
-            "SLA Status": sla_status,
-            "Priority": priority
+            "Predicted Finish": predicted_finish.date()
         })
 
     result_df = pd.DataFrame(results)
+    sla_df = pd.DataFrame(sla_results)
 
     # ================= OUTPUT =================
 
     st.subheader("🚨 Priority Table (SLA Only)")
-    priority_df = result_df[result_df["Priority"].notna()]
-    st.dataframe(priority_df[[
-        "House", "Stage", "Remaining Days",
-        "Predicted Finish", "SLA Date", "SLA Status", "Priority"
-    ]])
+    st.dataframe(sla_df)
 
     st.subheader("🏠 House Intelligence")
     st.dataframe(result_df)
