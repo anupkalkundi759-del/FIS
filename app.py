@@ -44,13 +44,13 @@ def login():
         /* LEFT */
         .left-box {
             text-align: center;
-            margin-top: 20px;
+            margin-top: 10px;
         }
 
         .logo-text {
             font-size: 18px;
             font-weight: 600;
-            margin-top: 5px;
+            margin-top: 10px;
         }
 
         .title {
