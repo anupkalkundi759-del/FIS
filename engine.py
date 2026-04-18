@@ -6,6 +6,15 @@ def run_engine(conn, cur):
     st.title("⚙️ Scheduling Intelligence Engine")
     today = datetime.now()
 
+    # ================= CONFIG TABLE =================
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS house_config (
+            house_no TEXT PRIMARY KEY,
+            sla_date DATE
+        )
+    """)
+    conn.commit()
+
     # ================= LOAD ACTIVITIES =================
     cur.execute("""
         SELECT activity_name, sequence_order, duration_days
@@ -41,7 +50,34 @@ def run_engine(conn, cur):
         unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
 
-    # ================= SLA =================
+    # ================= SLA INPUT =================
+    st.subheader("⚙️ SLA Assignment")
+
+    cur.execute("SELECT house_no FROM houses WHERE unit_id=%s", (unit_dict[selected_unit],))
+    houses = [h[0] for h in cur.fetchall()]
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        selected_house = st.selectbox("House", houses)
+
+    with col2:
+        sla_date = st.date_input("SLA Date (Optional)", value=None)
+
+    if st.button("Save SLA"):
+        if sla_date:
+            cur.execute("""
+                INSERT INTO house_config (house_no, sla_date)
+                VALUES (%s, %s)
+                ON CONFLICT (house_no)
+                DO UPDATE SET sla_date = EXCLUDED.sla_date
+            """, (selected_house, sla_date))
+        else:
+            cur.execute("DELETE FROM house_config WHERE house_no=%s", (selected_house,))
+        conn.commit()
+        st.success("SLA Saved")
+
+    # ================= LOAD SLA =================
     cur.execute("SELECT house_no, sla_date FROM house_config")
     config_map = {r[0]: r[1] for r in cur.fetchall()}
 
@@ -85,7 +121,6 @@ def run_engine(conn, cur):
         start_date = meas["time"].min()
 
         current_pointer = start_date
-        total_delay = 0
         earned_duration = 0
 
         # ================= STAGE-WISE LOGIC =================
@@ -102,21 +137,17 @@ def run_engine(conn, cur):
             if not stage_data.empty:
 
                 actual_start = stage_data["time"].min()
-                actual_finish = stage_data["time"].max()  # ✅ REAL FINISH
 
-                delay = (actual_finish - planned_finish).days
-                delay = max(delay, 0)
+                # If you only log entry → use this
+                actual_finish = actual_start + timedelta(days=duration)
 
-                total_delay += delay
-
-                # FS dependency: next starts after actual finish
+                # FS dependency
                 current_pointer = actual_finish
 
                 earned_duration += duration
 
             else:
-                # future stages shift with accumulated delay
-                current_pointer = planned_finish + timedelta(days=total_delay)
+                current_pointer = planned_finish
 
         predicted_finish = current_pointer
         planned_finish_total = start_date + timedelta(days=total_duration)
@@ -128,7 +159,6 @@ def run_engine(conn, cur):
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        # ================= REMAINING =================
         rem_days = (expected_finish - today).days if expected_finish else (predicted_finish - today).days
 
         # ================= ALERT =================
@@ -144,21 +174,25 @@ def run_engine(conn, cur):
         # ================= DELAY =================
         delay_days = (predicted_finish - planned_finish_total).days
 
-        if delay_days < 0:
-            delay_display = f"Ahead vs Plan {abs(delay_days)}d"
-        elif delay_days == 0:
-            delay_display = "On Plan"
+        # 🔥 FIX: No fake prediction in early stage
+        if progress < 15:
+            delay_display = "Not Reliable Yet"
         else:
-            delay_display = f"Delay vs Plan {delay_days}d"
+            if delay_days < 0:
+                delay_display = f"Ahead vs Plan {abs(delay_days)}d"
+            elif delay_days == 0:
+                delay_display = "On Plan"
+            else:
+                delay_display = f"Delay vs Plan {delay_days}d"
 
-        # ================= CURRENT STAGE =================
         latest = house_data.sort_values("seq").iloc[-1]
         current_stage = latest["stage"]
-        current_time = latest["time"]
 
         # ================= BOTTLENECK =================
+        stage_start = house_data[house_data["stage"] == current_stage]["time"].min()
         stage_days = activity_df[activity_df["stage"] == current_stage]["days"].values[0]
-        if (today - current_time).days > stage_days:
+
+        if (today - stage_start).days > stage_days:
             stuck_stages.append(current_stage)
 
         # ================= SLA TABLE =================
