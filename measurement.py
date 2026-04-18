@@ -1,12 +1,34 @@
 def update_measurement(conn, cur):
     import streamlit as st
-    from datetime import datetime
 
     st.title("📅 Measurement Update")
 
+    # ================= CACHE =================
+    @st.cache_data
+    def get_projects():
+        cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
+        return cur.fetchall()
+
+    @st.cache_data
+    def get_units(project_id):
+        cur.execute("""
+            SELECT unit_id, unit_name 
+            FROM units 
+            WHERE project_id=%s
+        """, (project_id,))
+        return cur.fetchall()
+
+    @st.cache_data
+    def get_houses(unit_id):
+        cur.execute("""
+            SELECT house_id, house_no 
+            FROM houses 
+            WHERE unit_id=%s
+        """, (unit_id,))
+        return cur.fetchall()
+
     # ================= PROJECT =================
-    cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
-    projects = cur.fetchall()
+    projects = get_projects()
 
     if not projects:
         st.warning("No projects found")
@@ -14,14 +36,10 @@ def update_measurement(conn, cur):
 
     project_dict = {p[1]: p[0] for p in projects}
     selected_project = st.selectbox("Project", list(project_dict.keys()))
+    project_id = project_dict[selected_project]
 
     # ================= UNIT =================
-    cur.execute("""
-        SELECT unit_id, unit_name 
-        FROM units 
-        WHERE project_id=%s
-    """, (project_dict[selected_project],))
-    units = cur.fetchall()
+    units = get_units(project_id)
 
     if not units:
         st.warning("No units found")
@@ -29,14 +47,10 @@ def update_measurement(conn, cur):
 
     unit_dict = {u[1]: u[0] for u in units}
     selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
+    unit_id = unit_dict[selected_unit]
 
     # ================= HOUSE =================
-    cur.execute("""
-        SELECT house_id, house_no 
-        FROM houses 
-        WHERE unit_id=%s
-    """, (unit_dict[selected_unit],))
-    houses = cur.fetchall()
+    houses = get_houses(unit_id)
 
     if not houses:
         st.warning("No houses found")
@@ -49,57 +63,64 @@ def update_measurement(conn, cur):
     # ================= DATE =================
     measurement_date = st.date_input("Measurement Date")
 
+    # ================= UPDATE =================
     if st.button("Update Measurement"):
 
-        try:
-            # ================= UPDATE HOUSE =================
-            cur.execute("""
-                UPDATE houses
-                SET measurement_date=%s,
-                    status='In Progress'
-                WHERE house_id=%s
-            """, (measurement_date, selected_house_id))
+        with st.spinner("Updating measurement..."):
 
-            # ================= GET MEASUREMENT STAGE =================
-            cur.execute("""
-                SELECT stage_id 
-                FROM stages 
-                WHERE stage_name = 'Measurement'
-            """)
-            stage = cur.fetchone()
+            try:
+                # ---------- UPDATE HOUSE ----------
+                cur.execute("""
+                    UPDATE houses
+                    SET measurement_date=%s,
+                        status='In Progress'
+                    WHERE house_id=%s
+                """, (measurement_date, selected_house_id))
 
-            if not stage:
-                st.error("Measurement stage not found in stages table")
-                conn.rollback()
-                return
+                # ---------- GET STAGE ----------
+                cur.execute("""
+                    SELECT stage_id 
+                    FROM stages 
+                    WHERE stage_name = 'Measurement'
+                """)
+                stage = cur.fetchone()
 
-            stage_id = stage[0]
+                if not stage:
+                    st.error("Measurement stage not found in stages table")
+                    conn.rollback()
+                    return
 
-            # ================= GET PRODUCTS =================
-            cur.execute("""
-                SELECT product_instance_id 
-                FROM products 
-                WHERE house_id=%s
-            """, (selected_house_id,))
-            products = cur.fetchall()
+                stage_id = stage[0]
 
-            if not products:
-                st.warning("No products found for this house")
-                conn.commit()
-                return
+                # ---------- GET PRODUCTS COUNT (for display only) ----------
+                cur.execute("""
+                    SELECT COUNT(*) 
+                    FROM products 
+                    WHERE house_id=%s
+                """, (selected_house_id,))
+                product_count = cur.fetchone()[0]
 
-            # ================= INSERT TRACKING =================
-            for p in products:
+                if product_count == 0:
+                    st.warning("No products found for this house")
+                    conn.commit()
+                    return
+
+                # ---------- BULK INSERT (FAST REPLACEMENT OF LOOP) ----------
                 cur.execute("""
                     INSERT INTO tracking_log (product_instance_id, stage_id, status, timestamp)
-                    VALUES (%s, %s, 'Completed', NOW())
-                """, (p[0], stage_id))
+                    SELECT product_instance_id, %s, 'Completed', NOW()
+                    FROM products
+                    WHERE house_id = %s
+                """, (stage_id, selected_house_id))
 
-            conn.commit()
+                conn.commit()
 
-            st.success(f"✅ Measurement completed for House {selected_house_no}")
-            st.info(f"📦 {len(products)} products moved to 'Measurement Completed'")
+                st.success(f"✅ Measurement completed for House {selected_house_no}")
+                st.info(f"📦 {product_count} products moved to 'Measurement Completed'")
 
-        except Exception as e:
-            conn.rollback()
-            st.error(f"Error: {str(e)}")
+                # ---------- REFRESH ----------
+                st.rerun()
+
+            except Exception as e:
+                conn.rollback()
+                st.error(f"Error: {str(e)}")
