@@ -29,7 +29,7 @@ def run_engine(conn, cur):
 
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     activity_df["days"] = activity_df["days"].astype(int)
-    total_duration = activity_df["days"].sum()
+    total_duration = int(activity_df["days"].sum())  # 🔥 FIXED
 
     # ================= PROJECT / UNIT =================
     col1, col2 = st.columns(2)
@@ -121,6 +121,7 @@ def run_engine(conn, cur):
         total_stages = len(activity_df)
         total_products = house_data["product"].nunique()
 
+        # ================= PROGRESS =================
         progress_sum = 0
         for stage in activity_df["stage"]:
             stage_products = house_data[house_data["stage"] == stage]["product"].nunique()
@@ -129,6 +130,7 @@ def run_engine(conn, cur):
 
         progress = (progress_sum / total_stages) * 100 if total_stages else 0
 
+        # ================= CURRENT STAGE =================
         latest = house_data.sort_values("seq").iloc[-1]
         current_stage = latest["stage"]
         current_time = latest["time"]
@@ -136,13 +138,14 @@ def run_engine(conn, cur):
         # ================= SMART PREDICTION =================
         elapsed_days = (today - start_date).days
 
-        if progress > 0:
+        if progress > 1:  # 🔥 avoid explosion for tiny progress
             estimated_total_days = elapsed_days / (progress / 100)
-            predicted_finish = start_date + timedelta(days=estimated_total_days)
+            estimated_total_days = min(estimated_total_days, total_duration * 3)  # cap
+            predicted_finish = start_date + timedelta(days=int(estimated_total_days))
         else:
-            predicted_finish = start_date + timedelta(days=total_duration)
+            predicted_finish = start_date + timedelta(days=int(total_duration))
 
-        planned_finish = start_date + timedelta(days=total_duration)
+        planned_finish = start_date + timedelta(days=int(total_duration))
 
         # ================= SLA =================
         sla = config_map.get(house)
