@@ -109,12 +109,6 @@ def login():
         st.image(logo, width=200)
 
         st.markdown("""
-            <div class="logo-text">
-                Total Environment Machine Craft
-            </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown("""
             <div class="title">
                 Total Environment <span class="highlight">Machine Craft</span>
             </div>
