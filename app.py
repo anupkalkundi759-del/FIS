@@ -50,7 +50,7 @@ def login():
         .logo-text {
             font-size: 18px;
             font-weight: 600;
-            margin-top: 5px;
+            margin-top: 30px;
         }
 
         .title {
@@ -106,7 +106,7 @@ def login():
         st.markdown('<div class="left-box">', unsafe_allow_html=True)
 
         logo = remove_white_bg("logo.png")
-        st.image(logo, width=200)
+        st.image(logo, width=250)
 
         st.markdown("""
             <div class="title">
