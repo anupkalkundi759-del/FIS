@@ -1,5 +1,21 @@
 import streamlit as st
 import psycopg2
+from PIL import Image
+
+# ================= IMAGE PROCESS =================
+def remove_white_bg(image_path):
+    img = Image.open(image_path).convert("RGBA")
+    datas = img.getdata()
+
+    newData = []
+    for item in datas:
+        if item[0] > 240 and item[1] > 240 and item[2] > 240:
+            newData.append((255, 255, 255, 0))
+        else:
+            newData.append(item)
+
+    img.putdata(newData)
+    return img
 
 # ================= SESSION =================
 if "logged_in" not in st.session_state:
@@ -11,7 +27,7 @@ if "role" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state.page = "Tracking"
 
-# ================= LOGIN (CLEAN UI) =================
+# ================= LOGIN =================
 def login():
 
     # ===== CSS =====
@@ -21,19 +37,17 @@ def login():
             background: #f5f2eb;
         }
 
-        /* REMOVE TOP SPACE */
         .block-container {
             padding-top: 2rem;
         }
 
-        /* LEFT SIDE */
         .left {
             padding: 80px 60px;
         }
 
         .title {
             font-size: 46px;
-            margin-top: 120px;
+            margin-top: 100px;
             line-height: 1.2;
             color: #333;
         }
@@ -42,7 +56,6 @@ def login():
             color: #f57c00;
         }
 
-        /* RIGHT SIDE */
         .right {
             padding: 80px 60px;
         }
@@ -50,7 +63,6 @@ def login():
         .heading {
             font-size: 30px;
             font-weight: bold;
-            margin-bottom: 10px;
         }
 
         .subtext {
@@ -58,13 +70,11 @@ def login():
             margin-bottom: 30px;
         }
 
-        /* INPUT */
         .stTextInput>div>div>input {
             border-radius: 10px;
             height: 45px;
         }
 
-        /* BUTTON */
         .stButton>button {
             background-color: #f57c00;
             color: white;
@@ -73,11 +83,6 @@ def login():
             border: none;
             width: 140px;
             font-weight: 600;
-        }
-
-        /* LOGO FIX (remove white box effect slightly) */
-        img {
-            background: transparent !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -89,7 +94,16 @@ def login():
     with col1:
         st.markdown('<div class="left">', unsafe_allow_html=True)
 
-        st.image("logo.png", width=160)
+        # 🔥 LOGO WITH BG REMOVED
+        logo = remove_white_bg("logo.png")
+        st.image(logo, width=180)
+
+        # 🔥 TEXT YOU ASKED
+        st.markdown("""
+            <div style='font-size:18px; font-weight:600; margin-top:10px; color:#333;'>
+                Total Environment Machine Craft
+            </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("""
             <div class="title">
@@ -129,7 +143,7 @@ if not st.session_state.logged_in:
     login()
     st.stop()
 
-# ================= DB (UNCHANGED) =================
+# ================= DB =================
 def create_connection():
     try:
         return psycopg2.connect(
@@ -195,7 +209,7 @@ st.title("🏭 Factory Intelligence System")
 
 page = st.session_state.page
 
-# ================= LAZY LOAD PAGES =================
+# ================= PAGES =================
 if page == "Tracking":
     from tracking import show_tracking
     show_tracking(conn, cur)
