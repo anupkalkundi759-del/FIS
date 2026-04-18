@@ -11,9 +11,50 @@ if "role" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state.page = "Tracking"
 
-# ================= LOGIN =================
+# ================= LOGIN (UPDATED UI + LOGO) =================
 def login():
-    st.title("🔐 Login")
+    # ===== CSS =====
+    st.markdown("""
+        <style>
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0px 4px 20px rgba(0,0,0,0.1);
+            max-width: 400px;
+            margin: auto;
+            text-align: center;
+        }
+
+        .login-title {
+            font-size: 28px;
+            font-weight: bold;
+            margin-top: 10px;
+            margin-bottom: 20px;
+        }
+
+        .stApp {
+            background: linear-gradient(to right, #f5f5f5, #ffffff);
+        }
+
+        .stButton>button {
+            width: 100%;
+            border-radius: 10px;
+            height: 45px;
+            background-color: #f57c00;
+            color: white;
+            font-weight: bold;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # ===== LOGIN CARD =====
+    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+
+    # 🔥 LOGO
+    st.image("logo.png", width=120)
+
+    st.markdown('<div class="login-title">Total Environment</div>', unsafe_allow_html=True)
 
     u = st.text_input("Username")
     p = st.text_input("Password", type="password")
@@ -31,11 +72,14 @@ def login():
         else:
             st.error("Invalid credentials")
 
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ===== LOGIN CHECK =====
 if not st.session_state.logged_in:
     login()
     st.stop()
 
-# ================= DB (FIXED) =================
+# ================= DB (UNCHANGED) =================
 def create_connection():
     try:
         return psycopg2.connect(
@@ -50,7 +94,6 @@ def create_connection():
         return None
 
 def get_db():
-    # Create or reconnect if needed
     if "conn" not in st.session_state or st.session_state.conn.closed:
         st.session_state.conn = create_connection()
 
@@ -61,7 +104,6 @@ def get_db():
         cur = st.session_state.conn.cursor()
         return st.session_state.conn, cur
     except Exception as e:
-        # reconnect if cursor fails
         st.session_state.conn = create_connection()
         if st.session_state.conn:
             return st.session_state.conn, st.session_state.conn.cursor()
