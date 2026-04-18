@@ -11,68 +11,121 @@ if "role" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state.page = "Tracking"
 
-# ================= LOGIN (UPDATED UI + LOGO) =================
+# ================= LOGIN (PRO UI) =================
 def login():
+
     # ===== CSS =====
     st.markdown("""
         <style>
-        .login-box {
-            background: white;
-            padding: 40px;
-            border-radius: 15px;
-            box-shadow: 0px 4px 20px rgba(0,0,0,0.1);
-            max-width: 400px;
-            margin: auto;
-            text-align: center;
-        }
-
-        .login-title {
-            font-size: 28px;
-            font-weight: bold;
-            margin-top: 10px;
-            margin-bottom: 20px;
-        }
-
         .stApp {
-            background: linear-gradient(to right, #f5f5f5, #ffffff);
+            background: #f5f2eb;
+        }
+
+        /* LEFT PANEL */
+        .left-panel {
+            background: linear-gradient(135deg, #0f3d2e, #1b5e3c);
+            color: white;
+            padding: 60px;
+            height: 100vh;
+        }
+
+        .left-title {
+            font-size: 42px;
+            margin-top: 100px;
+            line-height: 1.2;
+        }
+
+        .highlight {
+            color: #f5a623;
+        }
+
+        .stats {
+            margin-top: 40px;
+            font-size: 18px;
+        }
+
+        /* RIGHT PANEL */
+        .right-panel {
+            background: #f5f2eb;
+            padding: 80px;
+            height: 100vh;
+        }
+
+        .login-heading {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .subtext {
+            color: gray;
+            margin-bottom: 30px;
+        }
+
+        .stTextInput>div>div>input {
+            border-radius: 10px;
+            height: 45px;
         }
 
         .stButton>button {
             width: 100%;
+            height: 50px;
             border-radius: 10px;
-            height: 45px;
             background-color: #f57c00;
             color: white;
             font-weight: bold;
+            border: none;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    # ===== LOGIN CARD =====
-    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+    # ===== SPLIT SCREEN =====
+    col1, col2 = st.columns([1, 1])
 
-    # 🔥 LOGO
-    st.image("logo.png", width=120)
+    # ===== LEFT SIDE =====
+    with col1:
+        st.markdown('<div class="left-panel">', unsafe_allow_html=True)
 
-    st.markdown('<div class="login-title">Total Environment</div>', unsafe_allow_html=True)
+        st.image("logo.png", width=120)
 
-    u = st.text_input("Username")
-    p = st.text_input("Password", type="password")
+        st.markdown("""
+            <div class="left-title">
+                Where nature meets <span class="highlight">design</span>
+            </div>
 
-    if st.button("Login"):
-        users = {
-            "worker": {"password": "123", "role": "worker"},
-            "admin": {"password": "admin@123", "role": "admin"}
-        }
+            <div class="stats">
+                32+ Years<br>
+                120+ Projects<br>
+                4,500+ Families
+            </div>
+        """, unsafe_allow_html=True)
 
-        if u in users and users[u]["password"] == p:
-            st.session_state.logged_in = True
-            st.session_state.role = users[u]["role"]
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    # ===== RIGHT SIDE =====
+    with col2:
+        st.markdown('<div class="right-panel">', unsafe_allow_html=True)
+
+        st.markdown('<div class="login-heading">Sign in to your account</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subtext">Factory Intelligence System — Authorized access only</div>', unsafe_allow_html=True)
+
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+
+        if st.button("Sign In"):
+            users = {
+                "worker": {"password": "123", "role": "worker"},
+                "admin": {"password": "admin@123", "role": "admin"}
+            }
+
+            if u in users and users[u]["password"] == p:
+                st.session_state.logged_in = True
+                st.session_state.role = users[u]["role"]
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ===== LOGIN CHECK =====
 if not st.session_state.logged_in:
