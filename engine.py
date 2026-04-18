@@ -62,7 +62,8 @@ def run_engine(conn, cur):
         sla_date = st.date_input("SLA Date")
 
     with c5:
-        if st.button("Save"):
+        st.write("")
+        if st.button("Save SLA"):
             cur.execute("""
                 INSERT INTO house_config (house_no, sla_date)
                 VALUES (%s, %s)
@@ -78,25 +79,26 @@ def run_engine(conn, cur):
 
     # ================= TRACKING =================
     cur.execute("""
-        SELECT h.house_no, p.product_instance_id, s.stage_name,
-               t.timestamp, s.sequence
+        SELECT h.house_no, s.stage_name,
+               MIN(t.timestamp), MAX(t.timestamp)
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
         JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
+        GROUP BY h.house_no, s.stage_name
     """, (unit_dict[selected_unit],))
 
-    df = pd.DataFrame(cur.fetchall(), columns=["house","product","stage","time","seq"])
+    df = pd.DataFrame(cur.fetchall(), columns=["house","stage","start","end"])
 
     if not df.empty:
-        df["time"] = pd.to_datetime(df["time"])
+        df["start"] = pd.to_datetime(df["start"])
+        df["end"] = pd.to_datetime(df["end"])
 
     results = []
     sla_results = []
     stage_delay_summary = {}
 
-    # include SLA houses also
     all_houses = set(df["house"].unique()) if not df.empty else set()
     all_houses = all_houses.union(set(config_map.keys()))
 
@@ -105,10 +107,8 @@ def run_engine(conn, cur):
 
         house_data = df[df["house"] == house] if not df.empty else pd.DataFrame()
 
-        if not house_data.empty and "Measurement" in house_data["stage"].values:
-            start_date = house_data[house_data["stage"]=="Measurement"]["time"].min()
-        elif not house_data.empty:
-            start_date = house_data["time"].min()
+        if not house_data.empty:
+            start_date = house_data["start"].min()
         else:
             start_date = today
 
@@ -120,15 +120,17 @@ def run_engine(conn, cur):
             stage = row["stage"]
             duration = row["days"]
 
-            stage_data = house_data[house_data["stage"] == stage] if not house_data.empty else pd.DataFrame()
+            stage_data = house_data[house_data["stage"] == stage]
 
             planned_finish = current_pointer + timedelta(days=duration)
 
             if not stage_data.empty:
-                actual_start = stage_data["time"].min()
-                actual_finish = actual_start + timedelta(days=duration)
+                actual_start = stage_data["start"].iloc[0]
+                actual_finish = stage_data["end"].iloc[0]
 
-                delay = (actual_finish - planned_finish).days
+                actual_duration = (actual_finish - actual_start).days
+                delay = actual_duration - duration
+
                 if delay > 0:
                     stage_delays.append((stage, delay))
 
@@ -142,21 +144,24 @@ def run_engine(conn, cur):
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        current_stage = "-"
-        if not house_data.empty:
-            latest = house_data.sort_values("seq").iloc[-1]
-            current_stage = latest["stage"]
+        if house_data.empty:
+            current_stage = "Not Started"
+        else:
+            current_stage = house_data.iloc[-1]["stage"]
 
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        # ================= SLA TABLE =================
+        # ================= SLA =================
         if expected_finish is not None:
 
             delay_days = (predicted_finish - expected_finish).days
 
-            if delay_days <= 0:
+            if delay_days < 0:
                 status = "🟢 On Track"
+                impact = f"Ahead by {abs(delay_days)} days"
+            elif delay_days == 0:
+                status = "🟢 On Time"
                 impact = "On Time"
             else:
                 status = "🔴 Delay"
@@ -198,7 +203,7 @@ def run_engine(conn, cur):
                 "Predicted Finish": pred_display
             })
 
-        # collect stage delay
+        # stage delay summary
         for stage, delay in stage_delays:
             if stage not in stage_delay_summary:
                 stage_delay_summary[stage] = {"delay":0,"count":0}
@@ -206,7 +211,6 @@ def run_engine(conn, cur):
             stage_delay_summary[stage]["count"] += 1
 
     # ================= OUTPUT =================
-
     st.subheader("🚨 Priority Table (SLA Only)")
     st.dataframe(pd.DataFrame(sla_results))
 
@@ -214,23 +218,35 @@ def run_engine(conn, cur):
     if results:
         st.dataframe(pd.DataFrame(results))
     else:
-        st.info("All houses are under SLA monitoring")
+        st.info(f"{len(sla_results)} houses are under SLA monitoring")
 
-    # -------- STAGE INSIGHT --------
-    insight_data = []
-
-    for stage, val in stage_delay_summary.items():
-        if val["delay"] > 0:
-            insight_data.append({
-                "Stage": stage,
-                "Total Delay": val["delay"],
-                "Affected Houses": val["count"]
+    # -------- EARLY WARNING --------
+    early_data = []
+    for row in sla_results:
+        if "Miss by" in row["Impact"]:
+            delay_days = int(row["Impact"].split(" ")[-2])
+            early_data.append({
+                "House": row["House"],
+                "Issue": "Will miss SLA",
+                "Delay (days)": delay_days
             })
 
-    insight_df = pd.DataFrame(insight_data)
+    early_df = pd.DataFrame(early_data)
+
+    st.subheader("🚨 Early Warning")
+    if not early_df.empty:
+        st.dataframe(early_df)
+    else:
+        st.success("No early risks")
+
+    # -------- STAGE INSIGHT --------
+    insight_df = pd.DataFrame([
+        {"Stage": k, "Total Delay": v["delay"], "Affected Houses": v["count"]}
+        for k, v in stage_delay_summary.items()
+        if v["delay"] > 0
+    ])
 
     st.subheader("🧠 Stage Delay Insight")
-
     if not insight_df.empty:
         st.dataframe(insight_df.sort_values(by="Total Delay", ascending=False))
     else:
@@ -238,25 +254,30 @@ def run_engine(conn, cur):
 
     # -------- TOP STAGE --------
     st.subheader("🚀 Top Delayed Stage")
-
     if not insight_df.empty:
         top = insight_df.iloc[0]
         st.error(f"{top['Stage']} → {top['Total Delay']} days ({top['Affected Houses']} houses)")
     else:
         st.success("No delays identified")
 
+    # -------- BOTTLENECK --------
+    st.subheader("🚧 Bottleneck")
+    if not insight_df.empty:
+        bottleneck = insight_df.iloc[0]
+        st.error(f"{bottleneck['Stage']} is bottleneck → {bottleneck['Total Delay']} days delay across {bottleneck['Affected Houses']} houses")
+    else:
+        st.success("No bottleneck detected")
+
     # -------- TREND --------
     total_delay_today = sum([v["delay"] for v in stage_delay_summary.values()])
 
-    if total_delay_today > 0:
-        cur.execute("DELETE FROM delay_trend WHERE date = CURRENT_DATE")
-        cur.execute("INSERT INTO delay_trend VALUES (CURRENT_DATE, %s)", (int(total_delay_today),))
-        conn.commit()
+    cur.execute("DELETE FROM delay_trend WHERE date = CURRENT_DATE")
+    cur.execute("INSERT INTO delay_trend VALUES (CURRENT_DATE, %s)", (int(total_delay_today),))
+    conn.commit()
 
     trend_df = pd.read_sql("SELECT * FROM delay_trend ORDER BY date", conn)
 
     st.subheader("📈 Delay Trend")
-
     if not trend_df.empty:
         st.line_chart(trend_df.set_index("date"))
     else:
