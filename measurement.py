@@ -3,6 +3,15 @@ def update_measurement(conn, cur):
 
     st.title("📅 Measurement Update")
 
+    # ================= SHOW MESSAGES =================
+    if "msg_success" in st.session_state:
+        st.success(st.session_state["msg_success"])
+        del st.session_state["msg_success"]
+
+    if "msg_info" in st.session_state:
+        st.info(st.session_state["msg_info"])
+        del st.session_state["msg_info"]
+
     # ================= CACHE =================
     @st.cache_data
     def get_projects():
@@ -92,7 +101,7 @@ def update_measurement(conn, cur):
 
                 stage_id = stage[0]
 
-                # ---------- GET PRODUCTS COUNT (for display only) ----------
+                # ---------- COUNT PRODUCTS ----------
                 cur.execute("""
                     SELECT COUNT(*) 
                     FROM products 
@@ -105,7 +114,7 @@ def update_measurement(conn, cur):
                     conn.commit()
                     return
 
-                # ---------- BULK INSERT (FAST REPLACEMENT OF LOOP) ----------
+                # ---------- BULK INSERT (FAST) ----------
                 cur.execute("""
                     INSERT INTO tracking_log (product_instance_id, stage_id, status, timestamp)
                     SELECT product_instance_id, %s, 'Completed', NOW()
@@ -115,8 +124,9 @@ def update_measurement(conn, cur):
 
                 conn.commit()
 
-                st.success(f"✅ Measurement completed for House {selected_house_no}")
-                st.info(f"📦 {product_count} products moved to 'Measurement Completed'")
+                # ---------- STORE MESSAGE ----------
+                st.session_state["msg_success"] = f"✅ Measurement completed for House {selected_house_no}"
+                st.session_state["msg_info"] = f"📦 {product_count} products moved to 'Measurement Completed'"
 
                 # ---------- REFRESH ----------
                 st.rerun()
