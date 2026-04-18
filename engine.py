@@ -89,24 +89,33 @@ def run_engine(conn, cur):
         GROUP BY h.house_no, s.stage_name
     """, (unit_dict[selected_unit],))
 
-    df = pd.DataFrame(cur.fetchall(), columns=["house","stage","start","end"])
+    data = cur.fetchall()
 
-    if not df.empty:
+    # 🔥 SAFE DATAFRAME CREATION
+    if data:
+        df = pd.DataFrame(data, columns=["house","stage","start","end"])
         df["start"] = pd.to_datetime(df["start"])
         df["end"] = pd.to_datetime(df["end"])
+    else:
+        df = pd.DataFrame(columns=["house","stage","start","end"])
 
     results = []
     sla_results = []
     stage_delay_summary = {}
 
+    # include SLA houses also
     all_houses = set(df["house"].unique()) if not df.empty else set()
     all_houses = all_houses.union(set(config_map.keys()))
 
     # ================= ENGINE =================
     for house in all_houses:
 
-        house_data = df[df["house"] == house] if not df.empty else pd.DataFrame()
+        if not df.empty:
+            house_data = df[df["house"] == house]
+        else:
+            house_data = pd.DataFrame(columns=["house","stage","start","end"])
 
+        # start date
         if not house_data.empty:
             start_date = house_data["start"].min()
         else:
@@ -120,7 +129,11 @@ def run_engine(conn, cur):
             stage = row["stage"]
             duration = row["days"]
 
-            stage_data = house_data[house_data["stage"] == stage]
+            # 🔥 SAFE FILTER
+            if not house_data.empty:
+                stage_data = house_data[house_data["stage"] == stage]
+            else:
+                stage_data = pd.DataFrame(columns=["house","stage","start","end"])
 
             planned_finish = current_pointer + timedelta(days=duration)
 
@@ -144,9 +157,8 @@ def run_engine(conn, cur):
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        if house_data.empty:
-            current_stage = "Not Started"
-        else:
+        current_stage = "Not Started"
+        if not house_data.empty:
             current_stage = house_data.iloc[-1]["stage"]
 
         sla = config_map.get(house)
@@ -177,7 +189,6 @@ def run_engine(conn, cur):
             })
 
         else:
-            # ================= HOUSE INTELLIGENCE =================
             delay_days = (predicted_finish - planned_finish_total).days
 
             if progress < 15:
@@ -231,42 +242,32 @@ def run_engine(conn, cur):
                 "Delay (days)": delay_days
             })
 
-    early_df = pd.DataFrame(early_data)
-
     st.subheader("🚨 Early Warning")
-    if not early_df.empty:
-        st.dataframe(early_df)
+    if early_data:
+        st.dataframe(pd.DataFrame(early_data))
     else:
         st.success("No early risks")
 
     # -------- STAGE INSIGHT --------
-    insight_df = pd.DataFrame([
+    insight_data = [
         {"Stage": k, "Total Delay": v["delay"], "Affected Houses": v["count"]}
-        for k, v in stage_delay_summary.items()
-        if v["delay"] > 0
-    ])
+        for k, v in stage_delay_summary.items() if v["delay"] > 0
+    ]
 
     st.subheader("🧠 Stage Delay Insight")
-    if not insight_df.empty:
-        st.dataframe(insight_df.sort_values(by="Total Delay", ascending=False))
+    if insight_data:
+        insight_df = pd.DataFrame(insight_data).sort_values(by="Total Delay", ascending=False)
+        st.dataframe(insight_df)
     else:
         st.info("No stage delays detected yet")
 
-    # -------- TOP STAGE --------
-    st.subheader("🚀 Top Delayed Stage")
-    if not insight_df.empty:
+    # -------- TOP STAGE + BOTTLENECK --------
+    st.subheader("🚀 Top Delayed Stage / 🚧 Bottleneck")
+    if insight_data:
         top = insight_df.iloc[0]
         st.error(f"{top['Stage']} → {top['Total Delay']} days ({top['Affected Houses']} houses)")
     else:
         st.success("No delays identified")
-
-    # -------- BOTTLENECK --------
-    st.subheader("🚧 Bottleneck")
-    if not insight_df.empty:
-        bottleneck = insight_df.iloc[0]
-        st.error(f"{bottleneck['Stage']} is bottleneck → {bottleneck['Total Delay']} days delay across {bottleneck['Affected Houses']} houses")
-    else:
-        st.success("No bottleneck detected")
 
     # -------- TREND --------
     total_delay_today = sum([v["delay"] for v in stage_delay_summary.values()])
