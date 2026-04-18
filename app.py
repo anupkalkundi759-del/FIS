@@ -27,106 +27,107 @@ if "role" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state.page = "Tracking"
 
-# ================= GLOBAL UI STYLE =================
-st.markdown("""
-<style>
-.stApp {
-    background: #f5f2eb;
-    font-family: 'Segoe UI', sans-serif;
-}
-
-/* Divider */
-.divider {
-    border-left: 1px solid #e0ddd5;
-    height: 70vh;
-    margin: auto;
-}
-
-/* Card Shadow */
-.card {
-    background: white;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0px 4px 12px rgba(0,0,0,0.08);
-}
-
-/* Typography */
-.heading {
-    font-size: 28px;
-    font-weight: 700;
-}
-
-.subtext {
-    color: #666;
-    margin-bottom: 20px;
-}
-
-/* Inputs */
-.stTextInput>div>div>input {
-    border-radius: 8px;
-    height: 42px;
-}
-
-/* Button */
-.stButton>button {
-    background-color: #f57c00;
-    color: white;
-    border-radius: 8px;
-    height: 42px;
-    width: 100%;
-    font-weight: 600;
-    border: none;
-}
-
-/* KPI Cards */
-.kpi {
-    background: white;
-    padding: 20px;
-    border-radius: 12px;
-    text-align: center;
-    box-shadow: 0px 4px 10px rgba(0,0,0,0.06);
-}
-</style>
-""", unsafe_allow_html=True)
-
 # ================= LOGIN =================
 def login():
 
-    col1, col_mid, col2 = st.columns([1, 0.1, 1])
+    st.markdown("""
+        <style>
+        .stApp {
+            background: #f5f2eb;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        .block-container {
+            padding-top: 3rem;
+        }
+
+        /* LEFT */
+        .left-box {
+            text-align: center;
+            margin-top: 40px;
+        }
+
+        .logo-text {
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .title {
+            font-size: 42px;
+            margin-top: 60px;
+            line-height: 1.2;
+            color: #333;
+        }
+
+        .highlight {
+            color: #f57c00;
+        }
+
+        /* RIGHT */
+        .right-box {
+            max-width: 420px;
+            margin: auto;
+        }
+
+        .heading {
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .subtext {
+            color: #666;
+            margin-bottom: 25px;
+        }
+
+        /* INPUT */
+        .stTextInput>div>div>input {
+            border-radius: 10px;
+            height: 45px;
+        }
+
+        /* BUTTON */
+        .stButton>button {
+            background-color: #f57c00;
+            color: white;
+            height: 45px;
+            border-radius: 10px;
+            width: 150px;
+            font-weight: 600;
+            border: none;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns([1, 1])
 
     # ===== LEFT =====
     with col1:
-        st.markdown("<div style='display:flex;align-items:center;height:80vh;'>", unsafe_allow_html=True)
-        st.markdown("<div>", unsafe_allow_html=True)
+        st.markdown('<div class="left-box">', unsafe_allow_html=True)
 
         logo = remove_white_bg("logo.png")
-        st.image(logo, width=140)
+        st.image(logo, width=160)
 
         st.markdown("""
-        <div style='font-size:16px;font-weight:600;margin-top:8px;margin-bottom:30px;'>
-            Total Environment Machine Craft
-        </div>
+            <div class="logo-text">
+                Total Environment Machine Craft
+            </div>
         """, unsafe_allow_html=True)
 
         st.markdown("""
-        <div style='font-size:42px;line-height:1.2;'>
-            Where nature meets <span style='color:#f57c00;'>design</span>
-        </div>
+            <div class="title">
+                Where nature meets <span class="highlight">design</span>
+            </div>
         """, unsafe_allow_html=True)
 
-        st.markdown("</div></div>", unsafe_allow_html=True)
-
-    # ===== DIVIDER =====
-    with col_mid:
-        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # ===== RIGHT =====
     with col2:
-        st.markdown("<div style='display:flex;align-items:center;height:80vh;'>", unsafe_allow_html=True)
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown('<div class="right-box">', unsafe_allow_html=True)
 
-        st.markdown("<div class='heading'>Sign in to your account</div>", unsafe_allow_html=True)
-        st.markdown("<div class='subtext'>Factory Intelligence System — Authorized access only</div>", unsafe_allow_html=True)
+        st.markdown('<div class="heading">Sign in to your account</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subtext">Factory Intelligence System — Authorized access only</div>', unsafe_allow_html=True)
 
         u = st.text_input("Username")
         p = st.text_input("Password", type="password")
@@ -144,7 +145,7 @@ def login():
             else:
                 st.error("Invalid credentials")
 
-        st.markdown("</div></div>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ===== LOGIN CHECK =====
 if not st.session_state.logged_in:
@@ -161,70 +162,78 @@ def create_connection():
             user=st.secrets["DB_USER"],
             password=st.secrets["DB_PASSWORD"]
         )
-    except:
+    except Exception as e:
+        st.error(f"DB connection failed: {e}")
         return None
 
 def get_db():
     if "conn" not in st.session_state or st.session_state.conn.closed:
         st.session_state.conn = create_connection()
+
+    if st.session_state.conn is None:
+        return None, None
+
     return st.session_state.conn, st.session_state.conn.cursor()
 
 conn, cur = get_db()
 
+if conn is None:
+    st.stop()
+
 # ================= SIDEBAR =================
 with st.sidebar:
-    st.markdown("### OperaFlow")
+    st.markdown("**OperaFlow**")
     st.markdown(f"👤 {st.session_state.role.upper()}")
 
-    page = st.radio("Navigation", [
-        "Tracking", "Dashboard", "Product Tracking",
-        "Measurement Update", "Scheduling Engine",
-        "Upload Excel", "Delete Data"
-    ])
+    page = st.radio(
+        "Navigation",
+        [
+            "Tracking",
+            "Dashboard",
+            "Product Tracking",
+            "Measurement Update",
+            "Scheduling Engine",
+            "Upload Excel",
+            "Delete Data"
+        ]
+    )
 
     st.session_state.page = page
 
-    if st.button("Logout"):
+    if st.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
 
-# ================= DASHBOARD =================
-if st.session_state.page == "Dashboard":
-    st.markdown("## Dashboard Overview")
+# ================= MAIN =================
+st.title("🏭 Factory Intelligence System")
 
-    col1, col2, col3 = st.columns(3)
+page = st.session_state.page
 
-    with col1:
-        st.markdown("<div class='kpi'><h3>120</h3><p>Orders</p></div>", unsafe_allow_html=True)
-    with col2:
-        st.markdown("<div class='kpi'><h3>85%</h3><p>Efficiency</p></div>", unsafe_allow_html=True)
-    with col3:
-        st.markdown("<div class='kpi'><h3>12</h3><p>Delayed</p></div>", unsafe_allow_html=True)
+# ================= PAGES =================
+if page == "Tracking":
+    from tracking import show_tracking
+    show_tracking(conn, cur)
 
-else:
-    # ===== EXISTING PAGES =====
-    page = st.session_state.page
+elif page == "Dashboard":
+    from dashboard import show_dashboard
+    show_dashboard(conn, cur)
 
-    if page == "Tracking":
-        from tracking import show_tracking
-        show_tracking(conn, cur)
+elif page == "Product Tracking":
+    from product_tracking import show_product_tracking
+    show_product_tracking(conn, cur)
 
-    elif page == "Product Tracking":
-        from product_tracking import show_product_tracking
-        show_product_tracking(conn, cur)
+elif page == "Measurement Update":
+    from measurement import update_measurement
+    update_measurement(conn, cur)
 
-    elif page == "Measurement Update":
-        from measurement import update_measurement
-        update_measurement(conn, cur)
+elif page == "Scheduling Engine":
+    from engine import run_engine
+    run_engine(conn, cur)
 
-    elif page == "Scheduling Engine":
-        from engine import run_engine
-        run_engine(conn, cur)
+elif page == "Upload Excel":
+    from upload import show_upload
+    show_upload(conn, cur)
 
-    elif page == "Upload Excel":
-        from upload import show_upload
-        show_upload(conn, cur)
-
-    elif page == "Delete Data":
-        from delete import show_delete
-        show_delete(conn, cur)
+elif page == "Delete Data":
+    from delete import show_delete
+    show_delete(conn, cur)
