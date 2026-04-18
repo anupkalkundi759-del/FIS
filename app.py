@@ -55,7 +55,7 @@ def login():
 
         .title {
             font-size: 42px;
-            margin-top: 70px;
+            margin-top: 100px;
             line-height: 1.2;
             color: #333;
         }
