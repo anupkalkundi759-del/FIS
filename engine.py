@@ -104,8 +104,8 @@ def run_engine(conn, cur):
 
     df["time"] = pd.to_datetime(df["time"])
 
-    results = []
-    sla_results = []
+    results = []          # NON-SLA houses only
+    sla_results = []      # SLA houses
     early_warnings = []
     stuck_stages = []
 
@@ -136,11 +136,11 @@ def run_engine(conn, cur):
         current_stage = latest["stage"]
         current_time = latest["time"]
 
-        # ================= FIXED PREDICTION =================
+        # ================= PREDICTION =================
         if progress > 0:
             remaining_ratio = (100 - progress) / 100
-            remaining_days = total_duration * remaining_ratio
-            predicted_finish = today + timedelta(days=int(remaining_days))
+            remaining_days_est = total_duration * remaining_ratio
+            predicted_finish = today + timedelta(days=int(remaining_days_est))
         else:
             predicted_finish = start_date + timedelta(days=total_duration)
 
@@ -166,18 +166,19 @@ def run_engine(conn, cur):
         else:
             alert = "🟢 Safe"
 
-        # ================= DELAY =================
+        # ================= DELAY (vs PLAN ONLY) =================
         delay_days = (predicted_finish - planned_finish).days
 
         if delay_days < 0:
-            delay_display = f"Ahead {abs(delay_days)}d"
+            delay_display = f"Ahead vs Plan {abs(delay_days)}d"
         elif delay_days == 0:
-            delay_display = "On time"
+            delay_display = "On Plan"
         else:
-            delay_display = f"Delay {delay_days}d"
+            delay_display = f"Delay vs Plan {delay_days}d"
 
-        # ================= SLA TABLE DATA =================
+        # ================= SLA TABLE =================
         if expected_finish is not None:
+
             sla_status = "On Track" if predicted_finish <= expected_finish else "Delay"
 
             sla_results.append({
@@ -187,7 +188,7 @@ def run_engine(conn, cur):
                 "Predicted Finish": predicted_finish.date(),
                 "SLA Date": expected_finish.date(),
                 "SLA Status": sla_status,
-                "Priority": "🟢 Low" if sla_status == "On Track" else "🔴 High"
+                "Priority": "🔴 High" if sla_status == "Delay" else "🟢 Low"
             })
 
             if predicted_finish > expected_finish:
@@ -197,21 +198,22 @@ def run_engine(conn, cur):
                     "Delay (days)": int((predicted_finish - expected_finish).days)
                 })
 
+        # ================= HOUSE INTELLIGENCE (ONLY NON-SLA) =================
+        else:
+            results.append({
+                "House": house,
+                "Stage": current_stage,
+                "Progress %": round(progress, 1),
+                "Remaining Days": int(rem_days),
+                "Status Alert": alert,
+                "Delay": delay_display,
+                "Predicted Finish": predicted_finish.date()
+            })
+
         # ================= BOTTLENECK =================
         stage_days = activity_df[activity_df["stage"] == current_stage]["days"].values[0]
         if (today - current_time).days > stage_days:
             stuck_stages.append(current_stage)
-
-        # ================= HOUSE INTELLIGENCE (NO SLA) =================
-        results.append({
-            "House": house,
-            "Stage": current_stage,
-            "Progress %": round(progress, 1),
-            "Remaining Days": int(rem_days),
-            "Status Alert": alert,
-            "Delay": delay_display,
-            "Predicted Finish": predicted_finish.date()
-        })
 
     result_df = pd.DataFrame(results)
     sla_df = pd.DataFrame(sla_results)
@@ -221,7 +223,7 @@ def run_engine(conn, cur):
     st.subheader("🚨 Priority Table (SLA Only)")
     st.dataframe(sla_df)
 
-    st.subheader("🏠 House Intelligence")
+    st.subheader("🏠 House Intelligence (Non-SLA Only)")
     st.dataframe(result_df)
 
     st.subheader("🚨 Early Warning")
