@@ -111,8 +111,28 @@ def run_engine(conn, cur):
         start_date = house_data["start"].min()
 
         current_pointer = start_date
-        earned_duration = 0
         stage_delays = []
+
+        # ================= ✅ FIXED PRODUCT-BASED PROGRESS =================
+        cur.execute("""
+            SELECT COUNT(*) FROM products p
+            JOIN houses h ON p.house_id = h.house_id
+            WHERE h.house_no = %s
+        """, (house,))
+        total_products = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT s.stage_name, COUNT(DISTINCT t.product_instance_id)
+            FROM tracking_log t
+            JOIN stages s ON t.stage_id = s.stage_id
+            JOIN products p ON t.product_instance_id = p.product_instance_id
+            JOIN houses h ON p.house_id = h.house_id
+            WHERE h.house_no = %s AND t.status = 'Completed'
+            GROUP BY s.stage_name
+        """, (house,))
+        stage_counts = dict(cur.fetchall())
+
+        earned_duration = 0
 
         for _, row in activity_df.iterrows():
             stage = row["stage"]
@@ -132,9 +152,12 @@ def run_engine(conn, cur):
                     stage_delays.append((stage, delay))
 
                 current_pointer = actual_finish
-                earned_duration += duration
             else:
                 current_pointer = planned_finish
+
+            # 🔥 FIXED LOGIC
+            completed = stage_counts.get(stage, 0)
+            earned_duration += (completed / total_products) * duration if total_products else 0
 
         predicted_finish = current_pointer
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
@@ -143,7 +166,7 @@ def run_engine(conn, cur):
         sla = config_map.get(house)
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        # ================= SLA LOGIC =================
+        # ================= SLA =================
         if expected_finish is not None:
             delay_days = (predicted_finish - expected_finish).days
 
@@ -166,20 +189,14 @@ def run_engine(conn, cur):
                 "Impact": impact
             })
 
-        # ================= 🔥 FINAL HOUSE INTELLIGENCE (FIXED) =================
         else:
             stage_data = house_data[house_data["stage"] == current_stage]
 
-            if not stage_data.empty:
-                stage_start = stage_data["start"].iloc[0]
-            else:
-                stage_start = today
+            stage_start = stage_data["start"].iloc[0] if not stage_data.empty else today
 
-            # stage duration
             stage_duration = activity_df[activity_df["stage"] == current_stage]["days"].values
             stage_duration = int(stage_duration[0]) if len(stage_duration) > 0 else 1
 
-            # stage remaining
             stage_expected_finish = stage_start + timedelta(days=stage_duration)
             remaining_stage_days = (stage_expected_finish - today).days
 
@@ -190,20 +207,16 @@ def run_engine(conn, cur):
             else:
                 stage_display = f"{remaining_stage_days} days"
 
-            # total remaining
             project_expected_finish = start_date + timedelta(days=total_duration)
             remaining_total_days = (project_expected_finish - today).days
 
             total_display = 0 if remaining_total_days <= 0 else f"{remaining_total_days} days"
 
-            # actual finish
             last_completed = house_data["end"].max()
             actual_display = last_completed.date() if last_completed >= project_expected_finish else "Not Finished"
 
-            # delay
             delay_days = max(0, (last_completed - project_expected_finish).days)
 
-            # reason
             if stage_delays:
                 stage_name, d = max(stage_delays, key=lambda x: x[1])
                 if d <= 1:
@@ -227,7 +240,7 @@ def run_engine(conn, cur):
                 "Delay Reason": reason
             })
 
-        # ================= STAGE SUMMARY =================
+        # ================= SUMMARY =================
         for stage, delay in stage_delays:
             if stage not in stage_delay_summary:
                 stage_delay_summary[stage] = {"delay":0,"count":0}
