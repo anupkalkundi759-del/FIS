@@ -91,28 +91,45 @@ def show_tracking(conn, cur):
     df = pd.DataFrame(products, columns=["product_instance_id", "product_code"])
     df["display"] = df["product_code"] + "_" + df.index.astype(str)
 
-    # ================= SELECT ALL =================
-    select_all = st.checkbox("Select All Products", value=True)
+    # ================= 🔍 FILTER =================
+    search_text = st.text_input("🔍 Filter Products")
 
-    # ================= QUICK REMOVE =================
-    st.subheader("Quick Remove Products")
+    if search_text:
+        df = df[df["display"].str.contains(search_text, case=False, na=False)]
+
+    # ================= SELECT ALL =================
+    select_all = st.checkbox("Select All Visible Products", value=True)
+
+    df["Select"] = select_all
+
+    # ================= DATA EDITOR =================
+    edited_df = st.data_editor(
+        df[["Select", "display"]],
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # ================= ⚡ FIND & DESELECT =================
+    st.subheader("⚡ Find & Deselect Products")
 
     remove_list = st.multiselect(
-        "Search & select products to REMOVE",
-        df["display"].tolist()
+        "Search & remove products",
+        edited_df["display"].tolist()
     )
 
     if remove_list:
-        df = df[~df["display"].isin(remove_list)]
+        edited_df = edited_df[~edited_df["display"].isin(remove_list)]
 
     # ================= FINAL SELECTION =================
-    selected_ids = df["product_instance_id"].tolist()
+    selected_rows = edited_df[edited_df["Select"] == True]
+
+    if selected_rows.empty:
+        st.warning("Select at least one product")
+        return
+
+    selected_ids = df.loc[selected_rows.index, "product_instance_id"].tolist()
 
     st.success(f"{len(selected_ids)} products selected")
-
-    if not selected_ids:
-        st.warning("No products left after removal")
-        return
 
     # ================= STAGES =================
     stage_sequence = get_stages()
