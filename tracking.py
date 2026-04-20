@@ -99,7 +99,6 @@ def show_tracking(conn, cur):
 
     # ================= SELECT ALL =================
     select_all = st.checkbox("Select All Visible Products", value=True)
-
     df["Select"] = select_all
 
     # ================= DATA EDITOR =================
@@ -108,17 +107,6 @@ def show_tracking(conn, cur):
         use_container_width=True,
         hide_index=True
     )
-
-    # ================= ⚡ FIND & DESELECT =================
-    st.subheader("⚡ Find & Deselect Products")
-
-    remove_list = st.multiselect(
-        "Search & remove products",
-        edited_df["display"].tolist()
-    )
-
-    if remove_list:
-        edited_df = edited_df[~edited_df["display"].isin(remove_list)]
 
     # ================= FINAL SELECTION =================
     selected_rows = edited_df[edited_df["Select"] == True]
