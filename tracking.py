@@ -101,17 +101,24 @@ def show_tracking(conn, cur):
     # ================= STAGES =================
     stage_sequence = get_stages()
 
-    # ================= CURRENT STAGE =================
+    # ================= 🔥 FIXED CURRENT STAGE + STATUS =================
     cur.execute("""
-        SELECT s.stage_name
+        SELECT s.stage_name, t.status
         FROM tracking_log t
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE t.product_instance_id = %s
         ORDER BY t.timestamp DESC
         LIMIT 1
     """, (selected_ids[0],))
+
     result = cur.fetchone()
-    current_stage = result[0] if result else "Not Started"
+
+    if result:
+        current_stage = result[0]
+        current_status = result[1]
+    else:
+        current_stage = "Not Started"
+        current_status = None
 
     # ================= NEXT STAGE =================
     if current_stage == "Not Started":
@@ -123,9 +130,16 @@ def show_tracking(conn, cur):
         except:
             next_stage = "Completed"
 
-    # ================= DISPLAY =================
+    # ================= 🔥 FIXED DISPLAY =================
     col4, col5 = st.columns(2)
-    col4.info(f"Last Completed Stage: {current_stage}")
+
+    if current_status == "In Progress":
+        col4.warning(f"Current Stage: {current_stage} (In Progress)")
+    elif current_status == "Completed":
+        col4.info(f"Last Completed Stage: {current_stage}")
+    else:
+        col4.info("Last Completed Stage: Not Started")
+
     col5.success(f"Next Allowed Stage: {next_stage}")
 
     # ================= INPUT =================
@@ -139,16 +153,16 @@ def show_tracking(conn, cur):
     if next_stage != "Completed":
         allowed_stages.append(next_stage)
 
-    # allow current stage
-    if current_stage != "Not Started":
+    # allow current stage only if still in progress
+    if current_stage != "Not Started" and current_status == "In Progress":
         allowed_stages.append(current_stage)
 
     if selected_stage not in allowed_stages:
         st.error(f"You must follow stage order. Next allowed: {next_stage}")
         return
 
-    # prevent re-completing same stage
-    if selected_stage == current_stage and status == "Completed":
+    # prevent duplicate completion
+    if selected_stage == current_stage and current_status == "Completed":
         st.warning("Stage already completed")
         return
 
