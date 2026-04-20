@@ -32,26 +32,11 @@ def login():
 
     st.markdown("""
         <style>
-        .stApp {
-            background: #f5f2eb;
-            font-family: 'Segoe UI', sans-serif;
-        }
+        .stApp { background: #f5f2eb; font-family: 'Segoe UI', sans-serif; }
+        .block-container { padding-top: 3rem; }
 
-        .block-container {
-            padding-top: 3rem;
-        }
-
-        /* LEFT */
-        .left-box {
-            text-align: center;
-            margin-top: 5px;
-        }
-
-        .logo-text {
-            font-size: 18px;
-            font-weight: 600;
-            margin-top: 30px;
-        }
+        .left-box { text-align: center; margin-top: 5px; }
+        .logo-text { font-size: 18px; font-weight: 600; margin-top: 30px; }
 
         .title {
             font-size: 42px;
@@ -60,33 +45,18 @@ def login():
             color: #333;
         }
 
-        .highlight {
-            color: #f57c00;
-        }
+        .highlight { color: #f57c00; }
 
-        /* RIGHT */
-        .right-box {
-            max-width: 420px;
-            margin: auto;
-        }
+        .right-box { max-width: 420px; margin: auto; }
 
-        .heading {
-            font-size: 28px;
-            font-weight: 700;
-        }
+        .heading { font-size: 28px; font-weight: 700; }
+        .subtext { color: #666; margin-bottom: 25px; }
 
-        .subtext {
-            color: #666;
-            margin-bottom: 25px;
-        }
-
-        /* INPUT */
         .stTextInput>div>div>input {
             border-radius: 10px;
             height: 45px;
         }
 
-        /* BUTTON */
         .stButton>button {
             background-color: #f57c00;
             color: white;
@@ -104,7 +74,6 @@ def login():
     # ===== LEFT =====
     with col1:
         st.markdown('<div class="left-box">', unsafe_allow_html=True)
-
         logo = remove_white_bg("logo.png")
         st.image(logo, width=220)
 
@@ -127,8 +96,14 @@ def login():
         p = st.text_input("Password", type="password")
 
         if st.button("Sign In"):
+
+            # 🔥 UPDATED ROLE SYSTEM
             users = {
-                "worker": {"password": "123", "role": "worker"},
+                "production": {"password": "123", "role": "production"},
+                "preassembly": {"password": "123", "role": "preassembly"},
+                "polishing": {"password": "123", "role": "polishing"},
+                "final": {"password": "123", "role": "final"},
+                "dispatch": {"password": "123", "role": "dispatch"},
                 "admin": {"password": "admin@123", "role": "admin"}
             }
 
@@ -179,9 +154,9 @@ with st.sidebar:
     st.markdown("**OperaFlow**")
     st.markdown(f"👤 {st.session_state.role.upper()}")
 
-    page = st.radio(
-        "Navigation",
-        [
+    # 🔥 ROLE BASED NAVIGATION
+    if st.session_state.role == "admin":
+        pages = [
             "Tracking",
             "Dashboard",
             "Product Tracking",
@@ -190,8 +165,14 @@ with st.sidebar:
             "Upload Excel",
             "Delete Data"
         ]
-    )
+    else:
+        pages = [
+            "Tracking",
+            "Dashboard",
+            "Product Tracking"
+        ]
 
+    page = st.radio("Navigation", pages)
     st.session_state.page = page
 
     if st.button("🚪 Logout"):
@@ -202,6 +183,16 @@ with st.sidebar:
 st.title("🏭 Factory Intelligence System")
 
 page = st.session_state.page
+
+# 🔥 BACKEND ACCESS PROTECTION
+if st.session_state.role != "admin" and page in [
+    "Measurement Update",
+    "Scheduling Engine",
+    "Upload Excel",
+    "Delete Data"
+]:
+    st.error("⛔ Access Denied")
+    st.stop()
 
 # ================= PAGES =================
 if page == "Tracking":
