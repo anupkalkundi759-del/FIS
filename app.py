@@ -36,19 +36,15 @@ def login():
         .block-container { padding-top: 3rem; }
 
         .left-box { text-align: center; margin-top: 5px; }
-        .logo-text { font-size: 18px; font-weight: 600; margin-top: 30px; }
-
         .title {
             font-size: 42px;
             margin-top: 3px;
             line-height: 1.2;
             color: #333;
         }
-
         .highlight { color: #f57c00; }
 
         .right-box { max-width: 420px; margin: auto; }
-
         .heading { font-size: 28px; font-weight: 700; }
         .subtext { color: #666; margin-bottom: 25px; }
 
@@ -71,7 +67,7 @@ def login():
 
     col1, col2 = st.columns([1, 1])
 
-    # ===== LEFT =====
+    # LEFT
     with col1:
         st.markdown('<div class="left-box">', unsafe_allow_html=True)
         logo = remove_white_bg("logo.png")
@@ -85,7 +81,7 @@ def login():
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ===== RIGHT =====
+    # RIGHT
     with col2:
         st.markdown('<div class="right-box">', unsafe_allow_html=True)
 
@@ -97,7 +93,7 @@ def login():
 
         if st.button("Sign In"):
 
-            # 🔥 UPDATED ROLE SYSTEM
+            # 🔥 ROLE SYSTEM
             users = {
                 "production": {"password": "123", "role": "production"},
                 "preassembly": {"password": "123", "role": "preassembly"},
@@ -184,7 +180,7 @@ st.title("🏭 Factory Intelligence System")
 
 page = st.session_state.page
 
-# 🔥 BACKEND ACCESS PROTECTION
+# 🔥 BACKEND PROTECTION (VERY IMPORTANT)
 if st.session_state.role != "admin" and page in [
     "Measurement Update",
     "Scheduling Engine",
