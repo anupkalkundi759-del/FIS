@@ -1,5 +1,6 @@
 def show_tracking(conn, cur):
     import streamlit as st
+    import pandas as pd
 
     st.title("🏭 Production Tracker")
 
@@ -70,16 +71,32 @@ def show_tracking(conn, cur):
         selected_house = st.selectbox("Select House", ["All"] + list(house_dict.keys()))
         house_id = None if selected_house == "All" else house_dict[selected_house]
 
-    # ================= PRODUCTS =================
+    # ================= PRODUCTS (MULTI SELECT TABLE) =================
     products = get_products(house_id)
 
     if not products:
         st.warning("No products found")
         return
 
-    product_map = {f"{p[1]}_{i}": p[0] for i, p in enumerate(products)}
-    selected_display = st.selectbox("Select Product", list(product_map.keys()))
-    selected_product_instance_id = product_map[selected_display]
+    df = pd.DataFrame(products, columns=["product_instance_id", "product_code"])
+    df["display"] = df["product_code"] + "_" + df.index.astype(str)
+    df["Select"] = False
+
+    st.subheader("Select Products")
+
+    edited_df = st.data_editor(
+        df[["Select", "display"]],
+        use_container_width=True,
+        hide_index=True
+    )
+
+    selected_rows = edited_df[edited_df["Select"] == True]
+
+    if selected_rows.empty:
+        st.warning("Select at least one product")
+        return
+
+    selected_ids = df.loc[selected_rows.index, "product_instance_id"].tolist()
 
     # ================= STAGES =================
     stage_sequence = get_stages()
@@ -92,7 +109,7 @@ def show_tracking(conn, cur):
         WHERE t.product_instance_id = %s
         ORDER BY t.timestamp DESC
         LIMIT 1
-    """, (selected_product_instance_id,))
+    """, (selected_ids[0],))
     result = cur.fetchone()
     current_stage = result[0] if result else "Not Started"
 
@@ -120,21 +137,21 @@ def show_tracking(conn, cur):
         st.error(f"You must complete '{next_stage}' first")
         return
 
-    # ================= UPDATE =================
-    if st.button("Update"):
+    # ================= BULK UPDATE =================
+    if st.button("Update Selected"):
         with st.spinner("Updating..."):
 
             cur.execute("SELECT stage_id FROM stages WHERE stage_name = %s", (selected_stage,))
             stage_id = cur.fetchone()[0]
 
-            cur.execute("""
-                INSERT INTO tracking_log (product_instance_id, stage_id, status, timestamp)
-                VALUES (%s, %s, %s, NOW())
-            """, (selected_product_instance_id, stage_id, status))
+            for pid in selected_ids:
+                cur.execute("""
+                    INSERT INTO tracking_log (product_instance_id, stage_id, status, timestamp)
+                    VALUES (%s, %s, %s, NOW())
+                """, (pid, stage_id, status))
 
             conn.commit()
 
-            st.success("Updated successfully")
+            st.success(f"{len(selected_ids)} products updated successfully")
 
-            # 🔥 Force UI refresh
             st.rerun()
