@@ -51,19 +51,10 @@ def show_product_tracking(conn, cur):
     selected_status = col5.selectbox("Status", ["All", "Not Started", "In Progress", "Completed"])
     search = col6.text_input("Search")
 
-    # ================= MAIN QUERY =================
+    # ================= MAIN QUERY (OPTIMIZED) =================
     with st.spinner("Loading data..."):
 
         query = """
-        WITH latest_stage AS (
-            SELECT DISTINCT ON (product_instance_id)
-                product_instance_id,
-                stage_id,
-                status,
-                timestamp
-            FROM tracking_log
-            ORDER BY product_instance_id, timestamp DESC
-        )
         SELECT 
             pm.product_code,
             pm.product_category,
@@ -72,15 +63,24 @@ def show_product_tracking(conn, cur):
             u.unit_name,
             h.house_no,
             COALESCE(s.stage_name, 'Not Started') AS stage,
-            COALESCE(ls.status, 'Not Started') AS status,
-            ls.timestamp
+            COALESCE(t.status, 'Not Started') AS status,
+            t.timestamp
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
         JOIN houses h ON p.house_id = h.house_id
         JOIN units u ON h.unit_id = u.unit_id
         JOIN projects pr ON u.project_id = pr.project_id
-        LEFT JOIN latest_stage ls ON ls.product_instance_id = p.product_instance_id
-        LEFT JOIN stages s ON ls.stage_id = s.stage_id
+
+        LEFT JOIN LATERAL (
+            SELECT t1.stage_id, t1.status, t1.timestamp
+            FROM tracking_log t1
+            WHERE t1.product_instance_id = p.product_instance_id
+            ORDER BY t1.timestamp DESC
+            LIMIT 1
+        ) t ON TRUE
+
+        LEFT JOIN stages s ON t.stage_id = s.stage_id
+
         WHERE 1=1
         """
 
@@ -103,12 +103,14 @@ def show_product_tracking(conn, cur):
             params.append(selected_stage)
 
         if selected_status != "All":
-            query += " AND ls.status = %s"
+            query += " AND t.status = %s"
             params.append(selected_status)
 
         if search:
             query += " AND pm.product_code ILIKE %s"
             params.append(f"%{search}%")
+
+        query += " LIMIT 1000"   # 🔥 CRITICAL SPEED FIX
 
         cur.execute(query, tuple(params))
         data = cur.fetchall()
@@ -131,7 +133,7 @@ def show_product_tracking(conn, cur):
 
     st.dataframe(df, use_container_width=True)
 
-    # ================= BREAKDOWN FILTER =================
+    # ================= BREAKDOWN =================
     st.divider()
     st.subheader("🎯 Breakdown Filters")
 
@@ -140,66 +142,46 @@ def show_product_tracking(conn, cur):
     breakdown_project = b1.selectbox("Project (Breakdown)", get_projects(), key="b_proj")
     breakdown_unit = b2.selectbox("Unit (Breakdown)", get_units(breakdown_project), key="b_unit")
 
-    # ================= STATUS BREAKDOWN =================
-    st.subheader("📊 Product Status Breakdown")
+    if st.button("Load Breakdown"):   # 🔥 prevents auto slow loading
 
-    with st.spinner("Calculating breakdown..."):
+        with st.spinner("Calculating breakdown..."):
 
-        query2 = """
-        WITH latest_stage AS (
-            SELECT DISTINCT ON (product_instance_id)
-                product_instance_id,
-                stage_id,
-                status
-            FROM tracking_log
-            ORDER BY product_instance_id, timestamp DESC
-        )
-        SELECT 
-            pr.project_name,
-            u.unit_name,
-            pm.product_code,
-            COUNT(*) AS total,
-            COUNT(CASE WHEN s.stage_name = 'Dispatch' AND ls.status = 'Completed' THEN 1 END) AS completed,
-            COUNT(*) - COUNT(CASE WHEN s.stage_name = 'Dispatch' AND ls.status = 'Completed' THEN 1 END) AS remaining,
-            COUNT(CASE WHEN s.stage_name = 'Cutting' THEN 1 END) AS cutting,
-            COUNT(CASE WHEN s.stage_name = 'Production' THEN 1 END) AS production,
-            COUNT(CASE WHEN s.stage_name = 'Pre Assembly' THEN 1 END) AS pre_assembly,
-            COUNT(CASE WHEN s.stage_name = 'Polishing' THEN 1 END) AS polishing,
-            COUNT(CASE WHEN s.stage_name = 'Final Assembly' THEN 1 END) AS final_assembly
-        FROM products p
-        JOIN products_master pm ON p.product_id = pm.product_id
-        JOIN houses h ON p.house_id = h.house_id
-        JOIN units u ON h.unit_id = u.unit_id
-        JOIN projects pr ON u.project_id = pr.project_id
-        LEFT JOIN latest_stage ls ON ls.product_instance_id = p.product_instance_id
-        LEFT JOIN stages s ON ls.stage_id = s.stage_id
-        WHERE 1=1
-        """
+            query2 = """
+            SELECT 
+                pr.project_name,
+                u.unit_name,
+                pm.product_code,
+                COUNT(*) AS total
+            FROM products p
+            JOIN products_master pm ON p.product_id = pm.product_id
+            JOIN houses h ON p.house_id = h.house_id
+            JOIN units u ON h.unit_id = u.unit_id
+            JOIN projects pr ON u.project_id = pr.project_id
+            WHERE 1=1
+            """
 
-        params2 = []
+            params2 = []
 
-        if breakdown_project != "All":
-            query2 += " AND pr.project_name = %s"
-            params2.append(breakdown_project)
+            if breakdown_project != "All":
+                query2 += " AND pr.project_name = %s"
+                params2.append(breakdown_project)
 
-        if breakdown_unit != "All":
-            query2 += " AND u.unit_name = %s"
-            params2.append(breakdown_unit)
+            if breakdown_unit != "All":
+                query2 += " AND u.unit_name = %s"
+                params2.append(breakdown_unit)
 
-        query2 += """
-        GROUP BY pr.project_name, u.unit_name, pm.product_code
-        ORDER BY pr.project_name, u.unit_name, pm.product_code
-        """
+            query2 += """
+            GROUP BY pr.project_name, u.unit_name, pm.product_code
+            ORDER BY pr.project_name, u.unit_name
+            """
 
-        cur.execute(query2, tuple(params2))
-        status_data = cur.fetchall()
+            cur.execute(query2, tuple(params2))
+            status_data = cur.fetchall()
 
-    if status_data:
-        status_df = pd.DataFrame(status_data, columns=[
-            "Project", "Unit", "Product",
-            "Total", "Completed", "Remaining",
-            "Cutting", "Production", "Pre Assembly", "Polishing", "Final Assembly"
-        ])
-        st.dataframe(status_df, use_container_width=True)
-    else:
-        st.warning("No product status data available")
+        if status_data:
+            status_df = pd.DataFrame(status_data, columns=[
+                "Project", "Unit", "Product", "Total"
+            ])
+            st.dataframe(status_df, use_container_width=True)
+        else:
+            st.warning("No product status data available")
