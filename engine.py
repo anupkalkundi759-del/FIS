@@ -103,7 +103,7 @@ def run_engine(conn, cur):
 
     house_group = df.groupby("house")
 
-    # ================= 🔥 NEW: LATEST STATUS (INCLUDES IN PROGRESS) =================
+    # ================= LATEST STATUS =================
     cur.execute("""
         SELECT h.house_no, s.stage_name, t.status, t.timestamp
         FROM products p
@@ -120,7 +120,7 @@ def run_engine(conn, cur):
 
     latest_df["time"] = pd.to_datetime(latest_df["time"])
 
-    # ================= EXISTING PREFETCH =================
+    # ================= PREFETCH =================
     cur.execute("""
         SELECT h.house_no,
                COUNT(p.product_instance_id) as total_products,
@@ -188,7 +188,7 @@ def run_engine(conn, cur):
         predicted_finish = current_pointer
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # 🔥 FIXED CURRENT STAGE (REAL-TIME)
+        # ================= CURRENT STAGE =================
         house_latest = latest_df[latest_df["house"] == house]
 
         if not house_latest.empty:
@@ -224,11 +224,17 @@ def run_engine(conn, cur):
             })
 
         else:
-            stage_data = house_data[house_data["stage"] == current_stage]
+            # 🔥 FIXED BLOCK
+            base_stage = current_stage.split(" (")[0]
 
-            stage_start = stage_data["start"].iloc[0] if not stage_data.empty else today
+            stage_data = house_data[house_data["stage"] == base_stage]
 
-            stage_duration = activity_df[activity_df["stage"] == current_stage]["days"].values
+            if not stage_data.empty:
+                stage_start = stage_data["start"].iloc[0]
+            else:
+                stage_start = start_date
+
+            stage_duration = activity_df[activity_df["stage"] == base_stage]["days"].values
             stage_duration = int(stage_duration[0]) if len(stage_duration) > 0 else 1
 
             stage_expected_finish = stage_start + timedelta(days=stage_duration)
