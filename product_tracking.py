@@ -4,54 +4,52 @@ def show_product_tracking(conn, cur):
 
     st.title("🔎 Product Tracking")
 
-    # ================= CACHE =================
-    @st.cache_data
-    def get_projects():
-        cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
-        return ["All"] + [p[0] for p in cur.fetchall()]
-
-    @st.cache_data
-    def get_units(project):
-        if project == "All":
-            cur.execute("SELECT DISTINCT unit_name FROM units ORDER BY unit_name")
-        else:
-            cur.execute("""
-                SELECT DISTINCT u.unit_name
-                FROM units u
-                JOIN projects p ON u.project_id = p.project_id
-                WHERE p.project_name = %s
-            """, (project,))
-        return ["All"] + [u[0] for u in cur.fetchall()]
-
-    @st.cache_data
-    def get_houses(unit):
-        if unit == "All":
-            cur.execute("SELECT DISTINCT house_no FROM houses ORDER BY house_no")
-        else:
-            cur.execute("""
-                SELECT DISTINCT h.house_no
-                FROM houses h
-                JOIN units u ON h.unit_id = u.unit_id
-                WHERE u.unit_name = %s
-            """, (unit,))
-        return ["All"] + [h[0] for h in cur.fetchall()]
-
-    @st.cache_data
-    def get_stages():
-        cur.execute("SELECT DISTINCT stage_name FROM stages ORDER BY stage_name")
-        return ["All"] + [s[0] for s in cur.fetchall()]
-
-    # ================= FILTERS =================
+    # ================= FILTER DROPDOWNS =================
     col1, col2, col3, col4, col5, col6 = st.columns(6)
 
-    selected_project = col1.selectbox("Project", get_projects())
-    selected_unit = col2.selectbox("Unit", get_units(selected_project))
-    selected_house = col3.selectbox("House", get_houses(selected_unit))
-    selected_stage = col4.selectbox("Stage", get_stages())
+    # Project
+    cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
+    projects = ["All"] + [p[0] for p in cur.fetchall()]
+    selected_project = col1.selectbox("Project", projects)
+
+    # Unit
+    if selected_project == "All":
+        cur.execute("SELECT DISTINCT unit_name FROM units ORDER BY unit_name")
+    else:
+        cur.execute("""
+            SELECT DISTINCT u.unit_name
+            FROM units u
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s
+        """, (selected_project,))
+    units = ["All"] + [u[0] for u in cur.fetchall()]
+    selected_unit = col2.selectbox("Unit", units)
+
+    # House
+    if selected_unit == "All":
+        cur.execute("SELECT DISTINCT house_no FROM houses ORDER BY house_no")
+    else:
+        cur.execute("""
+            SELECT DISTINCT h.house_no
+            FROM houses h
+            JOIN units u ON h.unit_id = u.unit_id
+            WHERE u.unit_name = %s
+        """, (selected_unit,))
+    houses = ["All"] + [h[0] for h in cur.fetchall()]
+    selected_house = col3.selectbox("House", houses)
+
+    # Stage
+    cur.execute("SELECT DISTINCT stage_name FROM stages ORDER BY stage_name")
+    stages = ["All"] + [s[0] for s in cur.fetchall()]
+    selected_stage = col4.selectbox("Stage", stages)
+
+    # Status
     selected_status = col5.selectbox("Status", ["All", "Not Started", "In Progress", "Completed"])
+
+    # Search
     search = col6.text_input("Search")
 
-    # ================= MAIN QUERY (OPTIMIZED) =================
+    # ================= MAIN QUERY (FAST) =================
     with st.spinner("Loading data..."):
 
         query = """
@@ -110,8 +108,6 @@ def show_product_tracking(conn, cur):
             query += " AND pm.product_code ILIKE %s"
             params.append(f"%{search}%")
 
-        query += " LIMIT 1000"   # 🔥 CRITICAL SPEED FIX
-
         cur.execute(query, tuple(params))
         data = cur.fetchall()
 
@@ -133,16 +129,29 @@ def show_product_tracking(conn, cur):
 
     st.dataframe(df, use_container_width=True)
 
-    # ================= BREAKDOWN =================
+    # ================= BREAKDOWN (UNCHANGED) =================
     st.divider()
     st.subheader("🎯 Breakdown Filters")
 
     b1, b2 = st.columns(2)
 
-    breakdown_project = b1.selectbox("Project (Breakdown)", get_projects(), key="b_proj")
-    breakdown_unit = b2.selectbox("Unit (Breakdown)", get_units(breakdown_project), key="b_unit")
+    cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
+    projects = ["All"] + [p[0] for p in cur.fetchall()]
+    breakdown_project = b1.selectbox("Project (Breakdown)", projects)
 
-    if st.button("Load Breakdown"):   # 🔥 prevents auto slow loading
+    if breakdown_project == "All":
+        cur.execute("SELECT DISTINCT unit_name FROM units ORDER BY unit_name")
+    else:
+        cur.execute("""
+            SELECT DISTINCT u.unit_name
+            FROM units u
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s
+        """, (breakdown_project,))
+    units = ["All"] + [u[0] for u in cur.fetchall()]
+    breakdown_unit = b2.selectbox("Unit (Breakdown)", units)
+
+    if st.button("Load Breakdown"):
 
         with st.spinner("Calculating breakdown..."):
 
