@@ -105,7 +105,6 @@ def run_engine(conn, cur):
 
     # ================= ENGINE =================
     results = []
-    sla_results = []
     stage_delay_summary = {}
 
     all_houses = set(df["house"].unique())
@@ -145,7 +144,7 @@ def run_engine(conn, cur):
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
         current_stage = house_data.iloc[-1]["stage"]
 
-        # ===== PRODUCT LOGIC =====
+        # ================= PRODUCT LOGIC =================
         cur.execute("""
         SELECT COUNT(*) FROM products p
         JOIN houses h ON p.house_id = h.house_id
@@ -174,10 +173,14 @@ def run_engine(conn, cur):
         else:
             stage_display = f"{int(adjusted_stage)} days"
 
-        total_display = f"{max(0, remaining_total)} days" if remaining_total > 0 else 0
+        if remaining_total == 0:
+            total_display = 0
+        else:
+            total_display = f"{max(0, remaining_total)} days"
+
         delay_days = max(0, remaining_total)
 
-        # ===== DELAY REASON =====
+        # ================= DELAY REASON =================
         if stage_delays:
             stage_name, d = max(stage_delays, key=lambda x: x[1])
             if d <= 1:
@@ -216,6 +219,7 @@ def run_engine(conn, cur):
 
     result_df = pd.DataFrame(results)
 
+    # 🔴 COLOR CODING
     def highlight_delay(row):
         if row["Delay (Days)"] > 0:
             return ["background-color: #ffcccc"] * len(row)
@@ -223,47 +227,8 @@ def run_engine(conn, cur):
 
     st.dataframe(result_df.style.apply(highlight_delay, axis=1))
 
-    # ================= STAGE INSIGHT (ORIGINAL) =================
-    insight_data = [
-        {"Stage": k, "Total Delay": v["delay"], "Affected Houses": v["count"]}
-        for k, v in stage_delay_summary.items() if v["delay"] > 0
-    ]
-
-    st.subheader("🧠 Stage Delay Insight")
-
-    if insight_data:
-        insight_df = pd.DataFrame(insight_data).sort_values(by="Total Delay", ascending=False)
-        st.dataframe(insight_df)
-
-        top = insight_df.iloc[0]
-
-        st.subheader("🚀 Top Delayed Stage")
-        st.error(f"{top['Stage']} → {top['Total Delay']} days ({top['Affected Houses']} houses)")
-
-        st.subheader("🚧 Bottleneck")
-        st.error(f"{top['Stage']} is bottleneck affecting {top['Affected Houses']} houses")
-    else:
-        st.info("No stage delays detected yet")
-
-    # ================= TREND (ORIGINAL) =================
-    total_delay_today = sum([v["delay"] for v in stage_delay_summary.values()])
-
-    cur.execute("DELETE FROM delay_trend WHERE date = CURRENT_DATE")
-    cur.execute("INSERT INTO delay_trend VALUES (CURRENT_DATE, %s)", (int(total_delay_today),))
-
-    cur.execute("""
-        DELETE FROM delay_trend
-        WHERE date < CURRENT_DATE - INTERVAL '30 days'
-    """)
-    conn.commit()
-
-    trend_df = pd.read_sql("SELECT * FROM delay_trend ORDER BY date", conn)
-
-    st.subheader("📈 Delay Trend")
-    st.line_chart(trend_df.set_index("date")) if not trend_df.empty else st.info("No data yet")
-
-    # ================= EXTRA BOTTLENECK =================
-    st.subheader("📊 Stage Bottleneck Ranking (Enhanced)")
+    # ================= BOTTLENECK =================
+    st.subheader("📊 Stage Bottleneck Ranking")
 
     bottleneck_data = [
         {"Stage": k, "Total Delay": v["delay"], "Affected Houses": v["count"]}
@@ -273,5 +238,8 @@ def run_engine(conn, cur):
     if bottleneck_data:
         bottleneck_df = pd.DataFrame(bottleneck_data).sort_values(by="Total Delay", ascending=False)
         st.dataframe(bottleneck_df)
+
+        top = bottleneck_df.iloc[0]
+        st.error(f"🚧 Bottleneck Stage: {top['Stage']} ({top['Total Delay']} days delay)")
     else:
         st.info("No bottlenecks detected")
