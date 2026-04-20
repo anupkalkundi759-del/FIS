@@ -87,6 +87,7 @@ def run_engine(conn, cur):
         JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
+        AND t.status = 'Completed'   -- ✅ FIX 1
         GROUP BY h.house_no, s.stage_name
     """, (unit_dict[selected_unit],))
 
@@ -143,7 +144,6 @@ def run_engine(conn, cur):
         stage_delays = []
 
         total_products = total_products_map.get(house, 0)
-
         earned_duration = 0
 
         for _, row in activity_df.iterrows():
@@ -167,15 +167,18 @@ def run_engine(conn, cur):
             else:
                 current_pointer = planned_finish
 
-            # 🔥 FAST LOOKUP (NO QUERY)
             completed = stage_completed_map.get((house, stage), 0)
             earned_duration += (completed / total_products) * duration if total_products else 0
 
         predicted_finish = current_pointer
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
-        current_stage = house_data.iloc[-1]["stage"]
 
-        sla = config_map.get(house)
+        # ✅ FIX 2 (correct latest stage)
+        latest_row = house_data.sort_values("end").iloc[-1]
+        current_stage = latest_row["stage"]
+
+        # ✅ FIX 3 (SLA control)
+        sla = config_map.get(house) if house == selected_house else None
         expected_finish = pd.to_datetime(sla) if sla else None
 
         # ================= SLA =================
@@ -252,21 +255,18 @@ def run_engine(conn, cur):
                 "Delay Reason": reason
             })
 
-        # ================= SUMMARY =================
         for stage, delay in stage_delays:
             if stage not in stage_delay_summary:
                 stage_delay_summary[stage] = {"delay":0,"count":0}
             stage_delay_summary[stage]["delay"] += delay
             stage_delay_summary[stage]["count"] += 1
 
-    # ================= OUTPUT =================
     st.subheader("🚨 Priority Table (SLA Only)")
     st.dataframe(pd.DataFrame(sla_results))
 
     st.subheader("🏠 House Intelligence (Non-SLA Only)")
     st.dataframe(pd.DataFrame(results)) if results else st.info("All houses are under SLA monitoring")
 
-    # ================= EARLY WARNING =================
     early_data = []
     for row in sla_results:
         if "Miss by" in row["Impact"]:
@@ -280,7 +280,6 @@ def run_engine(conn, cur):
     st.subheader("🚨 Early Warning")
     st.dataframe(pd.DataFrame(early_data)) if early_data else st.success("No early risks")
 
-    # ================= STAGE INSIGHT =================
     insight_data = [
         {"Stage": k, "Total Delay": v["delay"], "Affected Houses": v["count"]}
         for k, v in stage_delay_summary.items() if v["delay"] > 0
@@ -289,7 +288,6 @@ def run_engine(conn, cur):
     st.subheader("🧠 Stage Delay Insight")
     st.dataframe(pd.DataFrame(insight_data)) if insight_data else st.info("No stage delays detected yet")
 
-    # ================= TREND =================
     total_delay_today = sum([v["delay"] for v in stage_delay_summary.values()])
 
     cur.execute("DELETE FROM delay_trend WHERE date = CURRENT_DATE")
