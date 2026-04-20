@@ -116,25 +116,28 @@ def run_engine(conn, cur):
 
         for _, row in activity_df.iterrows():
             stage = row["stage"]
-            duration = row["days"]
+            planned_days = row["days"]
 
             stage_data = house_data[house_data["stage"] == stage]
-            planned_finish = current_pointer + timedelta(days=duration)
 
             if not stage_data.empty:
                 actual_start = stage_data["start"].iloc[0]
                 actual_finish = stage_data["end"].iloc[0]
 
-                actual_duration = (actual_finish - actual_start).days
-                delay = actual_duration - duration
+                actual_duration = max(0, (actual_finish - actual_start).days)
 
-                if delay > 0:
+                # 🔥 FIX 1: FAST + DELAY LOGIC
+                if actual_duration <= planned_days:
+                    effective_duration = actual_duration
+                else:
+                    effective_duration = actual_duration
+                    delay = actual_duration - planned_days
                     stage_delays.append((stage, delay))
 
-                current_pointer = actual_finish
-                earned_duration += duration
+                current_pointer = actual_start + timedelta(days=effective_duration)
+                earned_duration += effective_duration
             else:
-                current_pointer = planned_finish
+                current_pointer += timedelta(days=planned_days)
 
         predicted_finish = current_pointer
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
@@ -190,11 +193,16 @@ def run_engine(conn, cur):
 
             pending_ratio = 1 - (completed_products / total_products)
 
-            remaining_total = (predicted_finish - today).days
-            remaining_stage = remaining_total * pending_ratio
+            # 🔥 FIX 2: CORRECT STAGE REMAINING
+            stage_duration = activity_df[activity_df["stage"] == current_stage]["days"].values
+            stage_duration = int(stage_duration[0]) if len(stage_duration) > 0 else 1
 
+            remaining_stage = stage_duration * pending_ratio
             stage_display = "Less than 1 day" if remaining_stage < 1 else f"{int(remaining_stage)} days"
-            total_display = f"{max(0, remaining_total)} days" if remaining_total > 0 else 0
+
+            # 🔥 FIX 3: CORRECT TOTAL REMAINING
+            remaining_total = max(0, (predicted_finish - today).days)
+            total_display = f"{remaining_total} days" if remaining_total > 0 else 0
 
             if completed_products == total_products:
                 actual_finish = house_data["end"].max()
@@ -253,7 +261,7 @@ def run_engine(conn, cur):
     else:
         st.info("All houses are under SLA monitoring")
 
-    # ================= EARLY WARNING (UNCHANGED) =================
+    # ================= EARLY WARNING =================
     early_data = []
     for row in sla_results:
         if "Miss by" in row["Impact"]:
@@ -267,7 +275,7 @@ def run_engine(conn, cur):
     st.subheader("🚨 Early Warning")
     st.dataframe(pd.DataFrame(early_data)) if early_data else st.success("No early risks")
 
-    # ================= STAGE INSIGHT (UNCHANGED) =================
+    # ================= STAGE INSIGHT =================
     insight_data = [
         {"Stage": k, "Total Delay": v["delay"], "Affected Houses": v["count"]}
         for k, v in stage_delay_summary.items() if v["delay"] > 0
@@ -276,7 +284,7 @@ def run_engine(conn, cur):
     st.subheader("🧠 Stage Delay Insight")
     st.dataframe(pd.DataFrame(insight_data)) if insight_data else st.info("No stage delays detected yet")
 
-    # ================= TREND (UNCHANGED) =================
+    # ================= TREND =================
     total_delay_today = sum([v["delay"] for v in stage_delay_summary.values()])
 
     cur.execute("DELETE FROM delay_trend WHERE date = CURRENT_DATE")
