@@ -78,7 +78,7 @@ def run_engine(conn, cur):
     cur.execute("SELECT house_no, sla_date FROM house_config")
     config_map = {r[0]: r[1] for r in cur.fetchall()}
 
-    # ================= TRACKING =================
+    # ================= TRACKING (COMPLETED ONLY) =================
     cur.execute("""
         SELECT h.house_no, s.stage_name,
                MIN(t.timestamp), MAX(t.timestamp)
@@ -87,7 +87,7 @@ def run_engine(conn, cur):
         JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
-        AND t.status = 'Completed'   -- ✅ FIX 1
+        AND t.status = 'Completed'
         GROUP BY h.house_no, s.stage_name
     """, (unit_dict[selected_unit],))
 
@@ -101,10 +101,26 @@ def run_engine(conn, cur):
     df["start"] = pd.to_datetime(df["start"])
     df["end"] = pd.to_datetime(df["end"])
 
-    # 🔥 GROUP ONCE (IMPORTANT FIX)
     house_group = df.groupby("house")
 
-    # ================= 🔥 PREFETCH PRODUCT + STAGE DATA =================
+    # ================= 🔥 NEW: LATEST STATUS (INCLUDES IN PROGRESS) =================
+    cur.execute("""
+        SELECT h.house_no, s.stage_name, t.status, t.timestamp
+        FROM products p
+        JOIN houses h ON p.house_id = h.house_id
+        JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
+        JOIN stages s ON t.stage_id = s.stage_id
+        WHERE h.unit_id = %s
+    """, (unit_dict[selected_unit],))
+
+    latest_data = cur.fetchall()
+
+    latest_df = pd.DataFrame(latest_data,
+        columns=["house", "stage", "status", "time"])
+
+    latest_df["time"] = pd.to_datetime(latest_df["time"])
+
+    # ================= EXISTING PREFETCH =================
     cur.execute("""
         SELECT h.house_no,
                COUNT(p.product_instance_id) as total_products,
@@ -123,7 +139,6 @@ def run_engine(conn, cur):
     progress_df = pd.DataFrame(progress_data,
         columns=["house", "total_products", "stage", "completed"])
 
-    # 🔥 CREATE FAST LOOKUP MAPS
     total_products_map = progress_df.groupby("house")["total_products"].max().to_dict()
 
     stage_completed_map = {}
@@ -173,15 +188,19 @@ def run_engine(conn, cur):
         predicted_finish = current_pointer
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # ✅ FIX 2 (correct latest stage)
-        latest_row = house_data.sort_values("end").iloc[-1]
-        current_stage = latest_row["stage"]
+        # 🔥 FIXED CURRENT STAGE (REAL-TIME)
+        house_latest = latest_df[latest_df["house"] == house]
 
-        # ✅ FIX 3 (SLA control)
+        if not house_latest.empty:
+            latest_row = house_latest.sort_values("time").iloc[-1]
+            current_stage = latest_row["stage"]
+        else:
+            current_stage = "Not Started"
+
+        # ================= SLA =================
         sla = config_map.get(house) if house == selected_house else None
         expected_finish = pd.to_datetime(sla) if sla else None
 
-        # ================= SLA =================
         if expected_finish is not None:
             delay_days = (predicted_finish - expected_finish).days
 
