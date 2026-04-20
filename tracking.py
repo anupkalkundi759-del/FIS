@@ -1,6 +1,7 @@
 def show_tracking(conn, cur):
     import streamlit as st
     import pandas as pd
+    from psycopg2.extras import execute_values
 
     st.title("🏭 Production Tracker")
 
@@ -26,7 +27,6 @@ def show_tracking(conn, cur):
             cur.execute("SELECT house_id, house_no FROM houses")
         return cur.fetchall()
 
-    # 🔥 FIXED PRODUCT FILTER
     @st.cache_data
     def get_products(house_id, unit_id):
         if house_id:
@@ -90,7 +90,10 @@ def show_tracking(conn, cur):
 
     df = pd.DataFrame(products, columns=["product_instance_id", "product_code"])
     df["display"] = df["product_code"] + "_" + df.index.astype(str)
-    df["Select"] = False
+
+    # 🔥 SELECT ALL OPTION
+    select_all = st.checkbox("Select All Products", value=True)
+    df["Select"] = select_all
 
     st.subheader("Select Products")
 
@@ -99,6 +102,11 @@ def show_tracking(conn, cur):
         use_container_width=True,
         hide_index=True
     )
+
+    if select_all:
+        st.info("Uncheck products that should NOT be updated")
+    else:
+        st.info("Select products to update")
 
     selected_rows = edited_df[edited_df["Select"] == True]
 
@@ -156,7 +164,7 @@ def show_tracking(conn, cur):
     selected_stage = st.selectbox("Select Stage", stage_sequence)
     status = st.selectbox("Status", ["In Progress", "Completed"])
 
-    # ================= 🔥 STRICT VALIDATION =================
+    # ================= STRICT VALIDATION =================
     allowed_stages = []
 
     if current_status == "In Progress":
@@ -183,11 +191,16 @@ def show_tracking(conn, cur):
             cur.execute("SELECT stage_id FROM stages WHERE stage_name = %s", (selected_stage,))
             stage_id = cur.fetchone()[0]
 
-            for pid in selected_ids:
-                cur.execute("""
-                    INSERT INTO tracking_log (product_instance_id, stage_id, status, timestamp)
-                    VALUES (%s, %s, %s, NOW())
-                """, (pid, stage_id, status))
+            data = [(pid, stage_id, status) for pid in selected_ids]
+
+            execute_values(
+                cur,
+                """
+                INSERT INTO tracking_log (product_instance_id, stage_id, status, timestamp)
+                VALUES %s
+                """,
+                data
+            )
 
             conn.commit()
 
