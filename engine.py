@@ -193,7 +193,7 @@ def run_engine(conn, cur):
 
         if not house_latest.empty:
             latest_row = house_latest.sort_values("time").iloc[-1]
-            current_stage = latest_row["stage"]
+            current_stage = f"{latest_row['stage']} ({latest_row['status']})"
         else:
             current_stage = "Not Started"
 
