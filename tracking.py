@@ -71,7 +71,7 @@ def show_tracking(conn, cur):
         selected_house = st.selectbox("Select House", ["All"] + list(house_dict.keys()))
         house_id = None if selected_house == "All" else house_dict[selected_house]
 
-    # ================= PRODUCTS (MULTI SELECT TABLE) =================
+    # ================= PRODUCTS =================
     products = get_products(house_id)
 
     if not products:
@@ -132,9 +132,24 @@ def show_tracking(conn, cur):
     selected_stage = st.selectbox("Select Stage", stage_sequence)
     status = st.selectbox("Status", ["In Progress", "Completed"])
 
-    # ================= VALIDATION =================
-    if selected_stage != next_stage:
-        st.error(f"You must complete '{next_stage}' first")
+    # ================= 🔥 FIXED VALIDATION =================
+    allowed_stages = []
+
+    # allow next stage
+    if next_stage != "Completed":
+        allowed_stages.append(next_stage)
+
+    # allow current stage
+    if current_stage != "Not Started":
+        allowed_stages.append(current_stage)
+
+    if selected_stage not in allowed_stages:
+        st.error(f"You must follow stage order. Next allowed: {next_stage}")
+        return
+
+    # prevent re-completing same stage
+    if selected_stage == current_stage and status == "Completed":
+        st.warning("Stage already completed")
         return
 
     # ================= BULK UPDATE =================
