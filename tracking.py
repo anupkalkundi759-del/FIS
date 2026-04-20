@@ -91,30 +91,28 @@ def show_tracking(conn, cur):
     df = pd.DataFrame(products, columns=["product_instance_id", "product_code"])
     df["display"] = df["product_code"] + "_" + df.index.astype(str)
 
-    # 🔥 SELECT ALL OPTION
+    # ================= SELECT ALL =================
     select_all = st.checkbox("Select All Products", value=True)
-    df["Select"] = select_all
 
-    st.subheader("Select Products")
+    # ================= QUICK REMOVE =================
+    st.subheader("Quick Remove Products")
 
-    edited_df = st.data_editor(
-        df[["Select", "display"]],
-        use_container_width=True,
-        hide_index=True
+    remove_list = st.multiselect(
+        "Search & select products to REMOVE",
+        df["display"].tolist()
     )
 
-    if select_all:
-        st.info("Uncheck products that should NOT be updated")
-    else:
-        st.info("Select products to update")
+    if remove_list:
+        df = df[~df["display"].isin(remove_list)]
 
-    selected_rows = edited_df[edited_df["Select"] == True]
+    # ================= FINAL SELECTION =================
+    selected_ids = df["product_instance_id"].tolist()
 
-    if selected_rows.empty:
-        st.warning("Select at least one product")
+    st.success(f"{len(selected_ids)} products selected")
+
+    if not selected_ids:
+        st.warning("No products left after removal")
         return
-
-    selected_ids = df.loc[selected_rows.index, "product_instance_id"].tolist()
 
     # ================= STAGES =================
     stage_sequence = get_stages()
@@ -199,7 +197,8 @@ def show_tracking(conn, cur):
                 INSERT INTO tracking_log (product_instance_id, stage_id, status, timestamp)
                 VALUES %s
                 """,
-                data
+                data,
+                template="(%s, %s, %s, NOW())"
             )
 
             conn.commit()
