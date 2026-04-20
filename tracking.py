@@ -26,8 +26,9 @@ def show_tracking(conn, cur):
             cur.execute("SELECT house_id, house_no FROM houses")
         return cur.fetchall()
 
+    # 🔥 FIXED PRODUCT FILTER
     @st.cache_data
-    def get_products(house_id):
+    def get_products(house_id, unit_id):
         if house_id:
             cur.execute("""
                 SELECT p.product_instance_id, pm.product_code
@@ -36,6 +37,15 @@ def show_tracking(conn, cur):
                 WHERE p.house_id = %s
                 ORDER BY pm.product_code
             """, (house_id,))
+        elif unit_id:
+            cur.execute("""
+                SELECT p.product_instance_id, pm.product_code
+                FROM products p
+                JOIN products_master pm ON p.product_id = pm.product_id
+                JOIN houses h ON p.house_id = h.house_id
+                WHERE h.unit_id = %s
+                ORDER BY pm.product_code
+            """, (unit_id,))
         else:
             cur.execute("""
                 SELECT p.product_instance_id, pm.product_code
@@ -72,7 +82,7 @@ def show_tracking(conn, cur):
         house_id = None if selected_house == "All" else house_dict[selected_house]
 
     # ================= PRODUCTS =================
-    products = get_products(house_id)
+    products = get_products(house_id, unit_id)
 
     if not products:
         st.warning("No products found")
@@ -101,7 +111,7 @@ def show_tracking(conn, cur):
     # ================= STAGES =================
     stage_sequence = get_stages()
 
-    # ================= 🔥 FIXED CURRENT STAGE + STATUS =================
+    # ================= CURRENT STAGE =================
     cur.execute("""
         SELECT s.stage_name, t.status
         FROM tracking_log t
@@ -130,7 +140,7 @@ def show_tracking(conn, cur):
         except:
             next_stage = "Completed"
 
-    # ================= 🔥 FIXED DISPLAY =================
+    # ================= DISPLAY =================
     col4, col5 = st.columns(2)
 
     if current_status == "In Progress":
@@ -146,22 +156,22 @@ def show_tracking(conn, cur):
     selected_stage = st.selectbox("Select Stage", stage_sequence)
     status = st.selectbox("Status", ["In Progress", "Completed"])
 
-    # ================= 🔥 FIXED VALIDATION =================
+    # ================= 🔥 STRICT VALIDATION =================
     allowed_stages = []
 
-    # allow next stage
-    if next_stage != "Completed":
-        allowed_stages.append(next_stage)
-
-    # allow current stage only if still in progress
-    if current_stage != "Not Started" and current_status == "In Progress":
-        allowed_stages.append(current_stage)
+    if current_status == "In Progress":
+        allowed_stages = [current_stage]
+    else:
+        if next_stage != "Completed":
+            allowed_stages = [next_stage]
 
     if selected_stage not in allowed_stages:
-        st.error(f"You must follow stage order. Next allowed: {next_stage}")
+        if current_status == "In Progress":
+            st.error(f"Complete current stage '{current_stage}' before moving forward")
+        else:
+            st.error(f"You must follow stage order. Next allowed: {next_stage}")
         return
 
-    # prevent duplicate completion
     if selected_stage == current_stage and current_status == "Completed":
         st.warning("Stage already completed")
         return
