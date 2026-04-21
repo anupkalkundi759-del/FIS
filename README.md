@@ -15,24 +15,20 @@ It integrates:
 ### 1. Excel Upload
 - Upload project, unit, house, and product data
 
-### 2. Measurement Update
-- Manual input of measurement date per house
-- Acts as scheduling trigger
-
-### 3. Scheduling Engine
+### 2. Scheduling Engine
 - Simulates workflow:
   Measurement → Cutting List → Production → Pre Assembly → Polishing → Final Assembly → Dispatch
 - Generates predicted finish dates
 
-### 4. Dashboard
+### 3. Dashboard
 - Total houses
 - Predicted houses
 - Delayed houses
 
-### 5. Tracking
+### 4. Tracking
 - View house-level progress
 
-### 6. Product Tracking
+### 5. Product Tracking
 - Filter by project, unit, house, product
 
 ---
