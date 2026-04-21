@@ -443,14 +443,29 @@ def run_engine(conn, cur):
     # ─────────────────────────────────────────────
     total_delay_today = sum(v["delay"] for v in stage_delay_summary.values())
 
-    cur.execute("""
-        INSERT INTO delay_trend (date, total_delay)
-        VALUES (CURRENT_DATE, %s)
-        ON CONFLICT (date) DO UPDATE SET total_delay = EXCLUDED.total_delay
-    """, (int(total_delay_today),))
+    try:
+        # Ensure the unique constraint exists (table may have been created
+        # without PRIMARY KEY in a previous deployment)
+        cur.execute("""
+            ALTER TABLE delay_trend
+            ADD CONSTRAINT delay_trend_date_pk PRIMARY KEY (date)
+        """)
+        conn.commit()
+    except Exception:
+        # Constraint already exists — that's fine
+        conn.rollback()
 
-    cur.execute("DELETE FROM delay_trend WHERE date < CURRENT_DATE - INTERVAL '90 days'")
-    conn.commit()
+    try:
+        cur.execute("DELETE FROM delay_trend WHERE date = CURRENT_DATE")
+        cur.execute(
+            "INSERT INTO delay_trend (date, total_delay) VALUES (CURRENT_DATE, %s)",
+            (int(total_delay_today),)
+        )
+        cur.execute("DELETE FROM delay_trend WHERE date < CURRENT_DATE - INTERVAL '90 days'")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        st.warning(f"Could not save delay trend: {e}")
 
     trend_df = pd.read_sql(
         "SELECT date, total_delay FROM delay_trend ORDER BY date", conn
