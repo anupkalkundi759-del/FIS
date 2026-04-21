@@ -2,11 +2,11 @@ def run_engine(conn, cur):
     import streamlit as st
     import pandas as pd
     from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo  # ✅ FIX (no pytz)
+    from zoneinfo import ZoneInfo
 
     st.title("⚙️ Scheduling Intelligence Engine")
 
-    # ✅ FIX 1: IST TIME (NO DEPENDENCY)
+    # ✅ IST time (kept)
     today = datetime.now(ZoneInfo("Asia/Kolkata"))
 
     # ================= TABLES =================
@@ -101,8 +101,10 @@ def run_engine(conn, cur):
         return
 
     df = pd.DataFrame(data, columns=["house","stage","start","end"])
-    df["start"] = pd.to_datetime(df["start"])
-    df["end"] = pd.to_datetime(df["end"])
+
+    # ✅ FIX (timezone consistency)
+    df["start"] = pd.to_datetime(df["start"]).dt.tz_localize("Asia/Kolkata")
+    df["end"] = pd.to_datetime(df["end"]).dt.tz_localize("Asia/Kolkata")
 
     house_group = df.groupby("house")
 
@@ -119,7 +121,8 @@ def run_engine(conn, cur):
     latest_df = pd.DataFrame(cur.fetchall(),
         columns=["house","stage","status","time"])
 
-    latest_df["time"] = pd.to_datetime(latest_df["time"])
+    # ✅ FIX
+    latest_df["time"] = pd.to_datetime(latest_df["time"]).dt.tz_localize("Asia/Kolkata")
 
     # ================= PREFETCH =================
     cur.execute("""
@@ -166,7 +169,6 @@ def run_engine(conn, cur):
                 actual_start = stage_data["start"].iloc[0]
                 actual_finish = stage_data["end"].iloc[0]
 
-                # ✅ FIX: realistic duration
                 actual_duration = max(1, (actual_finish - actual_start).days)
 
                 delay = actual_duration - duration
@@ -178,22 +180,15 @@ def run_engine(conn, cur):
             else:
                 current_pointer = planned_finish
 
-            # ✅ FIX: stable progress
             completed = stage_map.get((house, stage), 0)
             if total_products:
                 completion_ratio = min(1, completed / total_products)
                 earned_duration += completion_ratio * duration
 
-        # ================= PROGRESS =================
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
-
-        # ✅ FIX: real remaining
         remaining_total_days = max(0, int(total_duration - earned_duration))
-
-        # ✅ FIX: correct prediction
         predicted_finish = current_pointer + timedelta(days=remaining_total_days)
 
-        # ================= CURRENT =================
         h_latest = latest_df[latest_df["house"] == house]
 
         if not h_latest.empty:
@@ -202,9 +197,8 @@ def run_engine(conn, cur):
         else:
             current_stage = "Not Started"
 
-        # ================= SLA =================
         sla = config_map.get(house) if house == selected_house else None
-        expected = pd.to_datetime(sla) if sla else None
+        expected = pd.to_datetime(sla).tz_localize("Asia/Kolkata") if sla else None
 
         if expected is not None:
             d = (predicted_finish - expected).days
