@@ -143,9 +143,15 @@ def show_dashboard(conn, cur):
         "Last Update"
     ])
 
-    # FORMAT TIME CLEANLY
+    # ================= 🔥 IST FIX =================
     house_df["Last Update"] = pd.to_datetime(
         house_df["Last Update"], errors='coerce'
-    ).dt.strftime("%Y-%m-%d %H:%M")
+    )
+
+    # Assume DB is UTC → convert to IST
+    house_df["Last Update"] = house_df["Last Update"].dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
+
+    # Format cleanly
+    house_df["Last Update"] = house_df["Last Update"].dt.strftime("%d-%m-%Y %I:%M %p")
 
     st.dataframe(house_df, use_container_width=True)
