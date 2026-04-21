@@ -58,11 +58,9 @@ def show_dashboard(conn, cur):
 
     col1, col2, col3 = st.columns(3)
 
-    # PROJECT
     with col1:
         selected_project = st.selectbox("Project", df["Project"].tolist())
 
-    # UNIT
     with col2:
         cur.execute("""
             SELECT DISTINCT u.unit_name
@@ -71,11 +69,9 @@ def show_dashboard(conn, cur):
             WHERE p.project_name = %s
             ORDER BY u.unit_name
         """, (selected_project,))
-        
         units = [row[0] for row in cur.fetchall()]
         selected_unit = st.selectbox("Unit", units)
 
-    # HOUSE
     with col3:
         cur.execute("""
             SELECT h.house_no
@@ -94,34 +90,48 @@ def show_dashboard(conn, cur):
     st.subheader("🏠 House-Level Status")
 
     query = """
+    WITH latest_per_product AS (
         SELECT 
-            h.house_no,
+            product_instance_id,
+            MAX(timestamp) AS last_time
+        FROM tracking_log
+        GROUP BY product_instance_id
+    )
 
-            COUNT(DISTINCT pr.product_instance_id) AS total_products,
+    SELECT 
+        h.house_no,
 
-            COUNT(DISTINCT CASE 
-                WHEN s.stage_name = 'Dispatch' AND t.status = 'Completed' 
-                THEN pr.product_instance_id 
-            END) AS dispatched,
+        COUNT(DISTINCT pr.product_instance_id) AS total_products,
 
-            COUNT(DISTINCT pr.product_instance_id) -
-            COUNT(DISTINCT CASE 
-                WHEN s.stage_name = 'Dispatch' AND t.status = 'Completed' 
-                THEN pr.product_instance_id 
-            END) AS pending,
+        COUNT(DISTINCT CASE 
+            WHEN s.stage_name = 'Dispatch' AND t.status = 'Completed' 
+            THEN pr.product_instance_id 
+        END) AS dispatched,
 
-            MAX(t.timestamp) AS last_update
+        COUNT(DISTINCT pr.product_instance_id) -
+        COUNT(DISTINCT CASE 
+            WHEN s.stage_name = 'Dispatch' AND t.status = 'Completed' 
+            THEN pr.product_instance_id 
+        END) AS pending,
 
-        FROM projects p
-        JOIN units u ON p.project_id = u.project_id
-        JOIN houses h ON u.unit_id = h.unit_id
-        JOIN products pr ON h.house_id = pr.house_id
+        MAX(lp.last_time) AS last_update
 
-        LEFT JOIN tracking_log t ON pr.product_instance_id = t.product_instance_id
-        LEFT JOIN stages s ON t.stage_id = s.stage_id
+    FROM projects p
+    JOIN units u ON p.project_id = u.project_id
+    JOIN houses h ON u.unit_id = h.unit_id
+    JOIN products pr ON h.house_id = pr.house_id
 
-        WHERE p.project_name = %s
-        AND u.unit_name = %s
+    LEFT JOIN latest_per_product lp 
+        ON pr.product_instance_id = lp.product_instance_id
+
+    LEFT JOIN tracking_log t 
+        ON pr.product_instance_id = t.product_instance_id
+
+    LEFT JOIN stages s 
+        ON t.stage_id = s.stage_id
+
+    WHERE p.project_name = %s
+    AND u.unit_name = %s
     """
 
     params = [selected_project, selected_unit]
@@ -143,7 +153,7 @@ def show_dashboard(conn, cur):
         "Last Update"
     ])
 
-    # ================= 🔥 IST FIX =================
+    # ================= IST CONVERSION =================
     house_df["Last Update"] = pd.to_datetime(
         house_df["Last Update"], errors='coerce'
     )
@@ -151,7 +161,6 @@ def show_dashboard(conn, cur):
     # Assume DB is UTC → convert to IST
     house_df["Last Update"] = house_df["Last Update"].dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
 
-    # Format cleanly
     house_df["Last Update"] = house_df["Last Update"].dt.strftime("%d-%m-%Y %I:%M %p")
 
     st.dataframe(house_df, use_container_width=True)
