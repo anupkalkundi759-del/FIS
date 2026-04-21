@@ -52,7 +52,7 @@ def show_dashboard(conn, cur):
 
     st.dataframe(df, use_container_width=True)
 
-    # ================= FILTER ROW =================
+    # ================= FILTER =================
     st.divider()
     st.subheader("📌 Project Detailed View")
 
@@ -153,14 +153,9 @@ def show_dashboard(conn, cur):
         "Last Update"
     ])
 
-    # ================= IST CONVERSION =================
+    # ================= IST DISPLAY =================
     house_df["Last Update"] = pd.to_datetime(
         house_df["Last Update"], errors='coerce'
-    )
-
-    # Assume DB is UTC → convert to IST
-    house_df["Last Update"] = house_df["Last Update"].dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
-
-    house_df["Last Update"] = house_df["Last Update"].dt.strftime("%d-%m-%Y %I:%M %p")
+    ).dt.strftime("%d-%m-%Y %I:%M %p")
 
     st.dataframe(house_df, use_container_width=True)
