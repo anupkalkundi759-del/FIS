@@ -2,9 +2,13 @@ def run_engine(conn, cur):
     import streamlit as st
     import pandas as pd
     from datetime import datetime, timedelta
+    import pytz
 
     st.title("⚙️ Scheduling Intelligence Engine")
-    today = datetime.now()
+
+    # ✅ FIX 1: FORCE IST TIME
+    ist = pytz.timezone('Asia/Kolkata')
+    today = datetime.now(ist)
 
     # ================= TABLES =================
     cur.execute("""
@@ -163,11 +167,8 @@ def run_engine(conn, cur):
                 actual_start = stage_data["start"].iloc[0]
                 actual_finish = stage_data["end"].iloc[0]
 
-                actual_duration = (actual_finish - actual_start).days
-
-                # 🔥 FIX: bulk update correction
-                if actual_duration == 0:
-                    actual_duration = duration
+                # ✅ FIX 2: REALISTIC DURATION
+                actual_duration = max(1, (actual_finish - actual_start).days)
 
                 delay = actual_duration - duration
 
@@ -178,21 +179,20 @@ def run_engine(conn, cur):
             else:
                 current_pointer = planned_finish
 
+            # ✅ FIX 3: STABLE PROGRESS
             completed = stage_map.get((house, stage), 0)
-            earned_duration += (completed / total_products) * duration if total_products else 0
+            if total_products:
+                completion_ratio = min(1, completed / total_products)
+                earned_duration += completion_ratio * duration
 
         # ================= PROGRESS =================
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # 🔥 FIX: prevent fake progress drop
-        if progress < 5:
-            remaining_total_days = total_duration
-        else:
-            remaining_total_days = int(total_duration * (1 - progress/100))
+        # ✅ FIX 4: REAL REMAINING
+        remaining_total_days = max(0, int(total_duration - earned_duration))
 
-        remaining_total_days = max(0, remaining_total_days)
-
-        predicted_finish = today + timedelta(days=remaining_total_days)
+        # ✅ FIX 5: CORRECT PREDICTION BASE
+        predicted_finish = current_pointer + timedelta(days=remaining_total_days)
 
         # ================= CURRENT =================
         h_latest = latest_df[latest_df["house"] == house]
