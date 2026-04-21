@@ -7,6 +7,12 @@ def run_engine(conn, cur):
 
     st.title("⚙️ Scheduling Intelligence Engine")
 
+    # Clear any failed transaction from a previous run
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
     IST = ZoneInfo("Asia/Kolkata")
     today = Timestamp.now(tz=IST)
 
@@ -21,19 +27,24 @@ def run_engine(conn, cur):
     # ─────────────────────────────────────────────
     # ENSURE TABLES EXIST
     # ─────────────────────────────────────────────
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS house_config (
-            house_no TEXT PRIMARY KEY,
-            sla_date DATE
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS delay_trend (
-            date   DATE PRIMARY KEY,
-            total_delay INT
-        )
-    """)
-    conn.commit()
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS house_config (
+                house_no TEXT PRIMARY KEY,
+                sla_date DATE
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS delay_trend (
+                date        DATE PRIMARY KEY,
+                total_delay INT
+            )
+        """)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        st.error(f"Failed to create required tables: {e}")
+        return
 
     # ─────────────────────────────────────────────
     # ACTIVITY MASTER
