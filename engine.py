@@ -2,13 +2,12 @@ def run_engine(conn, cur):
     import streamlit as st
     import pandas as pd
     from datetime import datetime, timedelta
-    import pytz
+    from zoneinfo import ZoneInfo  # ✅ FIX (no pytz)
 
     st.title("⚙️ Scheduling Intelligence Engine")
 
-    # ✅ FIX 1: FORCE IST TIME
-    ist = pytz.timezone('Asia/Kolkata')
-    today = datetime.now(ist)
+    # ✅ FIX 1: IST TIME (NO DEPENDENCY)
+    today = datetime.now(ZoneInfo("Asia/Kolkata"))
 
     # ================= TABLES =================
     cur.execute("""
@@ -167,7 +166,7 @@ def run_engine(conn, cur):
                 actual_start = stage_data["start"].iloc[0]
                 actual_finish = stage_data["end"].iloc[0]
 
-                # ✅ FIX 2: REALISTIC DURATION
+                # ✅ FIX: realistic duration
                 actual_duration = max(1, (actual_finish - actual_start).days)
 
                 delay = actual_duration - duration
@@ -179,7 +178,7 @@ def run_engine(conn, cur):
             else:
                 current_pointer = planned_finish
 
-            # ✅ FIX 3: STABLE PROGRESS
+            # ✅ FIX: stable progress
             completed = stage_map.get((house, stage), 0)
             if total_products:
                 completion_ratio = min(1, completed / total_products)
@@ -188,10 +187,10 @@ def run_engine(conn, cur):
         # ================= PROGRESS =================
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # ✅ FIX 4: REAL REMAINING
+        # ✅ FIX: real remaining
         remaining_total_days = max(0, int(total_duration - earned_duration))
 
-        # ✅ FIX 5: CORRECT PREDICTION BASE
+        # ✅ FIX: correct prediction
         predicted_finish = current_pointer + timedelta(days=remaining_total_days)
 
         # ================= CURRENT =================
