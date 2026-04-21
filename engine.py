@@ -162,7 +162,7 @@ def run_engine(conn, cur):
             stage = row["stage"]
             duration = row["days"]
 
-            stage_data = house_data[house_data["stage"] == stage] if not house_data.empty else pd.DataFrame()
+            stage_data = house_data[house_data["stage"] == stage] if not house_data.empty and "stage" in house_data.columns else pd.DataFrame()
             planned_finish = current_pointer + timedelta(days=duration)
 
             if not stage_data.empty:
@@ -186,7 +186,6 @@ def run_engine(conn, cur):
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # ✅ FIXED
         predicted_finish = current_pointer
         remaining_total_days = max(0, (predicted_finish - today).days)
 
@@ -198,7 +197,6 @@ def run_engine(conn, cur):
         else:
             current_stage = "Not Started"
 
-        # ✅ FIXED SLA
         sla = config_map.get(house)
         expected = pd.to_datetime(sla).tz_localize("Asia/Kolkata") if sla else None
 
@@ -220,8 +218,15 @@ def run_engine(conn, cur):
         else:
             base = current_stage.split(" (")[0]
 
-            s_data = house_data[house_data["stage"] == base]
-            stage_start = s_data["start"].iloc[0] if not s_data.empty else start_date
+            if not house_data.empty and "stage" in house_data.columns:
+                s_data = house_data[house_data["stage"] == base]
+            else:
+                s_data = pd.DataFrame()
+
+            if not s_data.empty:
+                stage_start = s_data["start"].iloc[0]
+            else:
+                stage_start = start_date
 
             stage_duration = activity_df[activity_df["stage"] == base]["days"].values
             stage_duration = int(stage_duration[0]) if len(stage_duration)>0 else 1
@@ -231,7 +236,7 @@ def run_engine(conn, cur):
 
             stage_display = "Completed" if rem_stage<=0 else "Less than 1 day" if rem_stage<1 else f"{rem_stage} days"
 
-            last = house_data["end"].max()
+            last = house_data["end"].max() if not house_data.empty and "end" in house_data.columns else predicted_finish
             actual_display = last.date() if last >= predicted_finish else "Not Finished"
 
             delay_days = max(0, (last - predicted_finish).days)
