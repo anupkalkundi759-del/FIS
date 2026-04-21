@@ -6,7 +6,6 @@ def run_engine(conn, cur):
 
     st.title("⚙️ Scheduling Intelligence Engine")
 
-    # ✅ IST time (kept)
     today = datetime.now(ZoneInfo("Asia/Kolkata"))
 
     # ================= TABLES =================
@@ -98,15 +97,16 @@ def run_engine(conn, cur):
 
     if not data:
         st.warning("No tracking data available.")
-        return
+        data = []
 
     df = pd.DataFrame(data, columns=["house","stage","start","end"])
 
-    # ✅ FIX (timezone consistency)
-    df["start"] = pd.to_datetime(df["start"]).dt.tz_localize("Asia/Kolkata")
-    df["end"] = pd.to_datetime(df["end"]).dt.tz_localize("Asia/Kolkata")
-
-    house_group = df.groupby("house")
+    if not df.empty:
+        df["start"] = pd.to_datetime(df["start"]).dt.tz_localize("Asia/Kolkata")
+        df["end"] = pd.to_datetime(df["end"]).dt.tz_localize("Asia/Kolkata")
+        house_group = df.groupby("house")
+    else:
+        house_group = {}
 
     # ================= LATEST =================
     cur.execute("""
@@ -121,8 +121,8 @@ def run_engine(conn, cur):
     latest_df = pd.DataFrame(cur.fetchall(),
         columns=["house","stage","status","time"])
 
-    # ✅ FIX
-    latest_df["time"] = pd.to_datetime(latest_df["time"]).dt.tz_localize("Asia/Kolkata")
+    if not latest_df.empty:
+        latest_df["time"] = pd.to_datetime(latest_df["time"]).dt.tz_localize("Asia/Kolkata")
 
     # ================= PREFETCH =================
     cur.execute("""
@@ -147,11 +147,11 @@ def run_engine(conn, cur):
     # ================= ENGINE =================
     results, sla_results, stage_delay_summary = [], [], {}
 
-    for house in df["house"].unique():
+    for house in total_map.keys():
 
-        house_data = house_group.get_group(house)
-        start_date = house_data["start"].min()
+        house_data = house_group.get_group(house) if house in house_group else pd.DataFrame()
 
+        start_date = house_data["start"].min() if not house_data.empty else today
         current_pointer = start_date
         stage_delays = []
 
@@ -162,7 +162,7 @@ def run_engine(conn, cur):
             stage = row["stage"]
             duration = row["days"]
 
-            stage_data = house_data[house_data["stage"] == stage]
+            stage_data = house_data[house_data["stage"] == stage] if not house_data.empty else pd.DataFrame()
             planned_finish = current_pointer + timedelta(days=duration)
 
             if not stage_data.empty:
@@ -170,7 +170,6 @@ def run_engine(conn, cur):
                 actual_finish = stage_data["end"].iloc[0]
 
                 actual_duration = max(1, (actual_finish - actual_start).days)
-
                 delay = actual_duration - duration
 
                 if delay > 0:
@@ -186,10 +185,12 @@ def run_engine(conn, cur):
                 earned_duration += completion_ratio * duration
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
-        remaining_total_days = max(0, int(total_duration - earned_duration))
-        predicted_finish = current_pointer + timedelta(days=remaining_total_days)
 
-        h_latest = latest_df[latest_df["house"] == house]
+        # ✅ FIXED
+        predicted_finish = current_pointer
+        remaining_total_days = max(0, (predicted_finish - today).days)
+
+        h_latest = latest_df[latest_df["house"] == house] if not latest_df.empty else pd.DataFrame()
 
         if not h_latest.empty:
             row = h_latest.sort_values("time").iloc[-1]
@@ -197,7 +198,8 @@ def run_engine(conn, cur):
         else:
             current_stage = "Not Started"
 
-        sla = config_map.get(house) if house == selected_house else None
+        # ✅ FIXED SLA
+        sla = config_map.get(house)
         expected = pd.to_datetime(sla).tz_localize("Asia/Kolkata") if sla else None
 
         if expected is not None:
