@@ -156,7 +156,6 @@ with st.sidebar:
             "Tracking",
             "Dashboard",
             "Product Tracking",
-            "Measurement Update",
             "Scheduling Engine",
             "Upload Excel",
             "Delete Data"
@@ -182,7 +181,6 @@ page = st.session_state.page
 
 # 🔥 BACKEND PROTECTION (VERY IMPORTANT)
 if st.session_state.role != "admin" and page in [
-    "Measurement Update",
     "Scheduling Engine",
     "Upload Excel",
     "Delete Data"
@@ -202,10 +200,6 @@ elif page == "Dashboard":
 elif page == "Product Tracking":
     from product_tracking import show_product_tracking
     show_product_tracking(conn, cur)
-
-elif page == "Measurement Update":
-    from measurement import update_measurement
-    update_measurement(conn, cur)
 
 elif page == "Scheduling Engine":
     from engine import run_engine
