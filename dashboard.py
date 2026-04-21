@@ -52,15 +52,17 @@ def show_dashboard(conn, cur):
 
     st.dataframe(df, use_container_width=True)
 
-    # ================= FILTER =================
+    # ================= FILTER ROW =================
     st.divider()
     st.subheader("📌 Project Detailed View")
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
+    # PROJECT
     with col1:
         selected_project = st.selectbox("Project", df["Project"].tolist())
 
+    # UNIT
     with col2:
         cur.execute("""
             SELECT DISTINCT u.unit_name
@@ -69,29 +71,29 @@ def show_dashboard(conn, cur):
             WHERE p.project_name = %s
             ORDER BY u.unit_name
         """, (selected_project,))
+        
         units = [row[0] for row in cur.fetchall()]
         selected_unit = st.selectbox("Unit", units)
 
-    # ================= 🔥 NEW DROPDOWN =================
-    st.subheader("⚙️ Time Filter")
+    # HOUSE
+    with col3:
+        cur.execute("""
+            SELECT h.house_no
+            FROM houses h
+            JOIN units u ON h.unit_id = u.unit_id
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s AND u.unit_name = %s
+            ORDER BY h.house_no
+        """, (selected_project, selected_unit))
 
-    time_filter = st.selectbox(
-        "Select Time Type",
-        ["Latest Activity", "Dispatch Time", "Final Assembly Time"]
-    )
-
-    # ================= TIME CONDITION =================
-    if time_filter == "Dispatch Time":
-        time_condition = "s.stage_name = 'Dispatch' AND t.status = 'Completed'"
-    elif time_filter == "Final Assembly Time":
-        time_condition = "s.stage_name = 'Final Assembly' AND t.status = 'Completed'"
-    else:
-        time_condition = "1=1"   # latest any activity
+        houses = [row[0] for row in cur.fetchall()]
+        houses.insert(0, "All")
+        selected_house = st.selectbox("House", houses)
 
     # ================= HOUSE LEVEL =================
     st.subheader("🏠 House-Level Status")
 
-    query = f"""
+    query = """
         SELECT 
             h.house_no,
 
@@ -108,10 +110,7 @@ def show_dashboard(conn, cur):
                 THEN pr.product_instance_id 
             END) AS pending,
 
-            MAX(CASE 
-                WHEN {time_condition}
-                THEN t.timestamp 
-            END) AS last_update
+            MAX(t.timestamp) AS last_update
 
         FROM projects p
         JOIN units u ON p.project_id = u.project_id
@@ -123,12 +122,17 @@ def show_dashboard(conn, cur):
 
         WHERE p.project_name = %s
         AND u.unit_name = %s
-
-        GROUP BY h.house_no
-        ORDER BY h.house_no
     """
 
-    cur.execute(query, (selected_project, selected_unit))
+    params = [selected_project, selected_unit]
+
+    if selected_house != "All":
+        query += " AND h.house_no = %s"
+        params.append(selected_house)
+
+    query += " GROUP BY h.house_no ORDER BY h.house_no"
+
+    cur.execute(query, tuple(params))
     house_data = cur.fetchall()
 
     house_df = pd.DataFrame(house_data, columns=[
@@ -139,7 +143,7 @@ def show_dashboard(conn, cur):
         "Last Update"
     ])
 
-    # ================= FORMAT TIME =================
+    # FORMAT TIME CLEANLY
     house_df["Last Update"] = pd.to_datetime(
         house_df["Last Update"], errors='coerce'
     ).dt.strftime("%Y-%m-%d %H:%M")
