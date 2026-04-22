@@ -35,7 +35,7 @@ def run_engine(conn, cur):
     activity_df["days"] = activity_df["days"].astype(int)
     total_duration = int(activity_df["days"].sum())
 
-    # ================= SLA =================
+    # ================= SLA ASSIGN =================
     st.subheader("⚙️ SLA Assignment")
 
     c1, c2, c3, c4, c5 = st.columns([2,2,2,2,1])
@@ -142,13 +142,12 @@ def run_engine(conn, cur):
     for house in total_map.keys():
 
         house_data = house_group.get_group(house) if house in house_group else pd.DataFrame()
-        start_date = house_data["start"].min() if not house_data.empty else today
 
         total_products = total_map.get(house, 0)
         earned_duration = 0
         stage_delays = []
 
-        # ===== MULTI STAGE DETECTION =====
+        # ===== MULTI STAGE =====
         h_latest = latest_df[latest_df["house"] == house]
 
         if not h_latest.empty:
@@ -187,9 +186,11 @@ def run_engine(conn, cur):
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # ===== REMAINING =====
+        # ===== DYNAMIC PREDICTION =====
         remaining_total_days = int(total_duration - earned_duration)
+        predicted_finish = today + timedelta(days=remaining_total_days)
 
+        # ===== STAGE REMAINING =====
         if base_stage:
             stage_duration = activity_df[activity_df["stage"] == base_stage]["days"].values
             stage_duration = int(stage_duration[0]) if len(stage_duration)>0 else 1
@@ -201,8 +202,6 @@ def run_engine(conn, cur):
             stage_display = "Completed" if rem_stage <= 0 else f"{rem_stage} days"
         else:
             stage_display = "-"
-
-        predicted_finish = start_date + timedelta(days=int(total_duration))
 
         last = house_data["end"].max() if not house_data.empty else predicted_finish
         actual_finish = last.date() if progress >= 99 else "Not Finished"
