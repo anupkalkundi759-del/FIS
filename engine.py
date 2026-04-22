@@ -85,7 +85,7 @@ def run_engine(conn, cur):
                MIN(t.timestamp), MAX(t.timestamp)
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_id = p.product_id
+        JOIN tracking_log t ON t.product_instance_id = p.product_id
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s AND t.status = 'Completed'
         GROUP BY h.house_no, s.stage_name
@@ -105,7 +105,7 @@ def run_engine(conn, cur):
         SELECT h.house_no, s.stage_name, t.status, t.timestamp
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_id = p.product_id
+        JOIN tracking_log t ON t.product_instance_id = p.product_id
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
     """, (unit_dict[selected_unit],))
@@ -121,10 +121,10 @@ def run_engine(conn, cur):
         SELECT h.house_no,
                COUNT(p.product_id),
                s.stage_name,
-               COUNT(DISTINCT CASE WHEN t.status='Completed' THEN t.product_id END)
+               COUNT(DISTINCT CASE WHEN t.status='Completed' THEN t.product_instance_id END)
         FROM houses h
         LEFT JOIN products p ON p.house_id = h.house_id
-        LEFT JOIN tracking_log t ON t.product_id = p.product_id
+        LEFT JOIN tracking_log t ON t.product_instance_id = p.product_id
         LEFT JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
         GROUP BY h.house_no, s.stage_name
@@ -166,7 +166,7 @@ def run_engine(conn, cur):
         current_seq = int(stage_row["seq"].values[0]) if not stage_row.empty else 1
         remaining_future = activity_df[activity_df["seq"] > current_seq]["days"].sum()
 
-        predicted_finish = today + timedelta(days=(stage_duration - stage_elapsed) + remaining_future)
+        predicted_finish = today + timedelta(days=int((stage_duration - stage_elapsed) + remaining_future))
 
         remaining_total_days = max(0, (predicted_finish - today).days)
 
