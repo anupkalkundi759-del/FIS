@@ -95,15 +95,11 @@ def run_engine(conn, cur):
 
     data = cur.fetchall()
 
-    if not data:
-        st.warning("No tracking data available.")
-        data = []
-
     df = pd.DataFrame(data, columns=["house","stage","start","end"])
 
     if not df.empty:
-        df["start"] = pd.to_datetime(df["start"]).dt.tz_localize("Asia/Kolkata")
-        df["end"] = pd.to_datetime(df["end"]).dt.tz_localize("Asia/Kolkata")
+        df["start"] = pd.to_datetime(df["start"], utc=True).dt.tz_convert("Asia/Kolkata")
+        df["end"] = pd.to_datetime(df["end"], utc=True).dt.tz_convert("Asia/Kolkata")
         house_group = df.groupby("house")
     else:
         house_group = {}
@@ -122,7 +118,7 @@ def run_engine(conn, cur):
         columns=["house","stage","status","time"])
 
     if not latest_df.empty:
-        latest_df["time"] = pd.to_datetime(latest_df["time"]).dt.tz_localize("Asia/Kolkata")
+        latest_df["time"] = pd.to_datetime(latest_df["time"], utc=True).dt.tz_convert("Asia/Kolkata")
 
     # ================= PREFETCH =================
     cur.execute("""
@@ -152,18 +148,23 @@ def run_engine(conn, cur):
         house_data = house_group.get_group(house) if house in house_group else pd.DataFrame()
 
         start_date = house_data["start"].min() if not house_data.empty else today
-        current_pointer = start_date
-        stage_delays = []
 
         total_products = total_map.get(house, 0)
         earned_duration = 0
+        completed_products_total = 0
+
+        first_start = house_data["start"].min() if not house_data.empty else None
+        last_end = house_data["end"].max() if not house_data.empty else None
+
+        stage_delays = []
 
         for _, row in activity_df.iterrows():
             stage = row["stage"]
             duration = row["days"]
 
-            stage_data = house_data[house_data["stage"] == stage] if not house_data.empty and "stage" in house_data.columns else pd.DataFrame()
-            planned_finish = current_pointer + timedelta(days=duration)
+            stage_data = house_data[house_data["stage"] == stage] if not house_data.empty else pd.DataFrame()
+
+            completed = stage_map.get((house, stage), 0)
 
             if not stage_data.empty:
                 actual_start = stage_data["start"].iloc[0]
@@ -175,20 +176,31 @@ def run_engine(conn, cur):
                 if delay > 0:
                     stage_delays.append((stage, delay))
 
-                current_pointer = actual_start + timedelta(days=actual_duration)
-            else:
-                current_pointer = planned_finish
-
-            completed = stage_map.get((house, stage), 0)
             if total_products:
                 completion_ratio = min(1, completed / total_products)
                 earned_duration += completion_ratio * duration
+                completed_products_total += completed
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        predicted_finish = current_pointer
-        remaining_total_days = max(0, (predicted_finish - today).days)
+        # ===== VELOCITY =====
+        if first_start and last_end and completed_products_total:
+            actual_days = max(1, (last_end - first_start).days)
+            velocity = completed_products_total / actual_days
+        else:
+            velocity = 0
 
+        remaining_products = max(0, total_products - completed_products_total)
+
+        if velocity > 0:
+            dynamic_days = remaining_products / velocity
+        else:
+            dynamic_days = total_duration
+
+        predicted_finish = today + timedelta(days=max(0, dynamic_days))
+        remaining_total_days = int(max(0, dynamic_days))
+
+        # ===== CURRENT STAGE =====
         h_latest = latest_df[latest_df["house"] == house] if not latest_df.empty else pd.DataFrame()
 
         if not h_latest.empty:
@@ -216,44 +228,22 @@ def run_engine(conn, cur):
             })
 
         else:
-            base = current_stage.split(" (")[0]
-
-            if not house_data.empty and "stage" in house_data.columns:
-                s_data = house_data[house_data["stage"] == base]
-            else:
-                s_data = pd.DataFrame()
-
-            if not s_data.empty:
-                stage_start = s_data["start"].iloc[0]
-            else:
-                stage_start = start_date
-
-            stage_duration = activity_df[activity_df["stage"] == base]["days"].values
-            stage_duration = int(stage_duration[0]) if len(stage_duration)>0 else 1
-
-            stage_expected = stage_start + timedelta(days=stage_duration)
-            rem_stage = (stage_expected - today).days
-
-            stage_display = "Completed" if rem_stage<=0 else "Less than 1 day" if rem_stage<1 else f"{rem_stage} days"
-
-            last = house_data["end"].max() if not house_data.empty and "end" in house_data.columns else predicted_finish
-            actual_display = last.date() if last >= predicted_finish else "Not Finished"
-
+            last = house_data["end"].max() if not house_data.empty else predicted_finish
             delay_days = max(0, (last - predicted_finish).days)
 
             if stage_delays:
                 s, d = max(stage_delays, key=lambda x: x[1])
-                reason = f"{s} {'slight delay' if d<=1 else 'delay' if d<=3 else 'backlog'}"
+                reason = f"{s} backlog" if d > 3 else f"{s} delay"
             else:
-                reason = "on track"
+                reason = "No activity" if velocity == 0 else "Stable flow"
 
             results.append({
                 "House": house,
                 "Stage": current_stage,
                 "Progress %": round(progress,1),
                 "Predicted Finish": predicted_finish.date(),
-                "Actual Finish": actual_display,
-                "Remaining (Stage)": stage_display,
+                "Actual Finish": last.date() if last >= predicted_finish else "Not Finished",
+                "Remaining (Stage)": "-",
                 "Remaining (Total)": f"{remaining_total_days} days",
                 "Delay (Days)": delay_days,
                 "Delay Reason": reason
