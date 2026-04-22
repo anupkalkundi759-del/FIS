@@ -17,7 +17,7 @@ def run_engine(conn, cur):
     """)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS delay_trend (
-            date DATE,
+            date DATE PRIMARY KEY,
             total_delay INT
         )
     """)
@@ -116,7 +116,7 @@ def run_engine(conn, cur):
     if not latest_df.empty:
         latest_df["time"] = pd.to_datetime(latest_df["time"]).dt.tz_localize("Asia/Kolkata")
 
-    # ================= PROGRESS DATA =================
+    # ================= PROGRESS =================
     cur.execute("""
         SELECT h.house_no,
                COUNT(p.product_id),
@@ -137,25 +137,19 @@ def run_engine(conn, cur):
     stage_map = {(r["house"], r["stage"]): r["completed"] for _, r in progress_df.iterrows()}
 
     # ================= ENGINE =================
-    results, sla_results, stage_delay_summary = [], [], {}
+    results, sla_results = [], []
+    stage_delay_summary = {}
 
     for house in total_map.keys():
 
         house_data = house_group.get_group(house) if house in house_group else pd.DataFrame()
 
         start_date = house_data["start"].min() if not house_data.empty else today
-        start_date = start_date if pd.notna(start_date) else today
-
         total_products = total_map.get(house, 0)
 
         # CURRENT STAGE
         h_latest = latest_df[latest_df["house"] == house]
-        if not h_latest.empty:
-            base_stage = h_latest["stage"].value_counts().idxmax()
-        else:
-            base_stage = "Measurement"
-
-        current_stage = base_stage
+        base_stage = h_latest["stage"].value_counts().idxmax() if not h_latest.empty else "Measurement"
 
         # STAGE START
         if not house_data.empty:
@@ -164,18 +158,14 @@ def run_engine(conn, cur):
         else:
             stage_start = start_date
 
-        # STAGE DURATION
+        # STAGE DETAILS
         stage_row = activity_df[activity_df["stage"] == base_stage]
         stage_duration = int(stage_row["days"].values[0]) if not stage_row.empty else 1
-
-        # STAGE ELAPSED
         stage_elapsed = max(0, (today - stage_start).days)
 
-        # REMAINING FUTURE
         current_seq = int(stage_row["seq"].values[0]) if not stage_row.empty else 1
         remaining_future = activity_df[activity_df["seq"] > current_seq]["days"].sum()
 
-        # ===== FINAL PREDICTION (FIXED CORE) =====
         predicted_finish = today + timedelta(days=(stage_duration - stage_elapsed) + remaining_future)
 
         remaining_total_days = max(0, (predicted_finish - today).days)
@@ -196,14 +186,7 @@ def run_engine(conn, cur):
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
         # STAGE REMAINING
-        stage_remaining_days = max(0, stage_duration - stage_elapsed)
-
-        if stage_remaining_days == 0:
-            stage_display = "Completed"
-        elif stage_remaining_days < 1:
-            stage_display = "Less than 1 day"
-        else:
-            stage_display = f"{stage_remaining_days} days"
+        stage_remaining = max(0, stage_duration - stage_elapsed)
 
         # ACTUAL FINISH
         completed_products = stage_map.get((house, "Dispatch"), 0)
@@ -216,14 +199,10 @@ def run_engine(conn, cur):
         # DELAY
         delay_days = max(0, (today - predicted_finish).days)
 
-        if delay_days == 0:
-            reason = "on track"
-        elif delay_days <= 2:
-            reason = "minor delay"
-        elif delay_days <= 5:
-            reason = "stage backlog"
-        else:
-            reason = "serious delay"
+        # BOTTLENECK TRACK
+        stage_delay_summary.setdefault(base_stage, {"delay": 0, "count": 0})
+        stage_delay_summary[base_stage]["delay"] += delay_days
+        stage_delay_summary[base_stage]["count"] += 1
 
         # SLA
         sla = config_map.get(house)
@@ -236,7 +215,7 @@ def run_engine(conn, cur):
 
             sla_results.append({
                 "House": house,
-                "Stage": current_stage,
+                "Stage": base_stage,
                 "SLA": expected.date(),
                 "Predicted": predicted_finish.date(),
                 "Status": status,
@@ -246,46 +225,43 @@ def run_engine(conn, cur):
         else:
             results.append({
                 "House": house,
-                "Stage": current_stage,
+                "Stage": base_stage,
                 "Progress %": round(progress, 1),
                 "Predicted Finish": predicted_finish.date(),
                 "Actual Finish": actual_finish,
-                "Remaining (Stage)": stage_display,
+                "Remaining (Stage)": f"{stage_remaining} days",
                 "Remaining (Total)": f"{remaining_total_days} days",
                 "Delay (Days)": delay_days,
-                "Delay Reason": reason
+                "Delay Reason": "on track" if delay_days == 0 else "delayed"
             })
 
     # ================= OUTPUT =================
     st.subheader("🚨 Priority Table (SLA Only)")
     st.dataframe(pd.DataFrame(sla_results))
 
-    st.subheader("🏠 House Intelligence (Non-SLA Only)")
+    st.subheader("🏠 House Intelligence")
     st.dataframe(pd.DataFrame(results))
 
     # ================= EARLY WARNING =================
-    early = []
-    for r in sla_results:
-        if "Miss by" in r["Impact"]:
-            early.append({
-                "House": r["House"],
-                "Issue": "Will miss SLA",
-                "Delay (days)": int(r["Impact"].split(" ")[-2])
-            })
-
+    early = [r for r in sla_results if "Miss" in r["Impact"]]
     st.subheader("🚨 Early Warning")
     st.dataframe(pd.DataFrame(early)) if early else st.success("No early risks")
 
     # ================= BOTTLENECK =================
-    st.subheader("🧠 Stage Delay Insight")
-    st.info("Will activate when delays accumulate")
+    bottleneck = [{"Stage": k, "Total Delay": v["delay"], "Houses": v["count"]}
+                  for k, v in stage_delay_summary.items()]
+
+    st.subheader("🧠 Bottleneck")
+    st.dataframe(pd.DataFrame(bottleneck))
 
     # ================= TREND =================
+    total_delay_today = sum(r["Delay (Days)"] for r in results)
+
     cur.execute("DELETE FROM delay_trend WHERE date = CURRENT_DATE")
-    cur.execute("INSERT INTO delay_trend VALUES (CURRENT_DATE, %s)", (len(early),))
+    cur.execute("INSERT INTO delay_trend VALUES (CURRENT_DATE, %s)", (total_delay_today,))
     conn.commit()
 
     trend_df = pd.read_sql("SELECT * FROM delay_trend ORDER BY date", conn)
 
     st.subheader("📈 Delay Trend")
-    st.line_chart(trend_df.set_index("date")) if not trend_df.empty else st.info("No data yet")
+    st.line_chart(trend_df.set_index("date"))
