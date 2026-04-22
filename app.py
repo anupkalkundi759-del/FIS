@@ -2,17 +2,6 @@ import streamlit as st
 import psycopg2
 from PIL import Image
 
-# ================= SAFE EXECUTE =================
-def safe_execute(conn, cur, query, params=None):
-    try:
-        if params:
-            cur.execute(query, params)
-        else:
-            cur.execute(query)
-    except Exception as e:
-        conn.rollback()
-        raise e
-
 # ================= IMAGE PROCESS =================
 def remove_white_bg(image_path):
     img = Image.open(image_path).convert("RGBA")
@@ -78,6 +67,7 @@ def login():
 
     col1, col2 = st.columns([1, 1])
 
+    # LEFT
     with col1:
         st.markdown('<div class="left-box">', unsafe_allow_html=True)
         logo = remove_white_bg("logo.png")
@@ -91,6 +81,7 @@ def login():
 
         st.markdown('</div>', unsafe_allow_html=True)
 
+    # RIGHT
     with col2:
         st.markdown('<div class="right-box">', unsafe_allow_html=True)
 
@@ -102,6 +93,7 @@ def login():
 
         if st.button("Sign In"):
 
+            # 🔥 ROLE SYSTEM
             users = {
                 "production": {"password": "123", "role": "production"},
                 "preassembly": {"password": "123", "role": "preassembly"},
@@ -146,13 +138,7 @@ def get_db():
     if st.session_state.conn is None:
         return None, None
 
-    try:
-        cur = st.session_state.conn.cursor()
-        return st.session_state.conn, cur
-    except:
-        st.session_state.conn.rollback()
-        cur = st.session_state.conn.cursor()
-        return st.session_state.conn, cur
+    return st.session_state.conn, st.session_state.conn.cursor()
 
 conn, cur = get_db()
 
@@ -164,6 +150,7 @@ with st.sidebar:
     st.markdown("**OperaFlow**")
     st.markdown(f"👤 {st.session_state.role.upper()}")
 
+    # 🔥 ROLE BASED NAVIGATION
     if st.session_state.role == "admin":
         pages = [
             "Tracking",
@@ -192,6 +179,7 @@ st.title("🏭 Factory Intelligence System")
 
 page = st.session_state.page
 
+# 🔥 BACKEND PROTECTION (VERY IMPORTANT)
 if st.session_state.role != "admin" and page in [
     "Scheduling Engine",
     "Upload Excel",
@@ -201,35 +189,26 @@ if st.session_state.role != "admin" and page in [
     st.stop()
 
 # ================= PAGES =================
-try:
-    if page == "Tracking":
-        from tracking import show_tracking
-        show_tracking(conn, cur)
+if page == "Tracking":
+    from tracking import show_tracking
+    show_tracking(conn, cur)
 
-    elif page == "Dashboard":
-        from dashboard import show_dashboard
-        show_dashboard(conn, cur)
+elif page == "Dashboard":
+    from dashboard import show_dashboard
+    show_dashboard(conn, cur)
 
-    elif page == "Product Tracking":
-        from product_tracking import show_product_tracking
-        show_product_tracking(conn, cur)
+elif page == "Product Tracking":
+    from product_tracking import show_product_tracking
+    show_product_tracking(conn, cur)
 
-    elif page == "Scheduling Engine":
-        from engine import run_engine
-        run_engine(conn, cur)
+elif page == "Scheduling Engine":
+    from engine import run_engine
+    run_engine(conn, cur)
 
-    elif page == "Upload Excel":
-        from upload import show_upload
-        show_upload(conn, cur)
+elif page == "Upload Excel":
+    from upload import show_upload
+    show_upload(conn, cur)
 
-    elif page == "Delete Data":
-        from delete import show_delete
-        show_delete(conn, cur)
-
-except Exception as e:
-    conn.rollback()   # 🔥 prevents full app crash
-    st.error(f"Error occurred: {e}")
-
-finally:
-    if cur:
-        cur.close()
+elif page == "Delete Data":
+    from delete import show_delete
+    show_delete(conn, cur)
