@@ -269,15 +269,3 @@ def run_engine(conn, cur):
 
     st.subheader("🧠 Stage Delay Insight")
     st.dataframe(pd.DataFrame(insight)) if insight else st.info("No stage delays detected yet")
-
-    # ================= TREND =================
-    total_delay_today = sum(v["delay"] for v in stage_delay_summary.values())
-
-    cur.execute("DELETE FROM delay_trend WHERE date = CURRENT_DATE")
-    cur.execute("INSERT INTO delay_trend VALUES (CURRENT_DATE, %s)", (int(total_delay_today),))
-    conn.commit()
-
-    trend_df = pd.read_sql("SELECT * FROM delay_trend ORDER BY date", conn)
-
-    st.subheader("📈 Delay Trend")
-    st.line_chart(trend_df.set_index("date")) if not trend_df.empty else st.info("No data yet")
