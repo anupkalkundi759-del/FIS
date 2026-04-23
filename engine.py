@@ -38,7 +38,7 @@ def run_engine(conn, cur):
     # ================= SLA ASSIGN =================
     st.subheader("⚙️ SLA Assignment")
 
-    c1, c2, c3, c4, c5 = st.columns([2,2,2,2,3])
+    c1, c2, c3, c4, c5 = st.columns([2,2,2,2,4])
 
     with c1:
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
