@@ -95,6 +95,9 @@ def run_engine(conn, cur):
 
     df = pd.DataFrame(cur.fetchall(), columns=["house","stage","start","end"])
 
+    # 🔴 FIX 1: remove bad stage rows
+    df = df.dropna(subset=["stage"])
+
     if not df.empty:
         df["start"] = pd.to_datetime(df["start"], errors="coerce").dt.tz_localize("Asia/Kolkata")
         df["end"] = pd.to_datetime(df["end"], errors="coerce").dt.tz_localize("Asia/Kolkata")
@@ -114,6 +117,12 @@ def run_engine(conn, cur):
 
     latest_df = pd.DataFrame(cur.fetchall(),
         columns=["house","stage","status","time"])
+
+    # 🔴 FIX 2: ensure safe dataframe
+    if latest_df.empty:
+        latest_df = pd.DataFrame(columns=["house","stage","status","time"])
+
+    latest_df = latest_df.dropna(subset=["stage"])
 
     if not latest_df.empty:
         latest_df["time"] = pd.to_datetime(latest_df["time"], errors="coerce").dt.tz_localize("Asia/Kolkata")
@@ -135,6 +144,9 @@ def run_engine(conn, cur):
     progress_df = pd.DataFrame(cur.fetchall(),
         columns=["house","total","stage","completed"])
 
+    # 🔴 FIX 3: remove null stage
+    progress_df = progress_df.dropna(subset=["stage"])
+
     total_map = progress_df.groupby("house")["total"].max().to_dict()
     stage_map = {(r["house"], r["stage"]): r["completed"] for _, r in progress_df.iterrows()}
 
@@ -144,15 +156,18 @@ def run_engine(conn, cur):
     for house in total_map.keys():
 
         house_data = house_group.get_group(house) if house in house_group else pd.DataFrame()
-        h_latest = latest_df[latest_df["house"] == house]
+
+        # 🔴 FIX 4: safe filtering
+        h_latest = latest_df[latest_df["house"] == house] if "stage" in latest_df.columns else pd.DataFrame()
 
         total_products = total_map.get(house, 0)
         earned_duration = 0
         stage_delays = []
 
         # ===== CURRENT STAGE =====
-        if not h_latest.empty:
-            in_progress = h_latest[h_latest["status"] == "In Progress"]["stage"].unique()
+        if not h_latest.empty and "stage" in h_latest.columns:
+
+            in_progress = h_latest[h_latest["status"] == "In Progress"]["stage"].dropna().unique()
 
             if len(in_progress) > 0:
                 current_stage = ", ".join([f"{s} (In Progress)" for s in in_progress])
@@ -187,7 +202,7 @@ def run_engine(conn, cur):
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # ===== TOTAL REMAINING (STRICT START DATE DRIVEN) =====
+        # ===== TOTAL REMAINING =====
         if not house_data.empty:
             project_start = house_data["start"].min()
         else:
@@ -200,7 +215,7 @@ def run_engine(conn, cur):
 
         predicted_finish = today + timedelta(days=int(remaining_total_days))
 
-        # ===== STAGE REMAINING (STRICT START DATE DRIVEN) =====
+        # ===== STAGE REMAINING =====
         if base_stage:
             stage_duration = activity_df[activity_df["stage"] == base_stage]["days"].values
             stage_duration = int(stage_duration[0]) if len(stage_duration)>0 else 1
@@ -221,10 +236,8 @@ def run_engine(conn, cur):
 
             elapsed_stage = (today - stage_start).days if stage_start is not None else 0
 
-            rem_by_time = stage_duration - elapsed_stage
-            rem_by_progress = stage_duration * (1 - ratio)
-
-            rem_stage = max(rem_by_time, rem_by_progress)
+            rem_stage = max(stage_duration - elapsed_stage,
+                            stage_duration * (1 - ratio))
 
             stage_display = "Completed" if rem_stage <= 0 else f"{int(rem_stage)} days"
         else:
