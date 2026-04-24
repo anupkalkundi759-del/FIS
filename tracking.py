@@ -19,15 +19,16 @@ def show_tracking(conn, cur):
             cur.execute("SELECT unit_id, unit_name FROM units")
         return cur.fetchall()
 
+    # ❌ CHANGED: removed unit filter dependency
     @st.cache_data
-    def get_houses(unit_id):
-        if unit_id:
-            cur.execute("SELECT house_id, house_no FROM houses WHERE unit_id=%s", (unit_id,))
-        else:
-            cur.execute("SELECT house_id, house_no FROM houses")
+    def get_all_houses():
+        cur.execute("""
+            SELECT h.house_id, h.house_no, h.unit_id, u.project_id
+            FROM houses h
+            JOIN units u ON h.unit_id = u.unit_id
+        """)
         return cur.fetchall()
 
-    # ✅ UPDATED (supports multiple houses)
     @st.cache_data
     def get_products(house_ids, unit_id):
         if house_ids:
@@ -76,17 +77,26 @@ def show_tracking(conn, cur):
         selected_unit = st.selectbox("Select Unit", ["All"] + list(unit_dict.keys()))
         unit_id = None if selected_unit == "All" else unit_dict[selected_unit]
 
-    # ✅ UPDATED HERE (multi-house select)
+    # ✅ FIXED HOUSE LOGIC (reverse mapping)
     with col3:
-        houses = get_houses(unit_id)
-        house_dict = {h[1]: h[0] for h in houses}
+        house_data = get_all_houses()
+        house_dict = {h[1]: (h[0], h[2], h[3]) for h in house_data}
 
         selected_houses = st.multiselect(
             "Select House",
             options=list(house_dict.keys())
         )
 
-        house_ids = [house_dict[h] for h in selected_houses] if selected_houses else None
+        if selected_houses:
+            house_ids = [house_dict[h][0] for h in selected_houses]
+
+            unit_ids = list(set([house_dict[h][1] for h in selected_houses]))
+            project_ids = list(set([house_dict[h][2] for h in selected_houses]))
+
+            unit_id = unit_ids[0] if len(unit_ids) == 1 else None
+            project_id = project_ids[0] if len(project_ids) == 1 else None
+        else:
+            house_ids = None
 
     # ================= PRODUCTS =================
     products = get_products(house_ids, unit_id)
@@ -214,6 +224,9 @@ def show_tracking(conn, cur):
             )
 
             conn.commit()
+
+            # ✅ FIX: clear cache so new data appears instantly
+            st.cache_data.clear()
 
             st.success(f"{len(selected_ids)} products updated successfully")
 
