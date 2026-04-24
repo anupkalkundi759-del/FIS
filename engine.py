@@ -186,12 +186,14 @@ def run_engine(conn, cur):
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # ===== FIXED TOTAL REMAINING =====
+        # ===== FIXED TOTAL REMAINING (WITH FALLBACK) =====
         if not house_data.empty:
             project_start = house_data["start"].min()
-            elapsed_total = (today - project_start).days
         else:
-            elapsed_total = 0
+            h_all = latest_df[latest_df["house"] == house]
+            project_start = h_all["time"].min() if not h_all.empty else today
+
+        elapsed_total = (today - project_start).days
 
         remaining_by_progress = total_duration - earned_duration
         remaining_by_time = total_duration - elapsed_total
@@ -199,7 +201,7 @@ def run_engine(conn, cur):
         remaining_total_days = max(remaining_by_progress, remaining_by_time)
         predicted_finish = today + timedelta(days=int(remaining_total_days))
 
-        # ===== FIXED STAGE REMAINING =====
+        # ===== FIXED STAGE REMAINING (WITH FALLBACK) =====
         if base_stage:
             stage_row = activity_df[activity_df["stage"] == base_stage]
             stage_duration = int(stage_row["days"].values[0]) if not stage_row.empty else 1
@@ -207,15 +209,19 @@ def run_engine(conn, cur):
             completed = stage_map.get((house, base_stage), 0)
             ratio = completed / total_products if total_products else 0
 
-            if not house_data.empty:
-                s_data = house_data[house_data["stage"] == base_stage]
-                if not s_data.empty:
-                    stage_start = s_data["start"].min()
-                    elapsed_stage = (today - stage_start).days
-                else:
-                    elapsed_stage = 0
+            # GET START (COMPLETED OR IN-PROGRESS)
+            s_data = house_data[house_data["stage"] == base_stage]
+
+            if not s_data.empty:
+                stage_start = s_data["start"].min()
             else:
-                elapsed_stage = 0
+                s_live = h_latest[
+                    (h_latest["stage"] == base_stage) &
+                    (h_latest["status"] == "In Progress")
+                ]
+                stage_start = s_live["time"].min() if not s_live.empty else None
+
+            elapsed_stage = (today - stage_start).days if stage_start is not None else 0
 
             rem_by_progress = stage_duration * (1 - ratio)
             rem_by_time = stage_duration - elapsed_stage
