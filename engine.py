@@ -186,20 +186,43 @@ def run_engine(conn, cur):
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # ===== DYNAMIC PREDICTION =====
-        remaining_total_days = int(total_duration - earned_duration)
-        predicted_finish = today + timedelta(days=remaining_total_days)
+        # ===== FIXED TOTAL REMAINING =====
+        if not house_data.empty:
+            project_start = house_data["start"].min()
+            elapsed_total = (today - project_start).days
+        else:
+            elapsed_total = 0
 
-        # ===== STAGE REMAINING =====
+        remaining_by_progress = total_duration - earned_duration
+        remaining_by_time = total_duration - elapsed_total
+
+        remaining_total_days = max(remaining_by_progress, remaining_by_time)
+        predicted_finish = today + timedelta(days=int(remaining_total_days))
+
+        # ===== FIXED STAGE REMAINING =====
         if base_stage:
-            stage_duration = activity_df[activity_df["stage"] == base_stage]["days"].values
-            stage_duration = int(stage_duration[0]) if len(stage_duration)>0 else 1
+            stage_row = activity_df[activity_df["stage"] == base_stage]
+            stage_duration = int(stage_row["days"].values[0]) if not stage_row.empty else 1
 
             completed = stage_map.get((house, base_stage), 0)
             ratio = completed / total_products if total_products else 0
-            rem_stage = int(stage_duration * (1 - ratio))
 
-            stage_display = "Completed" if rem_stage <= 0 else f"{rem_stage} days"
+            if not house_data.empty:
+                s_data = house_data[house_data["stage"] == base_stage]
+                if not s_data.empty:
+                    stage_start = s_data["start"].min()
+                    elapsed_stage = (today - stage_start).days
+                else:
+                    elapsed_stage = 0
+            else:
+                elapsed_stage = 0
+
+            rem_by_progress = stage_duration * (1 - ratio)
+            rem_by_time = stage_duration - elapsed_stage
+
+            rem_stage = max(rem_by_progress, rem_by_time)
+
+            stage_display = "Completed" if rem_stage <= 0 else f"{int(rem_stage)} days"
         else:
             stage_display = "-"
 
@@ -238,7 +261,7 @@ def run_engine(conn, cur):
                 "Predicted Finish": predicted_finish.date(),
                 "Actual Finish": actual_finish,
                 "Remaining (Stage)": stage_display,
-                "Remaining (Total)": f"{remaining_total_days} days",
+                "Remaining (Total)": f"{int(remaining_total_days)} days",
                 "Delay (Days)": delay_days,
                 "Delay Reason": reason
             })
