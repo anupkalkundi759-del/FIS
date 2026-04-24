@@ -168,6 +168,7 @@ with st.sidebar:
         pages = [
             "Tracking",
             "Dashboard",
+            "House Level Overview",
             "Product Tracking",
             "Scheduling Engine",
             "Upload Excel",
@@ -207,7 +208,15 @@ try:
         show_tracking(conn, cur)
 
     elif page == "Dashboard":
-        from dashboard import show_dashboard
+        from dashboard_v2 import show_dashboard_v2
+        show_dashboard_v2(conn, cur)
+    
+    elif page == "House Level Overview":
+        from house_level_overview import show_dashboard
+        show_dashboard(conn, cur)
+
+    elif page == "House Level Overview":
+        from house_level_overview import show_dashboard
         show_dashboard(conn, cur)
 
     elif page == "Product Tracking":
