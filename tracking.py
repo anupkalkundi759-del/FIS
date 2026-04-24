@@ -27,16 +27,17 @@ def show_tracking(conn, cur):
             cur.execute("SELECT house_id, house_no FROM houses")
         return cur.fetchall()
 
+    # ✅ UPDATED (supports multiple houses)
     @st.cache_data
-    def get_products(house_id, unit_id):
-        if house_id:
+    def get_products(house_ids, unit_id):
+        if house_ids:
             cur.execute("""
                 SELECT p.product_instance_id, pm.product_code
                 FROM products p
                 JOIN products_master pm ON p.product_id = pm.product_id
-                WHERE p.house_id = %s
+                WHERE p.house_id = ANY(%s)
                 ORDER BY pm.product_code
-            """, (house_id,))
+            """, (house_ids,))
         elif unit_id:
             cur.execute("""
                 SELECT p.product_instance_id, pm.product_code
@@ -75,14 +76,20 @@ def show_tracking(conn, cur):
         selected_unit = st.selectbox("Select Unit", ["All"] + list(unit_dict.keys()))
         unit_id = None if selected_unit == "All" else unit_dict[selected_unit]
 
+    # ✅ UPDATED HERE (multi-house select)
     with col3:
         houses = get_houses(unit_id)
         house_dict = {h[1]: h[0] for h in houses}
-        selected_house = st.selectbox("Select House", ["All"] + list(house_dict.keys()))
-        house_id = None if selected_house == "All" else house_dict[selected_house]
+
+        selected_houses = st.multiselect(
+            "Select House",
+            options=list(house_dict.keys())
+        )
+
+        house_ids = [house_dict[h] for h in selected_houses] if selected_houses else None
 
     # ================= PRODUCTS =================
-    products = get_products(house_id, unit_id)
+    products = get_products(house_ids, unit_id)
 
     if not products:
         st.warning("No products found")
