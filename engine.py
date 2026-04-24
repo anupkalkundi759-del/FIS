@@ -35,6 +35,12 @@ def run_engine(conn, cur):
 
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     activity_df["days"] = activity_df["days"].astype(int)
+
+    # 🔴 FIX: stage mismatch
+    activity_df["stage"] = activity_df["stage"].replace({
+        "Cutting": "Cutting List"
+    })
+
     total_duration = int(activity_df["days"].sum())
 
     # ================= SLA ASSIGN =================
@@ -83,8 +89,11 @@ def run_engine(conn, cur):
 
     # ================= TRACKING =================
     cur.execute("""
-        SELECT h.house_no, s.stage_name,
-               MIN(t.timestamp), MAX(t.timestamp)
+        SELECT 
+            h.house_no AS house,
+            s.stage_name AS stage,
+            MIN(t.timestamp) AS start,
+            MAX(t.timestamp) AS end
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
         JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
@@ -94,8 +103,6 @@ def run_engine(conn, cur):
     """, (unit_dict[selected_unit],))
 
     df = pd.DataFrame(cur.fetchall(), columns=["house","stage","start","end"])
-
-    # 🔴 FIX 1: remove bad stage rows
     df = df.dropna(subset=["stage"])
 
     if not df.empty:
@@ -107,7 +114,11 @@ def run_engine(conn, cur):
 
     # ================= LATEST =================
     cur.execute("""
-        SELECT h.house_no, s.stage_name, t.status, t.timestamp
+        SELECT 
+            h.house_no AS house,
+            s.stage_name AS stage,
+            t.status AS status,
+            t.timestamp AS time
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
         JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
@@ -115,13 +126,7 @@ def run_engine(conn, cur):
         WHERE h.unit_id = %s
     """, (unit_dict[selected_unit],))
 
-    latest_df = pd.DataFrame(cur.fetchall(),
-        columns=["house","stage","status","time"])
-
-    # 🔴 FIX 2: ensure safe dataframe
-    if latest_df.empty:
-        latest_df = pd.DataFrame(columns=["house","stage","status","time"])
-
+    latest_df = pd.DataFrame(cur.fetchall(), columns=["house","stage","status","time"])
     latest_df = latest_df.dropna(subset=["stage"])
 
     if not latest_df.empty:
@@ -129,10 +134,13 @@ def run_engine(conn, cur):
 
     # ================= PROGRESS =================
     cur.execute("""
-        SELECT h.house_no,
-               COUNT(p.product_instance_id),
-               s.stage_name,
-               COUNT(DISTINCT CASE WHEN t.status='Completed' THEN t.product_instance_id END)
+        SELECT 
+            h.house_no AS house,
+            COUNT(p.product_instance_id) AS total,
+            s.stage_name AS stage,
+            COUNT(DISTINCT CASE 
+                WHEN t.status='Completed' THEN t.product_instance_id 
+            END) AS completed
         FROM houses h
         LEFT JOIN products p ON p.house_id = h.house_id
         LEFT JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
@@ -141,10 +149,7 @@ def run_engine(conn, cur):
         GROUP BY h.house_no, s.stage_name
     """, (unit_dict[selected_unit],))
 
-    progress_df = pd.DataFrame(cur.fetchall(),
-        columns=["house","total","stage","completed"])
-
-    # 🔴 FIX 3: remove null stage
+    progress_df = pd.DataFrame(cur.fetchall(), columns=["house","total","stage","completed"])
     progress_df = progress_df.dropna(subset=["stage"])
 
     total_map = progress_df.groupby("house")["total"].max().to_dict()
@@ -156,17 +161,13 @@ def run_engine(conn, cur):
     for house in total_map.keys():
 
         house_data = house_group.get_group(house) if house in house_group else pd.DataFrame()
-
-        # 🔴 FIX 4: safe filtering
-        h_latest = latest_df[latest_df["house"] == house] if "stage" in latest_df.columns else pd.DataFrame()
+        h_latest = latest_df[latest_df["house"] == house]
 
         total_products = total_map.get(house, 0)
         earned_duration = 0
         stage_delays = []
 
-        # ===== CURRENT STAGE =====
-        if not h_latest.empty and "stage" in h_latest.columns:
-
+        if not h_latest.empty:
             in_progress = h_latest[h_latest["status"] == "In Progress"]["stage"].dropna().unique()
 
             if len(in_progress) > 0:
@@ -209,9 +210,7 @@ def run_engine(conn, cur):
             project_start = h_latest["time"].min() if not h_latest.empty else today
 
         elapsed_total = (today - project_start).days
-
-        remaining_total_days = total_duration - elapsed_total
-        remaining_total_days = max(remaining_total_days, total_duration - earned_duration)
+        remaining_total_days = max(total_duration - elapsed_total, total_duration - earned_duration)
 
         predicted_finish = today + timedelta(days=int(remaining_total_days))
 
