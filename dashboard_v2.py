@@ -7,17 +7,7 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("## 📊 Factory Intelligence Dashboard")
 
-    # ================= MASTER KPIs =================
-    cur.execute("SELECT COUNT(*) FROM projects")
-    total_projects = cur.fetchone()[0]
-
-    cur.execute("SELECT COUNT(*) FROM units")
-    total_units = cur.fetchone()[0]
-
-    cur.execute("SELECT COUNT(*) FROM houses")
-    total_houses = cur.fetchone()[0]
-
-    # ================= TRACKING DATA =================
+    # ================= DATA =================
     df = pd.read_sql("""
         SELECT product_instance_id, stage_id, status, timestamp
         FROM tracking_log
@@ -27,34 +17,34 @@ def show_dashboard_v2(conn, cur):
         st.warning("No tracking data available")
         return
 
-    # ================= FIX: LATEST STAGE PER PRODUCT =================
     df = df.sort_values("timestamp", ascending=False)
-    latest_df = df.drop_duplicates(subset=["product_instance_id"], keep="first")
+    latest = df.drop_duplicates("product_instance_id")
 
-    total_products = latest_df["product_instance_id"].nunique()
+    total = latest["product_instance_id"].nunique()
+    completed = len(latest[latest["status"] == "Completed"])
+    dispatched = len(latest[latest["status"] == "Dispatched"])
+    in_progress = len(latest[latest["status"] == "In Progress"])
+    pending = total - completed
 
-    completed = len(latest_df[latest_df["status"] == "Completed"])
-    dispatched = len(latest_df[latest_df["status"] == "Dispatched"])
-    in_progress = len(latest_df[latest_df["status"] == "In Progress"])
-    pending = total_products - completed
-
-    # ================= KPI ROW 1 =================
+    # ================= KPI STRIP =================
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Projects", total_projects)
-    k2.metric("Units", total_units)
-    k3.metric("Houses", total_houses)
-    k4.metric("Products", total_products)
 
-    # ================= KPI ROW 2 =================
-    k5, k6, k7, k8 = st.columns(4)
-    k5.metric("Completed", completed)
-    k6.metric("Dispatched", dispatched)
-    k7.metric("In Progress", in_progress)
-    k8.metric("Pending", pending)
+    k1.metric("Total Products", total)
+    k2.metric("Completed", completed)
+    k3.metric("In Progress", in_progress)
+    k4.metric("Pending", pending)
 
-    st.markdown("---")
+    # ================= HEALTH =================
+    completion_rate = (completed / total) * 100 if total else 0
 
-    # ================= STAGE DISTRIBUTION =================
+    if completion_rate > 70:
+        st.success(f"🟢 Healthy Flow ({completion_rate:.1f}%)")
+    elif completion_rate > 40:
+        st.warning(f"🟡 Moderate Flow ({completion_rate:.1f}%)")
+    else:
+        st.error(f"🔴 Critical Flow ({completion_rate:.1f}%)")
+
+    # ================= STAGE LOAD =================
     stage_df = pd.read_sql("""
         SELECT s.stage_name, COUNT(*) as count
         FROM tracking_log t
@@ -63,15 +53,43 @@ def show_dashboard_v2(conn, cur):
         ORDER BY count DESC
     """, conn)
 
-    # ================= SINGLE CHART (NO DUPLICATE PIE) =================
-    fig = px.bar(stage_df, x="stage_name", y="count", title="Stage Distribution")
-    st.plotly_chart(fig, use_container_width=True)
-
     # ================= BOTTLENECK =================
-    if not stage_df.empty:
-        bottleneck = stage_df.iloc[0]["stage_name"]
-        st.error(f"🚨 Bottleneck Stage: {bottleneck}")
+    bottleneck = stage_df.iloc[0]["stage_name"]
+    st.error(f"🚨 Bottleneck: {bottleneck}")
 
-    # ================= SUMMARY TABLE =================
-    st.markdown("### Stage Summary")
+    # ================= MAIN VIEW =================
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        fig = px.bar(stage_df, x="stage_name", y="count",
+                     title="Where Work is Stuck")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        st.markdown("### ⚠ Key Signals")
+
+        if in_progress > completed:
+            st.warning("Too much WIP → slow flow")
+
+        if dispatched == 0:
+            st.warning("No dispatch happening")
+
+        if bottleneck == "Design & Engineering":
+            st.error("Upstream blocking entire pipeline")
+
+        if completion_rate < 30:
+            st.error("System underperforming")
+
+    # ================= QUICK SUMMARY =================
+    st.markdown("### 📋 Quick Summary")
+
+    st.write(f"""
+    - Total Products: **{total}**
+    - Completed: **{completed}**
+    - In Progress: **{in_progress}**
+    - Pending: **{pending}**
+    - Bottleneck Stage: **{bottleneck}**
+    """)
+
+    # ================= STAGE TABLE =================
     st.dataframe(stage_df, use_container_width=True)
