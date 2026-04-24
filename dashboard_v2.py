@@ -5,7 +5,7 @@ import plotly.express as px
 
 def show_dashboard_v2(conn, cur):
 
-    st.markdown("# 📊 Factory Intelligence Dashboard")
+    st.markdown("# 🏭 Factory Intelligence Dashboard")
 
     # ================= DATA =================
     df = pd.read_sql("""
@@ -13,7 +13,7 @@ def show_dashboard_v2(conn, cur):
             p.product_instance_id,
             pr.project_name,
             u.unit_name,
-            h.house_name,
+            h.house_no,
             s.stage_name,
             t.status,
             t.timestamp
@@ -26,57 +26,71 @@ def show_dashboard_v2(conn, cur):
     """, conn)
 
     if df.empty:
-        st.warning("No data")
+        st.warning("No data available")
         return
 
-    # ================= LATEST =================
+    # ================= LATEST STATUS =================
     df = df.sort_values("timestamp", ascending=False)
     latest = df.drop_duplicates("product_instance_id")
 
-    total = len(latest)
-    completed = len(latest[latest["status"] == "Completed"])
-    dispatched = len(latest[latest["status"] == "Dispatched"])
-    pending = total - completed
-
     # ================= KPI =================
-    c1, c2, c3, c4, c5 = st.columns(5)
+    total_products = latest["product_instance_id"].nunique()
+    completed = (latest["status"] == "Completed").sum()
+    dispatched = (latest["status"] == "Dispatched").sum()
+    pending = total_products - completed
 
-    c1.metric("Projects", latest["project_name"].nunique())
-    c2.metric("Products", total)
-    c3.metric("Completed %", f"{(completed/total)*100:.1f}%")
-    c4.metric("Pending %", f"{(pending/total)*100:.1f}%")
-    c5.metric("Dispatch %", f"{(dispatched/total)*100:.1f}%")
+    total_projects = latest["project_name"].nunique()
+    total_units = latest["unit_name"].nunique()
+    total_houses = latest["house_no"].nunique()
 
-    # ================= DONUT =================
+    # KPI ROW 1
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Projects", total_projects)
+    k2.metric("Units", total_units)
+    k3.metric("Houses", total_houses)
+    k4.metric("Products", total_products)
+
+    # KPI ROW 2
+    k5, k6, k7 = st.columns(3)
+    k5.metric("Completed %", f"{(completed/total_products)*100:.1f}%")
+    k6.metric("Pending %", f"{(pending/total_products)*100:.1f}%")
+    k7.metric("Dispatch %", f"{(dispatched/total_products)*100:.1f}%")
+
+    st.markdown("---")
+
+    # ================= DONUT (ONLY ONE OVERVIEW) =================
     donut_df = pd.DataFrame({
-        "status": ["Completed", "Pending"],
-        "count": [completed, pending]
+        "Status": ["Completed", "Pending"],
+        "Count": [completed, pending]
     })
 
     fig1 = px.pie(
         donut_df,
-        names="status",
-        values="count",
+        names="Status",
+        values="Count",
         hole=0.6,
-        title="Overall Progress"
+        title="Overall Completion Status"
     )
 
-    # ================= HEATMAP =================
-    heat = latest.groupby(
+    # ================= PROJECT RISK =================
+    proj = latest.groupby(
         ["project_name", "unit_name"]
     ).agg(
         total=("product_instance_id", "count"),
         completed=("status", lambda x: (x == "Completed").sum())
     ).reset_index()
 
-    heat["pending_ratio"] = (heat["total"] - heat["completed"]) / heat["total"]
+    proj["pending"] = proj["total"] - proj["completed"]
+
+    # ================= HEATMAP =================
+    proj["pending_ratio"] = proj["pending"] / proj["total"]
 
     fig2 = px.density_heatmap(
-        heat,
+        proj,
         x="project_name",
         y="unit_name",
         z="pending_ratio",
-        title="Project Risk Heatmap"
+        title="Project Risk Heatmap (Pending %)"
     )
 
     # ================= BOTTLENECK =================
@@ -92,14 +106,7 @@ def show_dashboard_v2(conn, cur):
 
     bottleneck = stage.iloc[0]["stage"]
 
-    # ================= TOP RISK =================
-    proj = latest.groupby("project_name").agg(
-        total=("product_instance_id", "count"),
-        completed=("status", lambda x: (x == "Completed").sum())
-    ).reset_index()
-
-    proj["pending"] = proj["total"] - proj["completed"]
-
+    # ================= TOP RISK PROJECTS =================
     top = proj.sort_values("pending", ascending=False).head(5)
 
     fig4 = px.bar(
@@ -107,10 +114,10 @@ def show_dashboard_v2(conn, cur):
         x="pending",
         y="project_name",
         orientation="h",
-        title="Top Risk Projects"
+        title="Top Risk Projects (Pending Load)"
     )
 
-    # ================= LAYOUT =================
+    # ================= LAYOUT (NO SCROLL DESIGN) =================
     r1, r2 = st.columns(2)
     r1.plotly_chart(fig1, use_container_width=True)
     r2.plotly_chart(fig2, use_container_width=True)
@@ -121,3 +128,15 @@ def show_dashboard_v2(conn, cur):
 
     # ================= ALERT =================
     st.error(f"🚨 Bottleneck Stage: {bottleneck}")
+
+    # ================= DECISION INSIGHTS =================
+    st.markdown("### ⚠ Decision Insights")
+
+    if pending > completed:
+        st.warning("High pending workload → risk of delay")
+
+    if dispatched == 0:
+        st.warning("No dispatch → pipeline blockage")
+
+    if proj["pending"].max() > (proj["total"].max() * 0.7):
+        st.error("Critical project overload detected")
