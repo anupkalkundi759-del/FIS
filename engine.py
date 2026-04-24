@@ -36,7 +36,7 @@ def run_engine(conn, cur):
     activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     activity_df["days"] = activity_df["days"].astype(int)
 
-    # 🔴 FIX: stage mismatch
+    # Fix naming mismatch
     activity_df["stage"] = activity_df["stage"].replace({
         "Cutting": "Cutting List"
     })
@@ -96,7 +96,7 @@ def run_engine(conn, cur):
             MAX(t.timestamp) AS end
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
+        JOIN tracking_log t ON t.product_instance_id = p.id
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s AND t.status = 'Completed'
         GROUP BY h.house_no, s.stage_name
@@ -106,8 +106,8 @@ def run_engine(conn, cur):
     df = df.dropna(subset=["stage"])
 
     if not df.empty:
-        df["start"] = pd.to_datetime(df["start"], errors="coerce").dt.tz_localize("Asia/Kolkata")
-        df["end"] = pd.to_datetime(df["end"], errors="coerce").dt.tz_localize("Asia/Kolkata")
+        df["start"] = pd.to_datetime(df["start"]).dt.tz_localize("Asia/Kolkata")
+        df["end"] = pd.to_datetime(df["end"]).dt.tz_localize("Asia/Kolkata")
         house_group = df.groupby("house")
     else:
         house_group = {}
@@ -121,7 +121,7 @@ def run_engine(conn, cur):
             t.timestamp AS time
         FROM products p
         JOIN houses h ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
+        JOIN tracking_log t ON t.product_instance_id = p.id
         JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
     """, (unit_dict[selected_unit],))
@@ -130,20 +130,20 @@ def run_engine(conn, cur):
     latest_df = latest_df.dropna(subset=["stage"])
 
     if not latest_df.empty:
-        latest_df["time"] = pd.to_datetime(latest_df["time"], errors="coerce").dt.tz_localize("Asia/Kolkata")
+        latest_df["time"] = pd.to_datetime(latest_df["time"]).dt.tz_localize("Asia/Kolkata")
 
     # ================= PROGRESS =================
     cur.execute("""
         SELECT 
             h.house_no AS house,
-            COUNT(p.product_instance_id) AS total,
+            COUNT(p.id) AS total,
             s.stage_name AS stage,
             COUNT(DISTINCT CASE 
                 WHEN t.status='Completed' THEN t.product_instance_id 
             END) AS completed
         FROM houses h
         LEFT JOIN products p ON p.house_id = h.house_id
-        LEFT JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
+        LEFT JOIN tracking_log t ON t.product_instance_id = p.id
         LEFT JOIN stages s ON t.stage_id = s.stage_id
         WHERE h.unit_id = %s
         GROUP BY h.house_no, s.stage_name
@@ -203,7 +203,7 @@ def run_engine(conn, cur):
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # ===== TOTAL REMAINING =====
+        # ===== START DATE LOGIC =====
         if not house_data.empty:
             project_start = house_data["start"].min()
         else:
@@ -216,9 +216,7 @@ def run_engine(conn, cur):
 
         # ===== STAGE REMAINING =====
         if base_stage:
-            stage_duration = activity_df[activity_df["stage"] == base_stage]["days"].values
-            stage_duration = int(stage_duration[0]) if len(stage_duration)>0 else 1
-
+            stage_duration = int(activity_df[activity_df["stage"] == base_stage]["days"].values[0])
             completed = stage_map.get((house, base_stage), 0)
             ratio = completed / total_products if total_products else 0
 
@@ -227,10 +225,8 @@ def run_engine(conn, cur):
             if not s_data.empty:
                 stage_start = s_data["start"].min()
             else:
-                s_live = h_latest[
-                    (h_latest["stage"] == base_stage) &
-                    (h_latest["status"] == "In Progress")
-                ]
+                s_live = h_latest[(h_latest["stage"] == base_stage) &
+                                 (h_latest["status"] == "In Progress")]
                 stage_start = s_live["time"].min() if not s_live.empty else None
 
             elapsed_stage = (today - stage_start).days if stage_start is not None else 0
