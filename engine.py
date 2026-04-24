@@ -90,7 +90,6 @@ def run_engine(conn, cur):
     """, (unit_dict[selected_unit],))
 
     start_df = pd.DataFrame(cur.fetchall(), columns=["house","start"])
-
     if not start_df.empty:
         start_df["start"] = pd.to_datetime(start_df["start"], utc=True).dt.tz_convert(tz)
 
@@ -121,25 +120,19 @@ def run_engine(conn, cur):
 
         FROM houses h
         LEFT JOIN products p ON p.house_id = h.house_id
-
         LEFT JOIN latest_stage ls 
             ON p.product_instance_id = ls.product_instance_id 
             AND ls.rn = 1
-
         LEFT JOIN stages s 
             ON ls.stage_id = s.stage_id
-
         LEFT JOIN tracking_log t 
             ON t.product_instance_id = p.product_instance_id
-
         WHERE h.unit_id = %s
-
         GROUP BY h.house_no, s.stage_name
         ORDER BY h.house_no
     """, (unit_dict[selected_unit],))
 
     progress_df = pd.DataFrame(cur.fetchall())
-
     if progress_df.empty:
         st.warning("No data")
         return
@@ -178,48 +171,57 @@ def run_engine(conn, cur):
         progress = completed_products / total_products if total_products else 0
         progress_percent = round(progress * 100, 1)
 
-        # ===== START DATE =====
+        # ===== START =====
         start_date = start_map.get(house, today)
         if pd.isna(start_date):
             start_date = today
 
         days_elapsed = max(1, (today - start_date).days)
 
-        # ===== PRODUCTION RATE (REAL FIX) =====
-        rate = completed_products / days_elapsed
-
-        remaining_products = total_products - completed_products
-
-        if rate > 0:
-            remaining_total_days = int(remaining_products / rate)
-        else:
-            remaining_total_days = total_duration - days_elapsed  # 👈 DAILY DECAY
-
-        remaining_total_days = max(0, remaining_total_days)
-
-        predicted_finish = today + timedelta(days=remaining_total_days)
-
         # ===== CURRENT STAGE =====
         current_stage = g.sort_values("total", ascending=False).iloc[0]["stage"]
 
+        # ===== STAGE REMAINING =====
         stage_total = g[g["stage"] == current_stage]["total"].sum()
         stage_completed = g[g["stage"] == current_stage]["completed"].sum()
 
         stage_row = activity_df[activity_df["stage"] == current_stage]
         stage_duration = int(stage_row["days"].values[0]) if not stage_row.empty else 1
 
-        if stage_total > 0:
-            stage_ratio = stage_completed / stage_total
-        else:
-            stage_ratio = 0
-
+        stage_ratio = (stage_completed / stage_total) if stage_total > 0 else 0
         rem_stage = int(stage_duration * (1 - stage_ratio))
         stage_display = "Completed" if rem_stage <= 0 else f"{rem_stage} days"
+
+        # ===== STAGE-SEQUENCE BASED TOTAL REMAINING =====
+        current_seq_row = activity_df[activity_df["stage"] == current_stage]
+
+        if not current_seq_row.empty:
+            current_seq = int(current_seq_row["seq"].values[0])
+        else:
+            current_seq = 1
+
+        remaining_stages = activity_df[activity_df["seq"] >= current_seq]
+        remaining_stage_duration = int(remaining_stages["days"].sum())
+
+        # ===== RATE =====
+        rate = completed_products / days_elapsed if days_elapsed > 0 else 0
+
+        if rate > 0:
+            efficiency = min(2, max(0.5, rate))
+            remaining_total_days = int(remaining_stage_duration / efficiency)
+        else:
+            # 👇 ensures DAILY CHANGE even without production
+            remaining_total_days = max(0, remaining_stage_duration - days_elapsed)
+
+        predicted_finish = today + timedelta(days=remaining_total_days)
 
         actual_finish = predicted_finish.date() if progress >= 0.99 else "Not Finished"
 
         # ===== SLA =====
         sla = config_map.get(house)
+
+        delay_days = 0
+        reason = "on track"
 
         if sla:
             expected = pd.to_datetime(sla).tz_localize(tz)
@@ -237,7 +239,6 @@ def run_engine(conn, cur):
                 "Impact": impact
             })
 
-        reason = "on track"
         if progress < 0.3:
             reason = "Low production rate"
         elif bottleneck_stage == current_stage:
@@ -251,7 +252,7 @@ def run_engine(conn, cur):
             "Actual Finish": actual_finish,
             "Remaining (Stage)": stage_display,
             "Remaining (Total)": f"{remaining_total_days} days",
-            "Delay (Days)": 0,
+            "Delay (Days)": delay_days,
             "Delay Reason": reason
         })
 
