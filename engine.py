@@ -6,7 +6,6 @@ def run_engine(conn, cur):
 
     st.title("⚙️ Scheduling Intelligence Engine")
 
-    # ================= TIME =================
     tz = ZoneInfo("Asia/Kolkata")
     today = datetime.now(tz)
 
@@ -28,7 +27,6 @@ def run_engine(conn, cur):
     act = cur.fetchall()
 
     activity_df = pd.DataFrame(act, columns=["stage","seq","days"])
-
     if activity_df.empty:
         st.error("No activities found")
         return
@@ -94,13 +92,11 @@ def run_engine(conn, cur):
     start_df = pd.DataFrame(cur.fetchall(), columns=["house","start"])
 
     if not start_df.empty:
-        start_df["start"] = pd.to_datetime(start_df["start"])
-        # 🔥 FIX TIMEZONE ISSUE
-        start_df["start"] = start_df["start"].dt.tz_localize("Asia/Kolkata")
+        start_df["start"] = pd.to_datetime(start_df["start"], utc=True).dt.tz_convert(tz)
 
     start_map = dict(zip(start_df["house"], start_df["start"])) if not start_df.empty else {}
 
-    # ================= PROGRESS QUERY =================
+    # ================= PROGRESS =================
     cur.execute("""
         WITH latest_stage AS (
             SELECT 
@@ -145,27 +141,14 @@ def run_engine(conn, cur):
     progress_df = pd.DataFrame(cur.fetchall())
 
     if progress_df.empty:
-        st.warning("No tracking data")
+        st.warning("No data")
         return
 
     progress_df.columns = ["house","stage","total","completed"]
 
-    # ================= DOMINANT STAGE =================
-    dominant_stage_map = {}
-    stage_map = {}
-
-    grouped = progress_df.groupby("house")
-
-    for house, g in grouped:
-        g_sorted = g.sort_values("total", ascending=False)
-        dominant_stage_map[house] = g_sorted.iloc[0]["stage"]
-
-        for _, r in g.iterrows():
-            stage_map[(house, r["stage"])] = r["completed"]
-
-    # ================= FLOW INTELLIGENCE =================
+    # ================= FLOW =================
     stage_wip = progress_df.groupby("stage")["total"].sum().to_dict()
-    stage_completed = progress_df.groupby("stage")["completed"].sum().to_dict()
+    stage_completed_dict = progress_df.groupby("stage")["completed"].sum().to_dict()
 
     stage_rate = {}
     bottleneck_stage = None
@@ -173,7 +156,7 @@ def run_engine(conn, cur):
 
     for stage in stage_wip:
         total = stage_wip.get(stage, 0)
-        comp = stage_completed.get(stage, 0)
+        comp = stage_completed_dict.get(stage, 0)
 
         rate = comp / total if total else 0
         stage_rate[stage] = rate
@@ -185,44 +168,50 @@ def run_engine(conn, cur):
     # ================= ENGINE =================
     results, sla_results = [], []
 
+    grouped = progress_df.groupby("house")
+
     for house, g in grouped:
 
         total_products = g["total"].sum()
         completed_products = g["completed"].sum()
 
-        progress_physical = completed_products / total_products if total_products else 0
+        progress = completed_products / total_products if total_products else 0
+        progress_percent = round(progress * 100, 1)
 
-        # ===== TIME =====
-        start_date = start_map.get(house)
-        if pd.isna(start_date) or start_date is None:
+        # ===== START DATE =====
+        start_date = start_map.get(house, today)
+        if pd.isna(start_date):
             start_date = today
 
         days_elapsed = max(1, (today - start_date).days)
 
-        # ===== HYBRID =====
-        progress_time = days_elapsed / total_duration if total_duration else 0
-        progress = max(progress_physical, progress_time)
+        # ===== PRODUCTION RATE (REAL FIX) =====
+        rate = completed_products / days_elapsed
 
-        progress_percent = round(progress * 100, 1)
-
-        # ===== PRODUCTION RATE =====
-        rate = progress_physical / days_elapsed if days_elapsed > 0 else 0
+        remaining_products = total_products - completed_products
 
         if rate > 0:
-            remaining_total_days = int((1 - progress_physical) / rate)
+            remaining_total_days = int(remaining_products / rate)
         else:
-            remaining_total_days = total_duration
+            remaining_total_days = total_duration - days_elapsed  # 👈 DAILY DECAY
+
+        remaining_total_days = max(0, remaining_total_days)
 
         predicted_finish = today + timedelta(days=remaining_total_days)
 
-        # ===== STAGE =====
-        current_stage = dominant_stage_map.get(house, "Not Started")
+        # ===== CURRENT STAGE =====
+        current_stage = g.sort_values("total", ascending=False).iloc[0]["stage"]
+
+        stage_total = g[g["stage"] == current_stage]["total"].sum()
+        stage_completed = g[g["stage"] == current_stage]["completed"].sum()
 
         stage_row = activity_df[activity_df["stage"] == current_stage]
         stage_duration = int(stage_row["days"].values[0]) if not stage_row.empty else 1
 
-        stage_completed = stage_map.get((house, current_stage), 0)
-        stage_ratio = stage_completed / total_products if total_products else 0
+        if stage_total > 0:
+            stage_ratio = stage_completed / stage_total
+        else:
+            stage_ratio = 0
 
         rem_stage = int(stage_duration * (1 - stage_ratio))
         stage_display = "Completed" if rem_stage <= 0 else f"{rem_stage} days"
@@ -233,8 +222,7 @@ def run_engine(conn, cur):
         sla = config_map.get(house)
 
         if sla:
-            expected = pd.to_datetime(sla).tz_localize("Asia/Kolkata")
-
+            expected = pd.to_datetime(sla).tz_localize(tz)
             delay_days = (predicted_finish - expected).days
 
             status = "🟢 On Track" if delay_days < 0 else "🟢 On Time" if delay_days == 0 else "🔴 Delay"
@@ -250,7 +238,7 @@ def run_engine(conn, cur):
             })
 
         reason = "on track"
-        if progress_physical < 0.3:
+        if progress < 0.3:
             reason = "Low production rate"
         elif bottleneck_stage == current_stage:
             reason = "Bottleneck stage"
@@ -268,11 +256,11 @@ def run_engine(conn, cur):
         })
 
     # ================= OUTPUT =================
-    st.subheader("🚨 Priority Table (SLA Only)")
-    st.dataframe(pd.DataFrame(sla_results))
-
     st.subheader("🏠 House Intelligence")
     st.dataframe(pd.DataFrame(results))
+
+    st.subheader("🚨 Priority Table (SLA Only)")
+    st.dataframe(pd.DataFrame(sla_results))
 
     # ================= FLOW =================
     st.subheader("🏭 Flow Intelligence")
@@ -282,7 +270,7 @@ def run_engine(conn, cur):
         flow_data.append({
             "Stage": stage,
             "WIP": stage_wip.get(stage, 0),
-            "Completed": stage_completed.get(stage, 0),
+            "Completed": stage_completed_dict.get(stage, 0),
             "Efficiency %": round(stage_rate.get(stage, 0)*100,1)
         })
 
@@ -290,8 +278,6 @@ def run_engine(conn, cur):
 
     if bottleneck_stage:
         st.error(f"🚨 Bottleneck Stage: {bottleneck_stage}")
-    else:
-        st.success("No bottleneck detected")
 
     # ================= EARLY WARNING =================
     early = []
@@ -299,9 +285,8 @@ def run_engine(conn, cur):
         if "Miss by" in r["Impact"]:
             early.append({
                 "House": r["House"],
-                "Issue": "Will miss SLA",
-                "Delay (days)": int(r["Impact"].split(" ")[-2])
+                "Delay": r["Impact"]
             })
 
     st.subheader("🚨 Early Warning")
-    st.dataframe(pd.DataFrame(early)) if early else st.success("No early risks")
+    st.dataframe(pd.DataFrame(early)) if early else st.success("No risks")
