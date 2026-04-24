@@ -5,100 +5,119 @@ import plotly.express as px
 
 def show_dashboard_v2(conn, cur):
 
-    st.markdown("## 📊 Factory Intelligence Dashboard")
+    st.markdown("# 📊 Factory Intelligence Dashboard")
 
-    # ================= MASTER COUNTS =================
-    cur.execute("SELECT COUNT(*) FROM projects")
-    total_projects = cur.fetchone()[0]
-
-    cur.execute("SELECT COUNT(*) FROM units")
-    total_units = cur.fetchone()[0]
-
-    cur.execute("SELECT COUNT(*) FROM houses")
-    total_houses = cur.fetchone()[0]
-
-    # ================= TRACKING =================
+    # ================= DATA =================
     df = pd.read_sql("""
-        SELECT product_instance_id, stage_id, status, timestamp
-        FROM tracking_log
+        SELECT 
+            p.product_instance_id,
+            pr.project_name,
+            u.unit_name,
+            h.house_name,
+            s.stage_name,
+            t.status,
+            t.timestamp
+        FROM tracking_log t
+        JOIN products p ON t.product_instance_id = p.product_instance_id
+        JOIN houses h ON p.house_id = h.house_id
+        JOIN units u ON h.unit_id = u.unit_id
+        JOIN projects pr ON u.project_id = pr.project_id
+        JOIN stages s ON t.stage_id = s.stage_id
     """, conn)
 
     if df.empty:
-        st.warning("No tracking data available")
+        st.warning("No data")
         return
 
-    # ================= LATEST STATE =================
+    # ================= LATEST =================
     df = df.sort_values("timestamp", ascending=False)
-    latest_df = df.drop_duplicates(subset=["product_instance_id"], keep="first")
+    latest = df.drop_duplicates("product_instance_id")
 
-    total_products = latest_df["product_instance_id"].nunique()
+    total = len(latest)
+    completed = len(latest[latest["status"] == "Completed"])
+    dispatched = len(latest[latest["status"] == "Dispatched"])
+    pending = total - completed
 
-    completed = len(latest_df[latest_df["status"] == "Completed"])
-    dispatched = len(latest_df[latest_df["status"] == "Dispatched"])
-    in_progress = len(latest_df[latest_df["status"] == "In Progress"])
-    pending = total_products - completed
+    # ================= KPI =================
+    c1, c2, c3, c4, c5 = st.columns(5)
 
-    # ================= KPI ROW =================
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Projects", total_projects)
-    k2.metric("Units", total_units)
-    k3.metric("Houses", total_houses)
-    k4.metric("Products", total_products)
+    c1.metric("Projects", latest["project_name"].nunique())
+    c2.metric("Products", total)
+    c3.metric("Completed %", f"{(completed/total)*100:.1f}%")
+    c4.metric("Pending %", f"{(pending/total)*100:.1f}%")
+    c5.metric("Dispatch %", f"{(dispatched/total)*100:.1f}%")
 
-    k5, k6, k7, k8 = st.columns(4)
-    k5.metric("Completed", completed)
-    k6.metric("Dispatched", dispatched)
-    k7.metric("In Progress", in_progress)
-    k8.metric("Pending", pending)
+    # ================= DONUT =================
+    donut_df = pd.DataFrame({
+        "status": ["Completed", "Pending"],
+        "count": [completed, pending]
+    })
 
-    st.markdown("---")
+    fig1 = px.pie(
+        donut_df,
+        names="status",
+        values="count",
+        hole=0.6,
+        title="Overall Progress"
+    )
 
-    # ================= STAGE DATA =================
-    stage_df = pd.read_sql("""
-        SELECT s.stage_name, COUNT(*) as count
-        FROM tracking_log t
-        JOIN stages s ON t.stage_id = s.stage_id
-        GROUP BY s.stage_name
-        ORDER BY count DESC
-    """, conn)
+    # ================= HEATMAP =================
+    heat = latest.groupby(
+        ["project_name", "unit_name"]
+    ).agg(
+        total=("product_instance_id", "count"),
+        completed=("status", lambda x: (x == "Completed").sum())
+    ).reset_index()
 
-    # ================= MAIN LAYOUT =================
-    left, right = st.columns([2, 1])
+    heat["pending_ratio"] = (heat["total"] - heat["completed"]) / heat["total"]
 
-    # -------- LEFT (CHART) --------
-    with left:
-        fig = px.bar(stage_df, x="stage_name", y="count",
-                     title="Stage Load (Where work is stuck)")
-        st.plotly_chart(fig, use_container_width=True)
+    fig2 = px.density_heatmap(
+        heat,
+        x="project_name",
+        y="unit_name",
+        z="pending_ratio",
+        title="Project Risk Heatmap"
+    )
 
-    # -------- RIGHT (INSIGHTS) --------
-    with right:
-        st.markdown("### 🚨 Bottleneck")
-        if not stage_df.empty:
-            bottleneck = stage_df.iloc[0]["stage_name"]
-            st.error(f"{bottleneck}")
+    # ================= BOTTLENECK =================
+    stage = latest["stage_name"].value_counts().reset_index()
+    stage.columns = ["stage", "count"]
 
-        st.markdown("### 📊 Completion Health")
+    fig3 = px.bar(
+        stage,
+        x="stage",
+        y="count",
+        title="Stage Load (Bottleneck View)"
+    )
 
-        completion_rate = (completed / total_products) * 100 if total_products else 0
+    bottleneck = stage.iloc[0]["stage"]
 
-        st.progress(int(completion_rate))
+    # ================= TOP RISK =================
+    proj = latest.groupby("project_name").agg(
+        total=("product_instance_id", "count"),
+        completed=("status", lambda x: (x == "Completed").sum())
+    ).reset_index()
 
-        st.write(f"Completion Rate: **{completion_rate:.1f}%**")
+    proj["pending"] = proj["total"] - proj["completed"]
 
-        st.markdown("### ⚠ Alerts")
+    top = proj.sort_values("pending", ascending=False).head(5)
 
-        if completion_rate < 20:
-            st.warning("Very low completion rate")
+    fig4 = px.bar(
+        top,
+        x="pending",
+        y="project_name",
+        orientation="h",
+        title="Top Risk Projects"
+    )
 
-        if in_progress > completed:
-            st.warning("High WIP → risk of delay")
+    # ================= LAYOUT =================
+    r1, r2 = st.columns(2)
+    r1.plotly_chart(fig1, use_container_width=True)
+    r2.plotly_chart(fig2, use_container_width=True)
 
-        if dispatched == 0:
-            st.warning("Nothing dispatched yet")
+    r3, r4 = st.columns(2)
+    r3.plotly_chart(fig3, use_container_width=True)
+    r4.plotly_chart(fig4, use_container_width=True)
 
-    st.markdown("---")
-
-    # ================= SUMMARY =================
-    st.markdown("### 📋 Stage Summary")
-    st.dataframe(stage_df, use_container_width=True)
+    # ================= ALERT =================
+    st.error(f"🚨 Bottleneck Stage: {bottleneck}")
