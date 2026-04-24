@@ -6,7 +6,9 @@ def run_engine(conn, cur):
 
     st.title("⚙️ Scheduling Intelligence Engine")
 
-    today = datetime.now(ZoneInfo("Asia/Kolkata"))
+    # ================= TIME =================
+    IST = ZoneInfo("Asia/Kolkata")
+    today = datetime.now(IST)
 
     # ================= TABLES =================
     cur.execute("""
@@ -94,6 +96,7 @@ def run_engine(conn, cur):
     df = pd.DataFrame(cur.fetchall(), columns=["house","stage","start","end"])
 
     if not df.empty:
+        df.columns = ["house","stage","start","end"]
         df["start"] = pd.to_datetime(df["start"]).dt.tz_localize("Asia/Kolkata")
         df["end"] = pd.to_datetime(df["end"]).dt.tz_localize("Asia/Kolkata")
         house_group = df.groupby("house")
@@ -114,7 +117,12 @@ def run_engine(conn, cur):
         columns=["house","stage","status","time"])
 
     if not latest_df.empty:
+        latest_df.columns = ["house","stage","status","time"]
         latest_df["time"] = pd.to_datetime(latest_df["time"]).dt.tz_localize("Asia/Kolkata")
+
+    if "stage" not in latest_df.columns:
+        st.error(f"Column issue in latest_df: {latest_df.columns}")
+        return
 
     # ================= PROGRESS =================
     cur.execute("""
@@ -147,12 +155,10 @@ def run_engine(conn, cur):
         earned_duration = 0
         stage_delays = []
 
-        # ===== MULTI STAGE =====
         h_latest = latest_df[latest_df["house"] == house]
 
         if not h_latest.empty:
             in_progress = h_latest[h_latest["status"] == "In Progress"]["stage"].unique()
-
             if len(in_progress) > 0:
                 current_stage = ", ".join([f"{s} (In Progress)" for s in in_progress])
                 base_stage = in_progress[0]
@@ -164,7 +170,7 @@ def run_engine(conn, cur):
             current_stage = "Not Started"
             base_stage = None
 
-        # ===== PROGRESS =====
+        # ===== PROGRESS + DELAY =====
         for _, row in activity_df.iterrows():
             stage = row["stage"]
             duration = row["days"]
@@ -186,22 +192,19 @@ def run_engine(conn, cur):
 
         progress = (earned_duration / total_duration) * 100 if total_duration else 0
 
-        # ===== FIXED TOTAL REMAINING (WITH FALLBACK) =====
+        # ===== TOTAL REMAINING =====
         if not house_data.empty:
             project_start = house_data["start"].min()
         else:
-            h_all = latest_df[latest_df["house"] == house]
-            project_start = h_all["time"].min() if not h_all.empty else today
+            project_start = h_latest["time"].min() if not h_latest.empty else today
 
         elapsed_total = (today - project_start).days
+        remaining_total_days = max(total_duration - earned_duration,
+                                   total_duration - elapsed_total)
 
-        remaining_by_progress = total_duration - earned_duration
-        remaining_by_time = total_duration - elapsed_total
-
-        remaining_total_days = max(remaining_by_progress, remaining_by_time)
         predicted_finish = today + timedelta(days=int(remaining_total_days))
 
-        # ===== FIXED STAGE REMAINING (WITH FALLBACK) =====
+        # ===== STAGE REMAINING =====
         if base_stage:
             stage_row = activity_df[activity_df["stage"] == base_stage]
             stage_duration = int(stage_row["days"].values[0]) if not stage_row.empty else 1
@@ -209,7 +212,6 @@ def run_engine(conn, cur):
             completed = stage_map.get((house, base_stage), 0)
             ratio = completed / total_products if total_products else 0
 
-            # GET START (COMPLETED OR IN-PROGRESS)
             s_data = house_data[house_data["stage"] == base_stage]
 
             if not s_data.empty:
@@ -223,10 +225,8 @@ def run_engine(conn, cur):
 
             elapsed_stage = (today - stage_start).days if stage_start is not None else 0
 
-            rem_by_progress = stage_duration * (1 - ratio)
-            rem_by_time = stage_duration - elapsed_stage
-
-            rem_stage = max(rem_by_progress, rem_by_time)
+            rem_stage = max(stage_duration * (1 - ratio),
+                            stage_duration - elapsed_stage)
 
             stage_display = "Completed" if rem_stage <= 0 else f"{int(rem_stage)} days"
         else:
@@ -245,7 +245,7 @@ def run_engine(conn, cur):
         # ===== SLA =====
         sla = config_map.get(house)
         if sla:
-            expected = pd.to_datetime(sla)
+            expected = pd.to_datetime(sla).tz_localize("Asia/Kolkata")
             d = (predicted_finish - expected).days
 
             status = "🟢 On Track" if d < 0 else "🟢 On Time" if d == 0 else "🔴 Delay"
