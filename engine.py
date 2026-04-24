@@ -94,8 +94,8 @@ def run_engine(conn, cur):
     df = pd.DataFrame(cur.fetchall(), columns=["house","stage","start","end"])
 
     if not df.empty:
-        df["start"] = pd.to_datetime(df["start"])
-        df["end"] = pd.to_datetime(df["end"])
+        df["start"] = pd.to_datetime(df["start"]).dt.tz_localize("Asia/Kolkata")
+        df["end"] = pd.to_datetime(df["end"]).dt.tz_localize("Asia/Kolkata")
         house_group = df.groupby("house")
     else:
         house_group = {}
@@ -114,7 +114,7 @@ def run_engine(conn, cur):
         columns=["house","stage","status","time"])
 
     if not latest_df.empty:
-        latest_df["time"] = pd.to_datetime(latest_df["time"])
+        latest_df["time"] = pd.to_datetime(latest_df["time"]).dt.tz_localize("Asia/Kolkata")
 
     # ================= PROGRESS =================
     cur.execute("""
