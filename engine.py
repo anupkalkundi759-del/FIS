@@ -142,12 +142,12 @@ def run_engine(conn, cur):
     for house in total_map.keys():
 
         house_data = house_group.get_group(house) if house in house_group else pd.DataFrame()
-
         total_products = total_map.get(house, 0)
+
         earned_duration = 0
         stage_delays = []
 
-        # ===== MULTI STAGE =====
+        # ===== CURRENT STAGE =====
         h_latest = latest_df[latest_df["house"] == house]
 
         if not h_latest.empty:
@@ -164,7 +164,7 @@ def run_engine(conn, cur):
             current_stage = "Not Started"
             base_stage = None
 
-        # ===== PROGRESS =====
+        # ===== PHYSICAL PROGRESS =====
         for _, row in activity_df.iterrows():
             stage = row["stage"]
             duration = row["days"]
@@ -184,10 +184,20 @@ def run_engine(conn, cur):
                         stage_delay_summary[stage]["delay"] += delay
                         stage_delay_summary[stage]["count"] += 1
 
-        progress = (earned_duration / total_duration) * 100 if total_duration else 0
+        # ===== TIME PROGRESS =====
+        if not house_data.empty:
+            project_start = house_data["start"].min()
+        else:
+            project_start = today
 
-        # ===== DYNAMIC PREDICTION =====
-        remaining_total_days = int(total_duration - earned_duration)
+        days_elapsed = max(0, (today - project_start).days)
+
+        progress_physical = earned_duration / total_duration if total_duration else 0
+        progress_time = days_elapsed / total_duration if total_duration else 0
+
+        progress = max(progress_physical, progress_time)
+
+        remaining_total_days = max(0, int(total_duration * (1 - progress)))
         predicted_finish = today + timedelta(days=remaining_total_days)
 
         # ===== STAGE REMAINING =====
@@ -195,32 +205,29 @@ def run_engine(conn, cur):
             stage_duration = activity_df[activity_df["stage"] == base_stage]["days"].values
             stage_duration = int(stage_duration[0]) if len(stage_duration)>0 else 1
 
-            completed = stage_map.get((house, base_stage), 0)
-            ratio = completed / total_products if total_products else 0
-            rem_stage = int(stage_duration * (1 - ratio))
+            stage_start = house_data[house_data["stage"] == base_stage]["start"]
+
+            if not stage_start.empty:
+                days_in_stage = (today - stage_start.iloc[0]).days
+                rem_stage = max(0, stage_duration - days_in_stage)
+            else:
+                rem_stage = stage_duration
 
             stage_display = "Completed" if rem_stage <= 0 else f"{rem_stage} days"
         else:
             stage_display = "-"
 
         last = house_data["end"].max() if not house_data.empty else predicted_finish
-        actual_finish = last.date() if progress >= 99 else "Not Finished"
+        actual_finish = last.date() if progress >= 0.99 else "Not Finished"
 
-        delay_days = max(0, (today - predicted_finish).days)
-
-        reason = "on track"
-        if stage_delays:
-            s, d = max(stage_delays, key=lambda x: x[1])
-            reason = f"{s} delay ({d}d)"
-
-        # ===== SLA =====
+        # ===== SLA DELAY =====
         sla = config_map.get(house)
         if sla:
             expected = pd.to_datetime(sla)
-            d = (predicted_finish - expected).days
+            delay_days = (predicted_finish - expected).days
 
-            status = "🟢 On Track" if d < 0 else "🟢 On Time" if d == 0 else "🔴 Delay"
-            impact = "On Time" if d == 0 else f"{'Ahead by' if d<0 else 'Miss by'} {abs(d)} days"
+            status = "🟢 On Track" if delay_days < 0 else "🟢 On Time" if delay_days == 0 else "🔴 Delay"
+            impact = "On Time" if delay_days == 0 else f"{'Ahead by' if delay_days<0 else 'Miss by'} {abs(delay_days)} days"
 
             sla_results.append({
                 "House": house,
@@ -231,10 +238,17 @@ def run_engine(conn, cur):
                 "Impact": impact
             })
         else:
+            delay_days = 0
+
+            reason = "on track"
+            if stage_delays:
+                s, d = max(stage_delays, key=lambda x: x[1])
+                reason = f"{s} delay ({d}d)"
+
             results.append({
                 "House": house,
                 "Stage": current_stage,
-                "Progress %": round(progress,1),
+                "Progress %": round(progress*100,1),
                 "Predicted Finish": predicted_finish.date(),
                 "Actual Finish": actual_finish,
                 "Remaining (Stage)": stage_display,
