@@ -161,7 +161,7 @@ def show_product_tracking(conn, cur):
             COUNT(*) AS total,
             COUNT(CASE WHEN s.stage_name = 'Dispatch' AND ls.status = 'Completed' THEN 1 END) AS completed,
             COUNT(*) - COUNT(CASE WHEN s.stage_name = 'Dispatch' AND ls.status = 'Completed' THEN 1 END) AS remaining,
-            COUNT(CASE WHEN s.stage_name = 'Design & Engineering' THEN 1 END) AS Design & Engineering,
+            COUNT(CASE WHEN s.stage_name = 'Design & Engineering' THEN 1 END) AS design & engineering,
             COUNT(CASE WHEN s.stage_name = 'Production' THEN 1 END) AS production,
             COUNT(CASE WHEN s.stage_name = 'Pre Assembly' THEN 1 END) AS pre_assembly,
             COUNT(CASE WHEN s.stage_name = 'Polishing' THEN 1 END) AS polishing,
