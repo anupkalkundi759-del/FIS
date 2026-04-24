@@ -161,11 +161,13 @@ def show_product_tracking(conn, cur):
             COUNT(*) AS total,
             COUNT(CASE WHEN s.stage_name = 'Dispatch' AND ls.status = 'Completed' THEN 1 END) AS completed,
             COUNT(*) - COUNT(CASE WHEN s.stage_name = 'Dispatch' AND ls.status = 'Completed' THEN 1 END) AS remaining,
-            COUNT(CASE WHEN s.stage_name = 'Design & Engineering' THEN 1 END) AS design & engineering,
-            COUNT(CASE WHEN s.stage_name = 'Production' THEN 1 END) AS production,
-            COUNT(CASE WHEN s.stage_name = 'Pre Assembly' THEN 1 END) AS pre_assembly,
-            COUNT(CASE WHEN s.stage_name = 'Polishing' THEN 1 END) AS polishing,
-            COUNT(CASE WHEN s.stage_name = 'Final Assembly' THEN 1 END) AS final_assembly
+
+            COUNT(CASE WHEN s.stage_name = 'Design & Engineering' THEN 1 END) AS "Design & Engineering",
+            COUNT(CASE WHEN s.stage_name = 'Production' THEN 1 END) AS "Production",
+            COUNT(CASE WHEN s.stage_name = 'Pre Assembly' THEN 1 END) AS "Pre Assembly",
+            COUNT(CASE WHEN s.stage_name = 'Polishing' THEN 1 END) AS "Polishing",
+            COUNT(CASE WHEN s.stage_name = 'Final Assembly' THEN 1 END) AS "Final Assembly"
+
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
         JOIN houses h ON p.house_id = h.house_id
