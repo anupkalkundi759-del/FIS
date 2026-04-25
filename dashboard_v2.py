@@ -1,7 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -11,10 +9,35 @@ def show_dashboard_v2(conn, cur):
     tz = ZoneInfo("Asia/Kolkata")
     today = datetime.now(tz)
 
-    st.markdown("""
-    <h1 style='font-size:38px; font-weight:800;'>🧠 OPERAFLOW CONTROL TOWER</h1>
-    <p style='color:gray; font-size:16px;'>Executive Factory Monitoring • Forecast Risk • Delivery Intelligence</p>
-    """, unsafe_allow_html=True)
+    st.title("📊 Factory Intelligence Dashboard")
+
+    # ================= MASTER COUNTS =================
+    cur.execute("SELECT COUNT(*) FROM projects")
+    total_projects = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM units")
+    total_units = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM houses")
+    total_houses = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM products")
+    total_products = cur.fetchone()[0]
+
+    # ================= PRODUCT STATUS =================
+    cur.execute("""
+        SELECT 
+            COUNT(*) FILTER (WHERE status = 'Completed'),
+            COUNT(*) FILTER (WHERE status = 'Dispatched'),
+            COUNT(*) FILTER (WHERE status = 'In Progress')
+        FROM tracking_log
+    """)
+    completed, dispatched, in_progress = cur.fetchone()
+
+    completed = completed or 0
+    dispatched = dispatched or 0
+    in_progress = in_progress or 0
+    pending = max(0, total_products - completed)
 
     # ================= ACTIVITY MASTER =================
     act = pd.read_sql("""
@@ -49,7 +72,7 @@ def show_dashboard_v2(conn, cur):
         start_df["start"] = pd.to_datetime(start_df["start"], utc=True).dt.tz_convert(tz)
     start_map = dict(zip(start_df["house_no"], start_df["start"])) if not start_df.empty else {}
 
-    # ================= CURRENT LIVE PRODUCT STATUS =================
+    # ================= CURRENT LIVE STATUS =================
     progress_df = pd.read_sql("""
         WITH latest_stage AS (
             SELECT 
@@ -100,7 +123,7 @@ def show_dashboard_v2(conn, cur):
     stage_wip = progress_df.groupby("stage")["total"].sum().to_dict()
     bottleneck_stage = max(stage_wip, key=stage_wip.get)
 
-    # ================= BUILD HOUSE INTELLIGENCE =================
+    # ================= HOUSE INTELLIGENCE =================
     intel = []
     grouped = progress_df.groupby("house_no")
 
@@ -134,10 +157,6 @@ def show_dashboard_v2(conn, cur):
         stage_row = act[act["stage"] == current_stage]
         stage_duration = int(stage_row["days"].values[0]) if not stage_row.empty else 1
 
-        rem_stage = max(0, stage_duration - stage_days_elapsed)
-        if stage_ratio > 0:
-            rem_stage = max(0, int(rem_stage * (1 - stage_ratio)))
-
         remaining_stages = act[act["seq"] >= current_seq]
         downstream_duration = int(remaining_stages["days"].sum())
 
@@ -159,111 +178,84 @@ def show_dashboard_v2(conn, cur):
             delay_days = (predicted_finish - expected).days
 
         reason = "On Track"
-        severity = "Low"
 
         if stage_days_elapsed > stage_duration and stage_ratio < 0.5:
             reason = "Stage Stagnation"
-            severity = "High"
         elif current_stage == bottleneck_stage:
             reason = "Bottleneck Queue"
-            severity = "Medium"
         elif velocity < 1:
             reason = "Low Production Rate"
-            severity = "Medium"
         elif delay_days > 0:
             reason = "SLA Miss Risk"
-            severity = "High"
 
         intel.append({
             "House": house,
             "Current Stage": current_stage,
-            "Progress %": progress_percent,
             "Predicted Finish": predicted_finish.date(),
             "Delay Days": delay_days,
-            "Delay Reason": reason,
-            "Severity": severity
+            "Issue": reason
         })
 
     intel_df = pd.DataFrame(intel)
 
-    # ================= KPI STRIP =================
-    total_houses = len(intel_df)
-    on_track = len(intel_df[intel_df["Delay Reason"] == "On Track"])
-    delayed = len(intel_df[intel_df["Delay Days"] > 0])
-    at_risk = len(intel_df[intel_df["Severity"] != "Low"])
-    dispatch_week = len(intel_df[pd.to_datetime(intel_df["Predicted Finish"]) <= pd.Timestamp(today.date() + timedelta(days=7))])
-    avg_delay = round(intel_df["Delay Days"].clip(lower=0).mean(), 1)
+    # ================= KPI ROW 1 =================
+    k1,k2,k3,k4 = st.columns(4)
+    k1.metric("Projects", total_projects)
+    k2.metric("Units", total_units)
+    k3.metric("Houses", total_houses)
+    k4.metric("Products", total_products)
 
-    c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
-    c1.metric("🏠 Total Houses", total_houses)
-    c2.metric("🟢 On Track", on_track)
-    c3.metric("🔴 Delayed", delayed)
-    c4.metric("⚠️ At Risk", at_risk)
-    c5.metric("🚚 Dispatch 7D", dispatch_week)
-    c6.metric("🚧 Bottleneck", bottleneck_stage)
-    c7.metric("📉 Avg Delay", avg_delay)
+    # ================= KPI ROW 2 =================
+    k5,k6,k7,k8 = st.columns(4)
+    k5.metric("Completed", completed)
+    k6.metric("Dispatched", dispatched)
+    k7.metric("In Progress", in_progress)
+    k8.metric("Pending", pending)
+
+    # ================= KPI ROW 3 =================
+    critical_houses = len(intel_df[intel_df["Issue"] != "On Track"])
+    delayed_houses = len(intel_df[intel_df["Delay Days"] > 0])
+    dispatch_ready = len(intel_df[pd.to_datetime(intel_df["Predicted Finish"]) <= pd.Timestamp(today.date() + timedelta(days=7))])
+
+    k9,k10,k11,k12 = st.columns(4)
+    k9.metric("Critical Houses", critical_houses)
+    k10.metric("Delayed Houses", delayed_houses)
+    k11.metric("Near Dispatch (7D)", dispatch_ready)
+    k12.metric("Bottleneck", bottleneck_stage)
 
     st.markdown("---")
 
-    # ================= VISUAL ROW =================
-    v1,v2,v3 = st.columns(3)
+    # ================= STAGE SUMMARY =================
+    st.subheader("🏭 Stage Summary")
+    stage_summary = progress_df.groupby("stage")["total"].sum().reset_index()
+    stage_summary.columns = ["Stage", "Products in Stage"]
+    st.dataframe(stage_summary, use_container_width=True)
 
-    with v1:
-        sev = intel_df["Severity"].value_counts().reset_index()
-        sev.columns = ["Severity","Count"]
-        fig1 = px.pie(sev, names="Severity", values="Count", hole=0.55, title="Delay Severity")
-        st.plotly_chart(fig1, use_container_width=True)
+    # ================= CRITICAL HOUSE TABLE =================
+    st.subheader("🚨 Critical Houses Requiring Attention")
+    critical_table = intel_df[intel_df["Issue"] != "On Track"].sort_values(["Delay Days"], ascending=False)
+    st.dataframe(critical_table, use_container_width=True)
 
-    with v2:
-        cong = intel_df["Current Stage"].value_counts().reset_index()
-        cong.columns = ["Stage","Count"]
-        fig2 = px.bar(cong, x="Stage", y="Count", title="Stage Congestion")
-        st.plotly_chart(fig2, use_container_width=True)
+    # ================= DISPATCH READY =================
+    st.subheader("🚚 Houses Likely for Dispatch Soon")
+    dispatch_table = intel_df[pd.to_datetime(intel_df["Predicted Finish"]) <= pd.Timestamp(today.date() + timedelta(days=7))]
+    st.dataframe(dispatch_table, use_container_width=True)
 
-    with v3:
-        trend = intel_df.groupby("Predicted Finish").size().reset_index(name="Count")
-        fig3 = px.line(trend, x="Predicted Finish", y="Count", markers=True, title="Forecast Dispatch Trend")
-        st.plotly_chart(fig3, use_container_width=True)
+    # ================= MANAGEMENT NOTES =================
+    st.subheader("🧠 Management Notes")
 
-    # ================= CRITICAL HOUSES =================
-    st.markdown("## 🚨 Critical Houses Requiring Action")
-    critical = intel_df.sort_values(["Severity","Delay Days"], ascending=[False,False]).head(15)
-    st.dataframe(critical, use_container_width=True)
+    notes = []
 
-    # ================= HEATMAP =================
-    st.markdown("## 🌡️ Bottleneck Heatmap")
-    heat = intel_df.groupby(["Current Stage","Severity"]).size().reset_index(name="Count")
-    fig4 = px.density_heatmap(heat, x="Current Stage", y="Severity", z="Count", text_auto=True)
-    st.plotly_chart(fig4, use_container_width=True)
+    if bottleneck_stage:
+        notes.append(f"🚧 Highest work congestion currently at {bottleneck_stage}.")
+    if critical_houses > 0:
+        notes.append(f"⚠️ {critical_houses} houses require immediate supervisory review.")
+    if delayed_houses > 0:
+        notes.append(f"🔴 {delayed_houses} houses are trending beyond SLA target.")
+    if dispatch_ready < 5:
+        notes.append("🚚 Dispatch pipeline is weak for upcoming 7 days.")
+    if not notes:
+        notes.append("🟢 Factory is operating within stable limits.")
 
-    # ================= BASELINE VS FORECAST =================
-    st.markdown("## 📅 Baseline vs Forecast Slippage")
-    slip = intel_df[intel_df["Delay Days"] != 0].copy()
-    if not slip.empty:
-        fig5 = px.bar(slip.head(10), x="Delay Days", y="House", orientation="h",
-                      title="Top Forecast Slippages")
-        st.plotly_chart(fig5, use_container_width=True)
-    else:
-        st.success("No major slippages")
-
-    # ================= MANAGEMENT INTERVENTION =================
-    st.markdown("## 🧠 Today's Management Intervention")
-
-    actions = []
-
-    if bottleneck_stage == "Design & Engineering":
-        actions.append("🚧 Increase Design & Engineering manpower immediately to release upstream congestion.")
-    if delayed > 0:
-        actions.append(f"🔴 {delayed} houses are already beyond SLA forecast. Escalation required.")
-    if at_risk > 10:
-        actions.append(f"⚠️ {at_risk} houses are operationally at risk. Supervisory intervention needed.")
-    if dispatch_week < 5:
-        actions.append("🚚 Dispatch pipeline weak for next 7 days. Review final assembly and dispatch readiness.")
-    if avg_delay > 3:
-        actions.append("📉 Average delay is rising above control threshold. Conduct production recovery review.")
-
-    if not actions:
-        actions.append("🟢 Factory operating within stable control limits.")
-
-    for a in actions:
-        st.info(a)
+    for n in notes:
+        st.info(n)
