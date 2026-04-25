@@ -12,7 +12,7 @@ def show_tracking(conn, cur):
 
     def get_units(project_id):
         if project_id:
-            cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s", (project_id,))
+            cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s ORDER BY unit_name", (project_id,))
         else:
             cur.execute("SELECT unit_id, unit_name FROM units ORDER BY unit_name")
         return cur.fetchall()
@@ -20,27 +20,29 @@ def show_tracking(conn, cur):
     def get_products(house_ids, unit_id):
         if house_ids:
             cur.execute("""
-                SELECT p.product_instance_id, pm.product_code
+                SELECT p.product_instance_id, pm.product_code, h.house_no
                 FROM products p
                 JOIN products_master pm ON p.product_id = pm.product_id
+                JOIN houses h ON p.house_id = h.house_id
                 WHERE p.house_id = ANY(%s)
-                ORDER BY pm.product_code, p.product_instance_id
+                ORDER BY h.house_no, pm.product_code, p.product_instance_id
             """, (house_ids,))
         elif unit_id:
             cur.execute("""
-                SELECT p.product_instance_id, pm.product_code
+                SELECT p.product_instance_id, pm.product_code, h.house_no
                 FROM products p
                 JOIN products_master pm ON p.product_id = pm.product_id
                 JOIN houses h ON p.house_id = h.house_id
                 WHERE h.unit_id = %s
-                ORDER BY pm.product_code, p.product_instance_id
+                ORDER BY h.house_no, pm.product_code, p.product_instance_id
             """, (unit_id,))
         else:
             cur.execute("""
-                SELECT p.product_instance_id, pm.product_code
+                SELECT p.product_instance_id, pm.product_code, h.house_no
                 FROM products p
                 JOIN products_master pm ON p.product_id = pm.product_id
-                ORDER BY pm.product_code, p.product_instance_id
+                JOIN houses h ON p.house_id = h.house_id
+                ORDER BY h.house_no, pm.product_code, p.product_instance_id
             """)
         return cur.fetchall()
 
@@ -99,8 +101,8 @@ def show_tracking(conn, cur):
         st.warning("No products found")
         return
 
-    df = pd.DataFrame(products, columns=["product_instance_id", "product_code"])
-    df["display"] = df["product_code"] + " | ID-" + df["product_instance_id"].astype(str)
+    df = pd.DataFrame(products, columns=["product_instance_id", "product_code", "house_no"])
+    df["display"] = df["house_no"].astype(str) + " • " + df["product_code"]
 
     # ================= SEARCH =================
     search_text = st.text_input("🔍 Filter Products")
@@ -116,7 +118,7 @@ def show_tracking(conn, cur):
         df[["Select", "display"]],
         use_container_width=True,
         hide_index=True,
-        height=300
+        height=320
     )
 
     selected_rows = edited_df[edited_df["Select"] == True]
@@ -131,7 +133,7 @@ def show_tracking(conn, cur):
     # ================= STAGES =================
     stage_sequence = get_stages()
 
-    # ================= GET ALL CURRENT STAGES =================
+    # ================= GET CURRENT LIVE STAGES =================
     cur.execute("""
         WITH latest_stage AS (
             SELECT
@@ -170,7 +172,7 @@ def show_tracking(conn, cur):
     unique_stages = latest_df["stage"].unique().tolist()
 
     if len(unique_stages) > 1:
-        st.warning("⚠️ Mixed live stages detected in selected products. Please use House filter or Product search to select similar stage products only.")
+        st.warning("⚠️ Mixed live stages detected. Please filter by house/search and select similar stage products only.")
         return
 
     current_stage = unique_stages[0]
@@ -202,7 +204,7 @@ def show_tracking(conn, cur):
     selected_stage = st.selectbox("Select Stage", stage_sequence)
     status = st.selectbox("Status", ["In Progress", "Completed"])
 
-    # ================= STRICT VALIDATION =================
+    # ================= VALIDATION =================
     allowed_stages = []
 
     if current_status == "In Progress":
