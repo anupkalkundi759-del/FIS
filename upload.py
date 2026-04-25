@@ -20,6 +20,7 @@ def show_upload(conn, cur):
         eta_box = st.empty()
 
         status.info("⏳ Uploading... Please wait")
+        st.info("ℹ Existing products in uploaded houses will be refreshed.")
 
         df = pd.read_excel(file, engine="openpyxl")
 
@@ -34,10 +35,8 @@ def show_upload(conn, cur):
 
         df = df.dropna(subset=required_cols)
 
-        df["project_name"] = df["project_name"].astype(str).str.strip()
-        df["unit_name"] = df["unit_name"].astype(str).str.strip()
-        df["house_no"] = df["house_no"].astype(str).str.strip()
-        df["product_code"] = df["product_code"].astype(str).str.strip()
+        for c in ["project_name", "unit_name", "house_no", "product_code"]:
+            df[c] = df[c].astype(str).str.strip()
 
         df["product_category"] = df.get("product_category", "").fillna("").astype(str).str.strip()
         df["orientation"] = df.get("orientation", "").fillna("").astype(str).str.strip()
@@ -48,7 +47,6 @@ def show_upload(conn, cur):
             axis=1
         )
 
-        # 🔥 FIX: REMOVE drop_duplicates and use grouping
         df = df.groupby(
             ["project_name", "unit_name", "house_no", "full_code", "orientation", "product_category"],
             as_index=False
@@ -63,6 +61,7 @@ def show_upload(conn, cur):
         product_set = set(df["full_code"])
 
         total_items = int(df["quantity"].sum())
+        refreshed_old_products = 0
 
         st.info(f"📊 Estimated Items: {total_items}")
 
@@ -127,15 +126,26 @@ def show_upload(conn, cur):
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
 
-        # ================= SAFE DELETE =================
+        # ================= SAFE REFRESH OLD HOUSE PRODUCTS =================
         for project_name, unit_name, house_no in house_set:
             unit_id = unit_map[(unit_name, project_map[project_name])]
             house_id = house_map[(house_no, unit_id)]
 
-            cur.execute("""
-                DELETE FROM products
-                WHERE house_id = %s
-            """, (house_id,))
+            cur.execute("SELECT product_instance_id FROM products WHERE house_id = %s", (house_id,))
+            old_products = [r[0] for r in cur.fetchall()]
+
+            if old_products:
+                refreshed_old_products += len(old_products)
+
+                cur.execute("""
+                    DELETE FROM tracking_log
+                    WHERE product_instance_id = ANY(%s)
+                """, (old_products,))
+
+                cur.execute("""
+                    DELETE FROM products
+                    WHERE house_id = %s
+                """, (house_id,))
 
         conn.commit()
 
@@ -184,9 +194,7 @@ def show_upload(conn, cur):
         conn.commit()
 
         progress.progress(100)
-
         total_time = round(time.time() - start_time, 2)
-
         status.empty()
 
         st.success(f"""
@@ -200,7 +208,9 @@ def show_upload(conn, cur):
 - Units: {len(unit_set)}
 - Houses: {len(house_set)}
 - Product Types: {len(product_set)}
-- Total Product Items: {inserted_products}
+- Refreshed Old Products: {refreshed_old_products}
+- Total Product Items Inserted: {inserted_products}
 """)
 
         st.info(f"⚡ Speed: {round(inserted_products / total_time, 2)} items/sec")
+        st.info("ℹ Existing SLA assignments remain unchanged after upload.")
