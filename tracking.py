@@ -109,19 +109,20 @@ def show_tracking(conn, cur):
         df = df[df["display"].str.contains(search_text, case=False, na=False)]
 
     # ================= SELECT ALL =================
-    select_all = st.checkbox("Select All Visible Products", value=True)
+    select_all = st.checkbox("Select All Visible Products", value=False)
     df["Select"] = select_all
 
     edited_df = st.data_editor(
         df[["Select", "display"]],
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        height=300
     )
 
     selected_rows = edited_df[edited_df["Select"] == True]
 
     if selected_rows.empty:
-        st.warning("Select at least one product")
+        st.info("Select products to continue")
         return
 
     selected_ids = df.loc[selected_rows.index, "product_instance_id"].tolist()
@@ -130,7 +131,7 @@ def show_tracking(conn, cur):
     # ================= STAGES =================
     stage_sequence = get_stages()
 
-    # ================= GET ALL CURRENT STAGES OF SELECTED =================
+    # ================= GET ALL CURRENT STAGES =================
     cur.execute("""
         WITH latest_stage AS (
             SELECT
@@ -157,7 +158,6 @@ def show_tracking(conn, cur):
     else:
         latest_df = pd.DataFrame(columns=["pid", "stage", "status"])
 
-    # default for not started products
     missing_ids = set(selected_ids) - set(latest_df["pid"].tolist())
     if missing_ids:
         extra = pd.DataFrame({
@@ -168,12 +168,9 @@ def show_tracking(conn, cur):
         latest_df = pd.concat([latest_df, extra], ignore_index=True)
 
     unique_stages = latest_df["stage"].unique().tolist()
-    unique_status = latest_df["status"].fillna("None").unique().tolist()
 
-    # ================= MIXED STAGE PROTECTION =================
     if len(unique_stages) > 1:
-        st.error("⚠️ Selected products are in mixed current stages. Please select products from same live stage only.")
-        st.dataframe(latest_df[["pid", "stage", "status"]], use_container_width=True)
+        st.warning("⚠️ Mixed live stages detected in selected products. Please use House filter or Product search to select similar stage products only.")
         return
 
     current_stage = unique_stages[0]
