@@ -35,14 +35,16 @@ def remove_white_bg(image_path):
     return img
 
 # ================= SESSION =================
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+defaults = {
+    "logged_in": False,
+    "role": None,
+    "page": "Tracking",
+    "conn": None
+}
 
-if "role" not in st.session_state:
-    st.session_state.role = None
-
-if "page" not in st.session_state:
-    st.session_state.page = "Tracking"
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ================= LOGIN =================
 def login():
@@ -50,18 +52,27 @@ def login():
     st.markdown("""
         <style>
         .stApp { background: #f5f2eb; font-family: 'Segoe UI', sans-serif; }
-        .block-container { padding-top: 3rem; }
+        .block-container { padding-top: 2rem; padding-left: 2rem; padding-right: 2rem; }
 
-        .left-box { text-align: center; margin-top: 5px; }
+        .left-box { text-align: center; margin-top: 15px; }
         .title {
             font-size: 42px;
             margin-top: 3px;
             line-height: 1.2;
             color: #333;
+            font-weight: 700;
         }
         .highlight { color: #f57c00; }
 
-        .right-box { max-width: 420px; margin: auto; }
+        .right-box {
+            max-width: 430px;
+            margin: auto;
+            background: white;
+            padding: 30px;
+            border-radius: 14px;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+        }
+
         .heading { font-size: 28px; font-weight: 700; }
         .subtext { color: #666; margin-bottom: 25px; }
 
@@ -79,20 +90,25 @@ def login():
             font-weight: 600;
             border: none;
         }
+
+        section[data-testid="stSidebar"] {
+            background: #ffffff;
+        }
         </style>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2 = st.columns([1.2, 1])
 
     with col1:
         st.markdown('<div class="left-box">', unsafe_allow_html=True)
         logo = remove_white_bg("logo.png")
-        st.image(logo, width=220)
+        st.image(logo, width=240)
 
         st.markdown("""
             <div class="title">
                 Total Environment <span class="highlight">Machine Craft</span>
             </div>
+            <p style='font-size:18px;color:#666;'>Factory Intelligence & Production Control Platform</p>
         """, unsafe_allow_html=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
@@ -101,7 +117,7 @@ def login():
         st.markdown('<div class="right-box">', unsafe_allow_html=True)
 
         st.markdown('<div class="heading">Sign in to your account</div>', unsafe_allow_html=True)
-        st.markdown('<div class="subtext">Factory Intelligence System — Authorized access only</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subtext">Authorized access only</div>', unsafe_allow_html=True)
 
         u = st.text_input("Username")
         p = st.text_input("Password", type="password")
@@ -120,13 +136,14 @@ def login():
             if u in users and users[u]["password"] == p:
                 st.session_state.logged_in = True
                 st.session_state.role = users[u]["role"]
+                st.success("Login successful")
                 st.rerun()
             else:
                 st.error("Invalid credentials")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-# ===== LOGIN CHECK =====
+# ================= LOGIN CHECK =================
 if not st.session_state.logged_in:
     login()
     st.stop()
@@ -146,19 +163,25 @@ def create_connection():
         return None
 
 def get_db():
-    if "conn" not in st.session_state or st.session_state.conn.closed:
-        st.session_state.conn = create_connection()
-
-    if st.session_state.conn is None:
-        return None, None
-
     try:
+        if st.session_state.conn is None or st.session_state.conn.closed:
+            st.session_state.conn = create_connection()
+
+        if st.session_state.conn is None:
+            return None, None
+
         cur = st.session_state.conn.cursor()
         return st.session_state.conn, cur
-    except:
-        st.session_state.conn.rollback()
-        cur = st.session_state.conn.cursor()
-        return st.session_state.conn, cur
+
+    except Exception:
+        try:
+            st.session_state.conn.rollback()
+        except:
+            pass
+        st.session_state.conn = create_connection()
+        if st.session_state.conn:
+            return st.session_state.conn, st.session_state.conn.cursor()
+        return None, None
 
 conn, cur = get_db()
 
@@ -167,8 +190,9 @@ if conn is None:
 
 # ================= SIDEBAR =================
 with st.sidebar:
-    st.markdown("**OperaFlow**")
-    st.markdown(f"👤 {st.session_state.role.upper()}")
+    st.markdown("## 🧠 OperaFlow")
+    st.markdown(f"**Logged in as:** `{st.session_state.role.upper()}`")
+    st.markdown("---")
 
     if st.session_state.role == "admin":
         pages = [
@@ -187,10 +211,18 @@ with st.sidebar:
             "Product Tracking"
         ]
 
-    page = st.radio("Navigation", pages)
+    page = st.radio("📂 Navigation", pages)
     st.session_state.page = page
 
-    if st.button("🚪 Logout"):
+    st.markdown("---")
+
+    if st.button("🚪 Logout", use_container_width=True):
+        try:
+            if st.session_state.conn:
+                st.session_state.conn.close()
+        except:
+            pass
+
         st.session_state.clear()
         st.rerun()
 
@@ -236,9 +268,15 @@ try:
         show_delete(conn, cur)
 
 except Exception as e:
-    conn.rollback()
+    try:
+        conn.rollback()
+    except:
+        pass
     st.error(f"Error occurred: {e}")
 
 finally:
-    if cur:
-        cur.close()
+    try:
+        if cur:
+            cur.close()
+    except:
+        pass
