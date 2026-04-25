@@ -2,6 +2,12 @@ import streamlit as st
 import psycopg2
 from PIL import Image
 
+st.set_page_config(
+    page_title="OperaFlow",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 # ================= SAFE EXECUTE =================
 def safe_execute(conn, cur, query, params=None):
     try:
@@ -189,8 +195,6 @@ with st.sidebar:
         st.rerun()
 
 # ================= MAIN =================
-st.title("🏭 Factory Intelligence System")
-
 page = st.session_state.page
 
 if st.session_state.role != "admin" and page in [
@@ -210,10 +214,6 @@ try:
     elif page == "Dashboard":
         from dashboard_v2 import show_dashboard_v2
         show_dashboard_v2(conn, cur)
-    
-    elif page == "House Level Overview":
-        from house_level_overview import show_dashboard
-        show_dashboard(conn, cur)
 
     elif page == "House Level Overview":
         from house_level_overview import show_dashboard
@@ -236,7 +236,7 @@ try:
         show_delete(conn, cur)
 
 except Exception as e:
-    conn.rollback()   # 🔥 prevents full app crash
+    conn.rollback()
     st.error(f"Error occurred: {e}")
 
 finally:
