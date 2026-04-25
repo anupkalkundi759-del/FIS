@@ -24,20 +24,31 @@ def show_dashboard_v2(conn, cur):
     cur.execute("SELECT COUNT(*) FROM products")
     total_products = cur.fetchone()[0]
 
-    # ================= PRODUCT STATUS =================
+    # ================= LIVE PRODUCT STATUS ONLY =================
     cur.execute("""
-        SELECT 
+        WITH latest_status AS (
+            SELECT
+                product_instance_id,
+                status,
+                ROW_NUMBER() OVER (
+                    PARTITION BY product_instance_id
+                    ORDER BY timestamp DESC
+                ) AS rn
+            FROM tracking_log
+        )
+        SELECT
             COUNT(*) FILTER (WHERE status = 'Completed'),
             COUNT(*) FILTER (WHERE status = 'Dispatched'),
             COUNT(*) FILTER (WHERE status = 'In Progress')
-        FROM tracking_log
+        FROM latest_status
+        WHERE rn = 1
     """)
     completed, dispatched, in_progress = cur.fetchone()
 
     completed = completed or 0
     dispatched = dispatched or 0
     in_progress = in_progress or 0
-    pending = max(0, total_products - completed)
+    pending = max(0, total_products - (completed + dispatched + in_progress))
 
     # ================= ACTIVITY MASTER =================
     act = pd.read_sql("""
@@ -119,9 +130,9 @@ def show_dashboard_v2(conn, cur):
     progress_df["first_seen_stage"] = pd.to_datetime(progress_df["first_seen_stage"], utc=True, errors="coerce")
     progress_df["first_seen_stage"] = progress_df["first_seen_stage"].dt.tz_convert(tz)
 
-    # ================= BOTTLENECK =================
-    stage_wip = progress_df.groupby("stage")["total"].sum().to_dict()
-    bottleneck_stage = max(stage_wip, key=stage_wip.get)
+    # ================= BOTTLENECK EXCLUDING NOT STARTED =================
+    stage_wip = progress_df[progress_df["stage"] != "Not Started"].groupby("stage")["total"].sum().to_dict()
+    bottleneck_stage = max(stage_wip, key=stage_wip.get) if stage_wip else "No Active Stage"
 
     # ================= HOUSE INTELLIGENCE =================
     intel = []
@@ -151,14 +162,14 @@ def show_dashboard_v2(conn, cur):
         stage_completed = g[g["stage"] == current_stage]["completed"].sum()
         stage_ratio = (stage_completed / stage_total) if stage_total > 0 else 0
 
-        progress = ((current_seq - 1) / len(act)) + (stage_ratio / len(act))
-        progress_percent = round(progress * 100, 1)
-
         stage_row = act[act["stage"] == current_stage]
         stage_duration = int(stage_row["days"].values[0]) if not stage_row.empty else 1
 
         remaining_stages = act[act["seq"] >= current_seq]
         downstream_duration = int(remaining_stages["days"].sum())
+
+        progress = ((current_seq - 1) / len(act)) + (stage_ratio / len(act))
+        progress_percent = round(progress * 100, 1)
 
         velocity = progress_percent / days_elapsed if days_elapsed > 0 else 0
 
@@ -177,23 +188,23 @@ def show_dashboard_v2(conn, cur):
             expected = pd.to_datetime(sla).tz_localize(tz)
             delay_days = (predicted_finish - expected).days
 
-        reason = "On Track"
+        issue = "On Track"
 
         if stage_days_elapsed > stage_duration and stage_ratio < 0.5:
-            reason = "Stage Stagnation"
+            issue = "Stage Stagnation"
         elif current_stage == bottleneck_stage:
-            reason = "Bottleneck Queue"
+            issue = "Bottleneck Queue"
         elif velocity < 1:
-            reason = "Low Production Rate"
+            issue = "Low Production Rate"
         elif delay_days > 0:
-            reason = "SLA Miss Risk"
+            issue = "SLA Miss Risk"
 
         intel.append({
             "House": house,
             "Current Stage": current_stage,
             "Predicted Finish": predicted_finish.date(),
             "Delay Days": delay_days,
-            "Issue": reason
+            "Issue": issue
         })
 
     intel_df = pd.DataFrame(intel)
@@ -246,12 +257,12 @@ def show_dashboard_v2(conn, cur):
 
     notes = []
 
-    if bottleneck_stage:
-        notes.append(f"🚧 Highest work congestion currently at {bottleneck_stage}.")
+    if bottleneck_stage != "No Active Stage":
+        notes.append(f"🚧 Highest live work congestion currently at {bottleneck_stage}.")
     if critical_houses > 0:
-        notes.append(f"⚠️ {critical_houses} houses require immediate supervisory review.")
+        notes.append(f"⚠️ {critical_houses} houses require supervisory review.")
     if delayed_houses > 0:
-        notes.append(f"🔴 {delayed_houses} houses are trending beyond SLA target.")
+        notes.append(f"🔴 {delayed_houses} houses are beyond SLA forecast.")
     if dispatch_ready < 5:
         notes.append("🚚 Dispatch pipeline is weak for upcoming 7 days.")
     if not notes:
