@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from global_loader import load_all_data
 
 
 def show_dashboard_v2(conn, cur):
@@ -11,44 +12,33 @@ def show_dashboard_v2(conn, cur):
 
     st.title("📊 Factory Intelligence Dashboard")
 
+    # ================= GLOBAL FAST CACHE =================
+    cache = load_all_data(conn)
+    live_df = cache["live_df"]
+    start_df = cache["start_df"]
+
+    if live_df.empty:
+        st.warning("No live data available")
+        return
+
     # ================= MASTER COUNTS =================
-    cur.execute("SELECT COUNT(*) FROM projects")
-    total_projects = cur.fetchone()[0]
+    total_projects = live_df["project_name"].nunique()
+    total_units = live_df["unit_name"].nunique()
+    total_houses = live_df["house_no"].nunique()
+    total_products = len(live_df)
 
-    cur.execute("SELECT COUNT(*) FROM units")
-    total_units = cur.fetchone()[0]
+    completed = len(live_df[
+        (live_df["stage_name"] == "Final Assembly") &
+        (live_df["status"] == "Completed")
+    ])
 
-    cur.execute("SELECT COUNT(*) FROM houses")
-    total_houses = cur.fetchone()[0]
+    dispatched = len(live_df[
+        (live_df["stage_name"] == "Dispatch") &
+        (live_df["status"] == "Completed")
+    ])
 
-    cur.execute("SELECT COUNT(*) FROM products")
-    total_products = cur.fetchone()[0]
-
-    # ================= LIVE PRODUCT STATUS ONLY =================
-    cur.execute("""
-        WITH latest_status AS (
-            SELECT
-                product_instance_id,
-                status,
-                ROW_NUMBER() OVER (
-                    PARTITION BY product_instance_id
-                    ORDER BY timestamp DESC
-                ) AS rn
-            FROM tracking_log
-        )
-        SELECT
-            COUNT(*) FILTER (WHERE status = 'Completed'),
-            COUNT(*) FILTER (WHERE status = 'Dispatched'),
-            COUNT(*) FILTER (WHERE status = 'In Progress')
-        FROM latest_status
-        WHERE rn = 1
-    """)
-    completed, dispatched, in_progress = cur.fetchone()
-
-    completed = completed or 0
-    dispatched = dispatched or 0
-    in_progress = in_progress or 0
-    pending = max(0, total_products - (completed + dispatched + in_progress))
+    in_progress = len(live_df[live_df["status"] == "In Progress"])
+    pending = total_products - dispatched
 
     # ================= ACTIVITY MASTER =================
     act = pd.read_sql("""
@@ -70,67 +60,24 @@ def show_dashboard_v2(conn, cur):
     except:
         config_map = {}
 
-    # ================= HOUSE START =================
-    start_df = pd.read_sql("""
-        SELECT h.house_no, MIN(t.timestamp) as start
-        FROM houses h
-        JOIN products p ON p.house_id = h.house_id
-        JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
-        GROUP BY h.house_no
-    """, conn)
-
+    # ================= START MAP =================
     if not start_df.empty:
-        start_df["start"] = pd.to_datetime(start_df["start"], utc=True).dt.tz_convert(tz)
-    start_map = dict(zip(start_df["house_no"], start_df["start"])) if not start_df.empty else {}
+        start_df["start_date"] = pd.to_datetime(start_df["start_date"], utc=True).dt.tz_convert(tz)
+    start_map = dict(zip(start_df["house_no"], start_df["start_date"])) if not start_df.empty else {}
 
     # ================= CURRENT LIVE STATUS =================
-    progress_df = pd.read_sql("""
-        WITH latest_stage AS (
-            SELECT 
-                t.product_instance_id,
-                t.stage_id,
-                t.status,
-                t.timestamp,
-                ROW_NUMBER() OVER (
-                    PARTITION BY t.product_instance_id
-                    ORDER BY t.timestamp DESC
-                ) AS rn
-            FROM tracking_log t
-        ),
-        current_products AS (
-            SELECT
-                h.house_no,
-                p.product_instance_id,
-                COALESCE(s.stage_name, 'Not Started') AS stage,
-                ls.status,
-                ls.timestamp
-            FROM houses h
-            LEFT JOIN products p ON p.house_id = h.house_id
-            LEFT JOIN latest_stage ls
-                ON p.product_instance_id = ls.product_instance_id
-                AND ls.rn = 1
-            LEFT JOIN stages s
-                ON ls.stage_id = s.stage_id
-        )
-        SELECT
-            house_no,
-            stage,
-            COUNT(product_instance_id) AS total,
-            COUNT(CASE WHEN status='Completed' THEN 1 END) AS completed,
-            MIN(timestamp) AS first_seen_stage
-        FROM current_products
-        GROUP BY house_no, stage
-        ORDER BY house_no
-    """, conn)
+    progress_df = live_df.groupby(["house_no", "stage_name"]).agg(
+        total=("product_instance_id", "count"),
+        completed=("status", lambda x: (x == "Completed").sum()),
+        first_seen_stage=("timestamp", "min")
+    ).reset_index()
 
-    if progress_df.empty:
-        st.warning("No tracking data")
-        return
+    progress_df.columns = ["house_no", "stage", "total", "completed", "first_seen_stage"]
 
     progress_df["first_seen_stage"] = pd.to_datetime(progress_df["first_seen_stage"], utc=True, errors="coerce")
     progress_df["first_seen_stage"] = progress_df["first_seen_stage"].dt.tz_convert(tz)
 
-    # ================= BOTTLENECK EXCLUDING NOT STARTED =================
+    # ================= BOTTLENECK =================
     stage_wip = progress_df[progress_df["stage"] != "Not Started"].groupby("stage")["total"].sum().to_dict()
     bottleneck_stage = max(stage_wip, key=stage_wip.get) if stage_wip else "No Active Stage"
 
