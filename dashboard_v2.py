@@ -12,7 +12,7 @@ def show_dashboard_v2(conn, cur):
     today = datetime.now(tz)
 
     st.markdown("""
-    <h1 style='font-size:38px; font-weight:800;'>🧠 OPERAFLOW CPMO CONTROL TOWER</h1>
+    <h1 style='font-size:38px; font-weight:800;'>🧠 OPERAFLOW CONTROL TOWER</h1>
     <p style='color:gray; font-size:16px;'>Executive Factory Monitoring • Forecast Risk • Delivery Intelligence</p>
     """, unsafe_allow_html=True)
 
