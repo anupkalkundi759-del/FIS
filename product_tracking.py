@@ -2,131 +2,215 @@ def show_product_tracking(conn, cur):
     import streamlit as st
     import pandas as pd
 
-    st.title("📦 Product Tracking")
+    st.title("🔎 Product Tracking")
 
-    # ================= FILTERS =================
-    col1, col2, col3, col4 = st.columns(4)
+    # ================= DATA FUNCTIONS =================
+    def get_projects():
+        cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
+        return ["All"] + [p[0] for p in cur.fetchall()]
 
-    with col1:
-        cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
-        projects = cur.fetchall()
-        project_dict = {p[1]: p[0] for p in projects}
-        selected_project = st.selectbox("Project", ["All"] + list(project_dict.keys()))
-        project_id = None if selected_project == "All" else project_dict[selected_project]
-
-    with col2:
-        if project_id:
-            cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s ORDER BY unit_name", (project_id,))
+    def get_units(project):
+        if project == "All":
+            cur.execute("SELECT DISTINCT unit_name FROM units ORDER BY unit_name")
         else:
-            cur.execute("SELECT unit_id, unit_name FROM units ORDER BY unit_name")
-        units = cur.fetchall()
-        unit_dict = {u[1]: u[0] for u in units}
-        selected_unit = st.selectbox("Unit", ["All"] + list(unit_dict.keys()))
-        unit_id = None if selected_unit == "All" else unit_dict[selected_unit]
-
-    with col3:
-        if unit_id:
-            cur.execute("SELECT house_id, house_no FROM houses WHERE unit_id=%s ORDER BY house_no", (unit_id,))
-        elif project_id:
             cur.execute("""
-                SELECT h.house_id, h.house_no
+                SELECT DISTINCT u.unit_name
+                FROM units u
+                JOIN projects p ON u.project_id = p.project_id
+                WHERE p.project_name = %s
+                ORDER BY u.unit_name
+            """, (project,))
+        return ["All"] + [u[0] for u in cur.fetchall()]
+
+    def get_houses(unit):
+        if unit == "All":
+            cur.execute("SELECT DISTINCT house_no FROM houses ORDER BY house_no")
+        else:
+            cur.execute("""
+                SELECT DISTINCT h.house_no
                 FROM houses h
                 JOIN units u ON h.unit_id = u.unit_id
-                WHERE u.project_id=%s
+                WHERE u.unit_name = %s
                 ORDER BY h.house_no
-            """, (project_id,))
-        else:
-            cur.execute("SELECT house_id, house_no FROM houses ORDER BY house_no")
+            """, (unit,))
+        return ["All"] + [h[0] for h in cur.fetchall()]
 
-        houses = cur.fetchall()
-        house_dict = {h[1]: h[0] for h in houses}
-        selected_house = st.selectbox("House", ["All"] + list(house_dict.keys()))
-        house_id = None if selected_house == "All" else house_dict[selected_house]
+    def get_stages():
+        cur.execute("SELECT DISTINCT stage_name FROM stages ORDER BY stage_name")
+        return ["All"] + [s[0] for s in cur.fetchall()]
 
-    with col4:
-        selected_status = st.selectbox("Status", ["All", "In Progress", "Completed", "Dispatched"])
+    # ================= FILTERS =================
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
-    # ================= LATEST LIVE PRODUCT STATUS =================
-    query = """
-    WITH latest_log AS (
-        SELECT
-            product_instance_id,
-            stage_id,
-            status,
-            timestamp,
-            ROW_NUMBER() OVER (
-                PARTITION BY product_instance_id
-                ORDER BY timestamp DESC
-            ) rn
-        FROM tracking_log
-    )
+    selected_project = col1.selectbox("Project", get_projects())
+    selected_unit = col2.selectbox("Unit", get_units(selected_project))
+    selected_house = col3.selectbox("House", get_houses(selected_unit))
+    selected_stage = col4.selectbox("Stage", get_stages())
+    selected_status = col5.selectbox("Status", ["All", "Not Started", "In Progress", "Completed"])
+    search = col6.text_input("Search")
 
-    SELECT
-        h.house_no,
-        pm.product_code,
-        COALESCE(s.stage_name, 'Not Started') AS current_stage,
-        COALESCE(ll.status, 'Not Started') AS current_status,
-        ll.timestamp
+    # ================= MAIN QUERY =================
+    with st.spinner("Loading data..."):
 
-    FROM products p
-    JOIN houses h ON p.house_id = h.house_id
-    JOIN units u ON h.unit_id = u.unit_id
-    JOIN projects prj ON u.project_id = prj.project_id
-    JOIN products_master pm ON p.product_id = pm.product_id
+        query = """
+        WITH latest_stage AS (
+            SELECT DISTINCT ON (product_instance_id)
+                product_instance_id,
+                stage_id,
+                status,
+                timestamp
+            FROM tracking_log
+            ORDER BY product_instance_id, timestamp DESC
+        )
+        SELECT 
+            pm.product_code,
+            pm.product_category,
+            p.orientation,
+            pr.project_name,
+            u.unit_name,
+            h.house_no,
+            COALESCE(s.stage_name, 'Not Started') AS stage,
+            COALESCE(ls.status, 'Not Started') AS status,
+            ls.timestamp
+        FROM products p
+        JOIN products_master pm ON p.product_id = pm.product_id
+        JOIN houses h ON p.house_id = h.house_id
+        JOIN units u ON h.unit_id = u.unit_id
+        JOIN projects pr ON u.project_id = pr.project_id
+        LEFT JOIN latest_stage ls ON ls.product_instance_id = p.product_instance_id
+        LEFT JOIN stages s ON ls.stage_id = s.stage_id
+        WHERE 1=1
+        """
 
-    LEFT JOIN latest_log ll
-        ON p.product_instance_id = ll.product_instance_id
-        AND ll.rn = 1
+        params = []
 
-    LEFT JOIN stages s
-        ON ll.stage_id = s.stage_id
+        if selected_project != "All":
+            query += " AND pr.project_name = %s"
+            params.append(selected_project)
 
-    WHERE 1=1
-    """
+        if selected_unit != "All":
+            query += " AND u.unit_name = %s"
+            params.append(selected_unit)
 
-    params = []
+        if selected_house != "All":
+            query += " AND h.house_no = %s"
+            params.append(selected_house)
 
-    if project_id:
-        query += " AND prj.project_id = %s"
-        params.append(project_id)
+        if selected_stage != "All":
+            query += " AND COALESCE(s.stage_name, 'Not Started') = %s"
+            params.append(selected_stage)
 
-    if unit_id:
-        query += " AND u.unit_id = %s"
-        params.append(unit_id)
+        if selected_status != "All":
+            query += " AND COALESCE(ls.status, 'Not Started') = %s"
+            params.append(selected_status)
 
-    if house_id:
-        query += " AND h.house_id = %s"
-        params.append(house_id)
+        if search:
+            query += " AND pm.product_code ILIKE %s"
+            params.append(f"%{search}%")
 
-    if selected_status != "All":
-        query += " AND COALESCE(ll.status, 'Not Started') = %s"
-        params.append(selected_status)
+        query += " ORDER BY h.house_no, pm.product_code"
 
-    query += " ORDER BY h.house_no, pm.product_code"
+        cur.execute(query, tuple(params))
+        data = cur.fetchall()
 
-    cur.execute(query, tuple(params))
-    rows = cur.fetchall()
-
-    if not rows:
+    if not data:
         st.warning("No data found")
         return
 
-    df = pd.DataFrame(rows, columns=[
-        "House",
-        "Product",
-        "Current Stage",
-        "Current Status",
-        "Last Updated"
+    # ================= DATAFRAME =================
+    df = pd.DataFrame(data, columns=[
+        "Product", "Type", "Orientation",
+        "Project", "Unit", "House",
+        "Stage", "Status", "Timestamp"
     ])
 
-    df["Last Updated"] = pd.to_datetime(df["Last Updated"], errors="coerce").dt.strftime("%d-%m-%Y %I:%M %p")
+    df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
+    df["Date & Time"] = df["Date & Time"].dt.tz_convert("Asia/Kolkata")
+    df["Date & Time"] = df["Date & Time"].dt.strftime("%d-%m-%Y %H:%M")
+    df = df.drop(columns=["Timestamp"])
 
     # ================= KPI =================
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Visible Products", len(df))
-    k2.metric("In Progress", len(df[df["Current Status"] == "In Progress"]))
-    k3.metric("Completed", len(df[df["Current Status"] == "Completed"]))
-    k4.metric("Dispatched", len(df[df["Current Status"] == "Dispatched"]))
+    k2.metric("In Progress", len(df[df["Status"] == "In Progress"]))
+    k3.metric("Completed", len(df[df["Status"] == "Completed"]))
+    k4.metric("Not Started", len(df[df["Status"] == "Not Started"]))
 
-    # ================= TABLE =================
-    st.dataframe(df, use_container_width=True, height=500)
+    st.dataframe(df, use_container_width=True, height=420)
+
+    # ================= BREAKDOWN FILTER =================
+    st.divider()
+    st.subheader("🎯 Breakdown Filters")
+
+    b1, b2 = st.columns(2)
+
+    breakdown_project = b1.selectbox("Project (Breakdown)", get_projects(), key="b_proj")
+    breakdown_unit = b2.selectbox("Unit (Breakdown)", get_units(breakdown_project), key="b_unit")
+
+    # ================= STATUS BREAKDOWN =================
+    st.subheader("📊 Product Status Breakdown")
+
+    with st.spinner("Calculating breakdown..."):
+
+        query2 = """
+        WITH latest_stage AS (
+            SELECT DISTINCT ON (product_instance_id)
+                product_instance_id,
+                stage_id,
+                status
+            FROM tracking_log
+            ORDER BY product_instance_id, timestamp DESC
+        )
+        SELECT 
+            pr.project_name,
+            u.unit_name,
+            pm.product_code,
+            COUNT(*) AS total,
+
+            COUNT(CASE WHEN s.stage_name = 'Dispatch' AND ls.status = 'Completed' THEN 1 END) AS completed,
+
+            COUNT(*) - COUNT(CASE WHEN s.stage_name = 'Dispatch' AND ls.status = 'Completed' THEN 1 END) AS remaining,
+
+            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Design & Engineering' THEN 1 END) AS "Design & Engineering",
+            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Production' THEN 1 END) AS "Production",
+            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Pre Assembly' THEN 1 END) AS "Pre Assembly",
+            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Polishing' THEN 1 END) AS "Polishing",
+            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Final Assembly' THEN 1 END) AS "Final Assembly"
+
+        FROM products p
+        JOIN products_master pm ON p.product_id = pm.product_id
+        JOIN houses h ON p.house_id = h.house_id
+        JOIN units u ON h.unit_id = u.unit_id
+        JOIN projects pr ON u.project_id = pr.project_id
+        LEFT JOIN latest_stage ls ON ls.product_instance_id = p.product_instance_id
+        LEFT JOIN stages s ON ls.stage_id = s.stage_id
+        WHERE 1=1
+        """
+
+        params2 = []
+
+        if breakdown_project != "All":
+            query2 += " AND pr.project_name = %s"
+            params2.append(breakdown_project)
+
+        if breakdown_unit != "All":
+            query2 += " AND u.unit_name = %s"
+            params2.append(breakdown_unit)
+
+        query2 += """
+        GROUP BY pr.project_name, u.unit_name, pm.product_code
+        ORDER BY pr.project_name, u.unit_name, pm.product_code
+        """
+
+        cur.execute(query2, tuple(params2))
+        status_data = cur.fetchall()
+
+    if status_data:
+        status_df = pd.DataFrame(status_data, columns=[
+            "Project", "Unit", "Product",
+            "Total", "Completed", "Remaining",
+            "Design & Engineering", "Production", "Pre Assembly", "Polishing", "Final Assembly"
+        ])
+        st.dataframe(status_df, use_container_width=True, height=420)
+    else:
+        st.warning("No product status data available")
