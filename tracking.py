@@ -5,21 +5,18 @@ def show_tracking(conn, cur):
 
     st.title("🏭 Production Tracker")
 
-    # ================= CACHE FUNCTIONS =================
-    @st.cache_data
+    # ================= DATA FUNCTIONS =================
     def get_projects():
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
         return cur.fetchall()
 
-    @st.cache_data
     def get_units(project_id):
         if project_id:
             cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s", (project_id,))
         else:
-            cur.execute("SELECT unit_id, unit_name FROM units")
+            cur.execute("SELECT unit_id, unit_name FROM units ORDER BY unit_name")
         return cur.fetchall()
 
-    @st.cache_data
     def get_products(house_ids, unit_id):
         if house_ids:
             cur.execute("""
@@ -27,7 +24,7 @@ def show_tracking(conn, cur):
                 FROM products p
                 JOIN products_master pm ON p.product_id = pm.product_id
                 WHERE p.house_id = ANY(%s)
-                ORDER BY pm.product_code
+                ORDER BY pm.product_code, p.product_instance_id
             """, (house_ids,))
         elif unit_id:
             cur.execute("""
@@ -36,18 +33,17 @@ def show_tracking(conn, cur):
                 JOIN products_master pm ON p.product_id = pm.product_id
                 JOIN houses h ON p.house_id = h.house_id
                 WHERE h.unit_id = %s
-                ORDER BY pm.product_code
+                ORDER BY pm.product_code, p.product_instance_id
             """, (unit_id,))
         else:
             cur.execute("""
                 SELECT p.product_instance_id, pm.product_code
                 FROM products p
                 JOIN products_master pm ON p.product_id = pm.product_id
-                ORDER BY pm.product_code
+                ORDER BY pm.product_code, p.product_instance_id
             """)
         return cur.fetchall()
 
-    @st.cache_data
     def get_stages():
         cur.execute("SELECT stage_name FROM stages ORDER BY sequence")
         return [s[0] for s in cur.fetchall()]
@@ -67,7 +63,6 @@ def show_tracking(conn, cur):
         selected_unit = st.selectbox("Select Unit", ["All"] + list(unit_dict.keys()))
         unit_id = None if selected_unit == "All" else unit_dict[selected_unit]
 
-    # ================= ✅ FIXED HOUSE FILTER =================
     with col3:
         if unit_id:
             cur.execute("""
@@ -92,14 +87,9 @@ def show_tracking(conn, cur):
             """)
 
         house_data = cur.fetchall()
-
         house_dict = {h[1]: h[0] for h in house_data}
 
-        selected_houses = st.multiselect(
-            "Select House",
-            options=list(house_dict.keys())
-        )
-
+        selected_houses = st.multiselect("Select House", options=list(house_dict.keys()))
         house_ids = [house_dict[h] for h in selected_houses] if selected_houses else None
 
     # ================= PRODUCTS =================
@@ -110,9 +100,9 @@ def show_tracking(conn, cur):
         return
 
     df = pd.DataFrame(products, columns=["product_instance_id", "product_code"])
-    df["display"] = df["product_code"] + "_" + df.index.astype(str)
+    df["display"] = df["product_code"] + " | ID-" + df["product_instance_id"].astype(str)
 
-    # ================= 🔍 FILTER =================
+    # ================= SEARCH =================
     search_text = st.text_input("🔍 Filter Products")
 
     if search_text:
@@ -122,14 +112,12 @@ def show_tracking(conn, cur):
     select_all = st.checkbox("Select All Visible Products", value=True)
     df["Select"] = select_all
 
-    # ================= DATA EDITOR =================
     edited_df = st.data_editor(
         df[["Select", "display"]],
         use_container_width=True,
         hide_index=True
     )
 
-    # ================= FINAL SELECTION =================
     selected_rows = edited_df[edited_df["Select"] == True]
 
     if selected_rows.empty:
@@ -137,30 +125,59 @@ def show_tracking(conn, cur):
         return
 
     selected_ids = df.loc[selected_rows.index, "product_instance_id"].tolist()
-
     st.success(f"{len(selected_ids)} products selected")
 
     # ================= STAGES =================
     stage_sequence = get_stages()
 
-    # ================= CURRENT STAGE =================
+    # ================= GET ALL CURRENT STAGES OF SELECTED =================
     cur.execute("""
-        SELECT s.stage_name, t.status
-        FROM tracking_log t
-        JOIN stages s ON t.stage_id = s.stage_id
-        WHERE t.product_instance_id = %s
-        ORDER BY t.timestamp DESC
-        LIMIT 1
-    """, (selected_ids[0],))
+        WITH latest_stage AS (
+            SELECT
+                t.product_instance_id,
+                s.stage_name,
+                t.status,
+                ROW_NUMBER() OVER (
+                    PARTITION BY t.product_instance_id
+                    ORDER BY t.timestamp DESC
+                ) AS rn
+            FROM tracking_log t
+            JOIN stages s ON t.stage_id = s.stage_id
+            WHERE t.product_instance_id = ANY(%s)
+        )
+        SELECT product_instance_id, stage_name, status
+        FROM latest_stage
+        WHERE rn = 1
+    """, (selected_ids,))
 
-    result = cur.fetchone()
+    latest_data = cur.fetchall()
 
-    if result:
-        current_stage = result[0]
-        current_status = result[1]
+    if latest_data:
+        latest_df = pd.DataFrame(latest_data, columns=["pid", "stage", "status"])
     else:
-        current_stage = "Not Started"
-        current_status = None
+        latest_df = pd.DataFrame(columns=["pid", "stage", "status"])
+
+    # default for not started products
+    missing_ids = set(selected_ids) - set(latest_df["pid"].tolist())
+    if missing_ids:
+        extra = pd.DataFrame({
+            "pid": list(missing_ids),
+            "stage": ["Not Started"] * len(missing_ids),
+            "status": [None] * len(missing_ids)
+        })
+        latest_df = pd.concat([latest_df, extra], ignore_index=True)
+
+    unique_stages = latest_df["stage"].unique().tolist()
+    unique_status = latest_df["status"].fillna("None").unique().tolist()
+
+    # ================= MIXED STAGE PROTECTION =================
+    if len(unique_stages) > 1:
+        st.error("⚠️ Selected products are in mixed current stages. Please select products from same live stage only.")
+        st.dataframe(latest_df[["pid", "stage", "status"]], use_container_width=True)
+        return
+
+    current_stage = unique_stages[0]
+    current_status = latest_df.iloc[0]["status"]
 
     # ================= NEXT STAGE =================
     if current_stage == "Not Started":
@@ -209,8 +226,8 @@ def show_tracking(conn, cur):
         return
 
     # ================= BULK UPDATE =================
-    if st.button("Update Selected"):
-        with st.spinner("Updating..."):
+    if st.button("Update Selected", use_container_width=True):
+        with st.spinner("Updating selected products..."):
 
             cur.execute("SELECT stage_id FROM stages WHERE stage_name = %s", (selected_stage,))
             stage_id = cur.fetchone()[0]
@@ -228,7 +245,5 @@ def show_tracking(conn, cur):
             )
 
             conn.commit()
-
             st.success(f"{len(selected_ids)} products updated successfully")
-
             st.rerun()
