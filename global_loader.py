@@ -4,7 +4,7 @@ import time
 
 
 @st.cache_data(ttl=20, show_spinner=False)
-def load_all_data(conn):
+def load_all_data(_conn):
 
     # =====================================================
     # MASTER LIVE STATUS TABLE
@@ -54,7 +54,7 @@ def load_all_data(conn):
     ORDER BY h.house_no, pm.product_code
     """
 
-    live_df = pd.read_sql(query, conn)
+    live_df = pd.read_sql(query, _conn)
 
     if not live_df.empty:
         live_df["timestamp"] = pd.to_datetime(live_df["timestamp"], errors="coerce", utc=True)
@@ -136,7 +136,7 @@ def load_all_data(conn):
     GROUP BY h.house_no
     """
 
-    start_df = pd.read_sql(query2, conn)
+    start_df = pd.read_sql(query2, _conn)
 
     if not start_df.empty:
         start_df["start_date"] = pd.to_datetime(start_df["start_date"], errors="coerce", utc=True)
