@@ -169,13 +169,8 @@ def show_tracking(conn, cur):
         })
         latest_df = pd.concat([latest_df, extra], ignore_index=True)
 
-    unique_stages = latest_df["stage"].unique().tolist()
-
-    if len(unique_stages) > 1:
-        st.warning("⚠️ Mixed live stages detected. Please filter by house/search and select similar stage products only.")
-        return
-
-    current_stage = unique_stages[0]
+    # Mixed stage warning removed
+    current_stage = latest_df.iloc[0]["stage"]
     current_status = latest_df.iloc[0]["status"]
 
     # ================= NEXT STAGE =================
