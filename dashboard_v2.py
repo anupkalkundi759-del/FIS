@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -172,7 +171,7 @@ def show_dashboard_v2(conn, cur):
         st.warning("No active houses")
         return
 
-    # ================= TRUE KPI VALUES =================
+    # ================= KPI VALUES =================
     active_projects = intel_df["Project"].nunique()
     active_units = intel_df["Unit"].nunique()
     active_houses = len(intel_df[intel_df["Dispatched"] == False])
@@ -189,7 +188,7 @@ def show_dashboard_v2(conn, cur):
     avg_delay = round(intel_df["Delay"].mean(), 1)
 
     # ================= STAGE ANALYSIS =================
-    stage_analysis = []
+    stage_cards = []
     bottleneck_stage = "No Active Stage"
     high_score = -1
 
@@ -210,33 +209,31 @@ def show_dashboard_v2(conn, cur):
             high_score = score
             bottleneck_stage = stage
 
-        stage_analysis.append([stage, queue, avg_age, alert])
+        stage_cards.append((stage, queue, avg_age, alert))
 
-    stage_df = pd.DataFrame(stage_analysis, columns=["Stage", "Queue", "Avg Aging", "Alert"])
+    # ================= KPI STRIP =================
+    a1,a2,a3,a4 = st.columns(4)
+    a1.metric("Active Projects", active_projects)
+    a2.metric("Active Units", active_units)
+    a3.metric("Houses In Progress", active_houses)
+    a4.metric("Houses Dispatched", dispatched_houses)
 
-    # ================= KPI CARDS =================
-    r1 = st.columns(4)
-    r1[0].metric("Active Projects", active_projects)
-    r1[1].metric("Active Units", active_units)
-    r1[2].metric("Houses In Progress", active_houses)
-    r1[3].metric("Houses Dispatched", dispatched_houses)
+    b1,b2,b3,b4 = st.columns(4)
+    b1.metric("Active Products", active_products)
+    b2.metric("Products Dispatched", dispatched_products)
+    b3.metric("Critical Houses", critical_houses)
+    b4.metric("Avg Delay Days", avg_delay)
 
-    r2 = st.columns(4)
-    r2[0].metric("Active Products", active_products)
-    r2[1].metric("Products Dispatched", dispatched_products)
-    r2[2].metric("Critical Houses", critical_houses)
-    r2[3].metric("Avg Delay Days", avg_delay)
-
-    r3 = st.columns(4)
-    r3[0].metric("SLA Risk Houses", sla_houses)
-    r3[1].metric("Stagnant Houses", stagnant_houses)
-    r3[2].metric("Current Bottleneck", bottleneck_stage)
-    r3[3].metric("Factory Throughput %", throughput)
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("SLA Risk Houses", sla_houses)
+    c2.metric("Stagnant Houses", stagnant_houses)
+    c3.metric("Bottleneck Stage", bottleneck_stage)
+    c4.metric("Factory Throughput %", throughput)
 
     st.markdown("---")
 
-    # ================= PROJECT RANKING =================
-    st.subheader("🔥 Project Performance Ranking")
+    # ================= PROJECT STATUS BLOCK =================
+    st.subheader("🔥 Project Status Overview")
     project_rank = intel_df.groupby("Project").agg({
         "Unit": "nunique",
         "House": "count",
@@ -244,45 +241,67 @@ def show_dashboard_v2(conn, cur):
         "Delay": "mean"
     }).reset_index()
 
-    project_rank.columns = ["Project", "Units Active", "Houses Active", "Houses Dispatched", "Avg Delay"]
-    project_rank["Critical Houses"] = project_rank["Project"].map(
+    project_rank.columns = ["Project", "Units", "Houses", "Dispatched", "AvgDelay"]
+    project_rank["Critical"] = project_rank["Project"].map(
         intel_df[intel_df["Risk"] != "On Track"].groupby("Project")["House"].count()
     ).fillna(0).astype(int)
 
-    st.dataframe(project_rank.sort_values(["Critical Houses", "Avg Delay"], ascending=False), use_container_width=True)
+    for _, r in project_rank.sort_values(["Critical","AvgDelay"], ascending=False).head(5).iterrows():
+        st.info(f"📌 {r['Project']}  | Units:{r['Units']} | Houses:{r['Houses']} | Dispatched:{r['Dispatched']} | Critical:{r['Critical']}")
 
-    # ================= UNIT RANKING =================
-    st.subheader("🏗️ Unit Performance Ranking")
-    unit_rank = intel_df.groupby(["Project", "Unit"]).agg({
-        "House": "count",
-        "Dispatched": "sum",
-        "Delay": "mean"
+    # ================= UNIT STATUS BLOCK =================
+    st.subheader("🏗️ Unit Alert Overview")
+    unit_rank = intel_df.groupby(["Project","Unit"]).agg({
+        "House":"count",
+        "Dispatched":"sum",
+        "Delay":"mean"
     }).reset_index()
 
-    unit_rank.columns = ["Project", "Unit", "Houses Running", "Houses Dispatched", "Avg Delay"]
+    unit_rank.columns = ["Project","Unit","Houses","Dispatched","AvgDelay"]
     unit_rank["Critical"] = unit_rank["Unit"].map(
         intel_df[intel_df["Risk"] != "On Track"].groupby("Unit")["House"].count()
     ).fillna(0).astype(int)
 
-    st.dataframe(unit_rank.sort_values(["Critical", "Avg Delay"], ascending=False), use_container_width=True)
+    for _, r in unit_rank.sort_values(["Critical","AvgDelay"], ascending=False).head(8).iterrows():
+        st.warning(f"🏗️ {r['Project']} → {r['Unit']} | Houses:{r['Houses']} | Dispatched:{r['Dispatched']} | Critical:{r['Critical']}")
 
-    # ================= STAGE BOTTLENECK =================
-    st.subheader("🏭 Stage Bottleneck Analysis")
-    st.dataframe(stage_df, use_container_width=True)
-    st.plotly_chart(px.bar(stage_df, x="Stage", y="Queue", title="Live Factory Queue by Stage"), use_container_width=True)
+    # ================= STAGE CONGESTION BLOCK =================
+    st.subheader("🏭 Stage Congestion Snapshot")
+    scols = st.columns(min(4, len(stage_cards)))
+    for i, (stage, queue, age, alert) in enumerate(stage_cards[:4]):
+        with scols[i]:
+            st.metric(stage, queue)
+            st.caption(f"Aging: {age} d | {alert}")
+
+    if len(stage_cards) > 4:
+        scols2 = st.columns(min(4, len(stage_cards)-4))
+        for j, (stage, queue, age, alert) in enumerate(stage_cards[4:8]):
+            with scols2[j]:
+                st.metric(stage, queue)
+                st.caption(f"Aging: {age} d | {alert}")
+
+    st.markdown("---")
 
     # ================= TOP INTERVENTION HOUSES =================
     st.subheader("🚨 Top Intervention Houses")
-    priority = intel_df[intel_df["Risk"] != "On Track"].sort_values(["Delay", "Stage Age"], ascending=False).head(15)
-    st.dataframe(priority[["Project", "Unit", "House", "Stage", "Stage Age", "Predicted Finish", "Delay", "Risk"]], use_container_width=True)
 
-    # ================= ACTION NOTES =================
+    priority = intel_df[intel_df["Risk"] != "On Track"].sort_values(["Delay","Stage Age"], ascending=False).head(12)
+
+    if priority.empty:
+        st.success("No major intervention houses currently")
+    else:
+        for _, r in priority.iterrows():
+            st.error(f"{r['Project']} → {r['Unit']} → {r['House']} | Stage:{r['Stage']} | Days:{r['Stage Age']} | Delay:{r['Delay']} | {r['Risk']}")
+
+    st.markdown("---")
+
+    # ================= TODAY ACTION ZONE =================
     st.subheader("🧠 Today's Action Zone")
 
-    worst_project = project_rank.sort_values(["Critical Houses", "Avg Delay"], ascending=False).iloc[0]["Project"]
-    worst_unit = unit_rank.sort_values(["Critical", "Avg Delay"], ascending=False).iloc[0]["Unit"]
+    worst_project = project_rank.sort_values(["Critical","AvgDelay"], ascending=False).iloc[0]["Project"]
+    worst_unit = unit_rank.sort_values(["Critical","AvgDelay"], ascending=False).iloc[0]["Unit"]
 
     st.info(f"🚧 Highest intervention required in Project: {worst_project}")
     st.info(f"🏗️ Highest intervention required in Unit: {worst_unit}")
-    st.info(f"⚠️ Current factory bottleneck concentrated at {bottleneck_stage}")
-    st.info(f"📌 {critical_houses + stagnant_houses + sla_houses} houses need immediate supervisory attention")
+    st.info(f"⚠️ Factory bottleneck concentrated at Stage: {bottleneck_stage}")
+    st.info(f"📌 Total {critical_houses + stagnant_houses + sla_houses} houses need immediate supervisory review")
