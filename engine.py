@@ -96,39 +96,31 @@ def run_engine(conn, cur):
         start_df["start"] = pd.to_datetime(start_df["start"], utc=True).dt.tz_convert(tz)
     start_map = dict(zip(start_df["house"], start_df["start"])) if not start_df.empty else {}
 
-    # ================= REAL ACTUAL DISPATCH DATE =================
+    # ================= REAL DISPATCH COMPLETION =================
     cur.execute("""
-        WITH latest_log AS (
-            SELECT
-                p.product_instance_id,
-                h.house_no,
-                s.stage_name,
-                t.status,
-                t.timestamp,
-                ROW_NUMBER() OVER(
-                    PARTITION BY p.product_instance_id
-                    ORDER BY t.timestamp DESC
-                ) rn
-            FROM products p
-            JOIN houses h ON p.house_id = h.house_id
-            LEFT JOIN tracking_log t ON p.product_instance_id = t.product_instance_id
-            LEFT JOIN stages s ON t.stage_id = s.stage_id
-            WHERE h.unit_id = %s
-        )
         SELECT
-            house_no,
-            COUNT(*) as total_products,
-            COUNT(CASE WHEN stage_name='Dispatch' AND status='Completed' THEN 1 END) as dispatched_products,
-            MAX(CASE WHEN stage_name='Dispatch' AND status='Completed' THEN timestamp END) as dispatch_finish
-        FROM latest_log
-        WHERE rn=1
-        GROUP BY house_no
+            h.house_no,
+            COUNT(p.product_instance_id) as total_products,
+            COUNT(CASE WHEN ls.stage_name='Dispatch' THEN 1 END) as dispatched_products,
+            MAX(CASE WHEN ls.stage_name='Dispatch' THEN ls.timestamp END) as dispatch_finish
+        FROM houses h
+        JOIN products p ON p.house_id = h.house_id
+        LEFT JOIN (
+            SELECT
+                t.product_instance_id,
+                s.stage_name,
+                t.timestamp,
+                ROW_NUMBER() OVER(PARTITION BY t.product_instance_id ORDER BY t.timestamp DESC) rn
+            FROM tracking_log t
+            JOIN stages s ON t.stage_id = s.stage_id
+        ) ls ON p.product_instance_id = ls.product_instance_id AND ls.rn=1
+        WHERE h.unit_id=%s
+        GROUP BY h.house_no
     """, (unit_dict[selected_unit],))
 
     dispatch_df = pd.DataFrame(cur.fetchall(), columns=["house","total_products","dispatched_products","dispatch_finish"])
     if not dispatch_df.empty:
-        dispatch_df["dispatch_finish"] = pd.to_datetime(dispatch_df["dispatch_finish"], utc=True, errors="coerce")
-        dispatch_df["dispatch_finish"] = dispatch_df["dispatch_finish"].dt.tz_convert(tz)
+        dispatch_df["dispatch_finish"] = pd.to_datetime(dispatch_df["dispatch_finish"], utc=True, errors="coerce").dt.tz_convert(tz)
     dispatch_map = dispatch_df.set_index("house").to_dict("index") if not dispatch_df.empty else {}
 
     # ================= CURRENT LIVE PRODUCT STATUS =================
@@ -137,6 +129,7 @@ def run_engine(conn, cur):
             SELECT
                 t.product_instance_id,
                 t.stage_id,
+                s.stage_name,
                 t.status,
                 t.timestamp,
                 ROW_NUMBER() OVER (
@@ -144,36 +137,36 @@ def run_engine(conn, cur):
                     ORDER BY t.timestamp DESC
                 ) rn
             FROM tracking_log t
+            JOIN stages s ON t.stage_id = s.stage_id
         ),
         current_products AS (
             SELECT
                 h.house_no,
                 p.product_instance_id,
-                COALESCE(s.stage_name, 'Not Started') AS stage,
-                COALESCE(ls.status, 'Pending') as status,
+                COALESCE(ls.stage_name, 'Not Started') AS stage,
+                COALESCE(ls.status, 'Pending') AS status,
+                ls.stage_id,
                 ls.timestamp
             FROM houses h
             LEFT JOIN products p ON p.house_id = h.house_id
             LEFT JOIN latest_stage ls
                 ON p.product_instance_id = ls.product_instance_id
                 AND ls.rn = 1
-            LEFT JOIN stages s
-                ON ls.stage_id = s.stage_id
             WHERE h.unit_id = %s
         )
         SELECT
             house_no,
             stage,
+            stage_id,
             COUNT(product_instance_id) AS total,
-            COUNT(CASE WHEN status='Completed' THEN 1 END) AS completed,
             MIN(timestamp) AS first_seen_stage,
             MAX(timestamp) AS last_movement
         FROM current_products
-        GROUP BY house_no, stage
+        GROUP BY house_no, stage, stage_id
         ORDER BY house_no
     """, (unit_dict[selected_unit],))
 
-    progress_df = pd.DataFrame(cur.fetchall(), columns=["house","stage","total","completed","first_seen_stage","last_movement"])
+    progress_df = pd.DataFrame(cur.fetchall(), columns=["house","stage","stage_id","total","first_seen_stage","last_movement"])
 
     if progress_df.empty:
         st.warning("No data")
@@ -182,19 +175,20 @@ def run_engine(conn, cur):
     progress_df["first_seen_stage"] = pd.to_datetime(progress_df["first_seen_stage"], utc=True, errors="coerce").dt.tz_convert(tz)
     progress_df["last_movement"] = pd.to_datetime(progress_df["last_movement"], utc=True, errors="coerce").dt.tz_convert(tz)
 
-    # ================= FLOW INTELLIGENCE REAL =================
-    flow_df = progress_df[progress_df["stage"].isin(production_stages)]
-
+    # ================= FLOW INTELLIGENCE (REAL CROSSOVER METHOD) =================
     flow_data = []
     bottleneck_stage = None
-    worst_congestion = -1
+    highest_score = -1
 
     for stage in production_stages:
-        sdf = flow_df[flow_df["stage"] == stage]
-        wip = int(sdf["total"].sum())
-        comp = int(sdf["completed"].sum())
+        current_seq = seq_map.get(stage, 0)
+
+        current_wip = progress_df[progress_df["stage"] == stage]["total"].sum()
+
+        crossed = progress_df[progress_df["stage"].map(lambda x: seq_map.get(x, 0)) > current_seq]["total"].sum()
 
         avg_age = 0
+        sdf = progress_df[progress_df["stage"] == stage]
         if not sdf.empty:
             ages = []
             for _, r in sdf.iterrows():
@@ -202,18 +196,18 @@ def run_engine(conn, cur):
                     ages.append((today - r["first_seen_stage"]).days)
             avg_age = round(sum(ages)/len(ages),1) if ages else 0
 
-        eff = round((comp/wip)*100,1) if wip else 0
+        eff = round((crossed / (current_wip + crossed))*100,1) if (current_wip + crossed) > 0 else 0
 
-        congestion_score = avg_age + (wip - comp)
+        score = current_wip + avg_age
 
-        if wip >= 5 and congestion_score > worst_congestion:
-            worst_congestion = congestion_score
+        if current_wip >= 5 and score > highest_score:
+            highest_score = score
             bottleneck_stage = stage
 
         flow_data.append({
             "Stage": stage,
-            "WIP": wip,
-            "Completed": comp,
+            "WIP": int(current_wip),
+            "Completed": int(crossed),
             "Efficiency %": eff
         })
 
@@ -263,48 +257,41 @@ def run_engine(conn, cur):
         else:
             live = g[g["stage"].isin(production_stages)].copy()
             live["seq"] = live["stage"].map(lambda x: seq_map.get(x, 0))
-            live["pending"] = live["total"] - live["completed"]
 
-            incomplete = live[live["pending"] > 0]
-
-            if incomplete.empty:
-                current_stage_row = live.sort_values(["seq"], ascending=[False]).iloc[0]
-            else:
-                current_stage_row = incomplete.sort_values(["pending","seq"], ascending=[False, True]).iloc[0]
+            current_stage_row = live.sort_values(["seq","total"], ascending=[True, False]).iloc[0]
 
             current_stage = current_stage_row["stage"]
             current_seq = seq_map.get(current_stage, 1)
             stage_duration = day_map.get(current_stage, 1)
 
             stage_total = current_stage_row["total"]
-            stage_completed = current_stage_row["completed"]
-            stage_ratio = stage_completed / stage_total if stage_total else 0
 
             stage_start = current_stage_row["first_seen_stage"] if pd.notna(current_stage_row["first_seen_stage"]) else start_date
             stage_age = max(1, (today - stage_start).days)
 
-            progress = ((current_seq - 1) / len(activity_df)) + (stage_ratio / len(activity_df))
-            progress_percent = round(progress * 100, 1)
+            progress = (current_seq / len(activity_df)) * 100
+            progress_percent = round(progress, 1)
 
-            rem_stage = max(0, int(stage_duration - stage_age))
-            rem_stage = max(0, int(rem_stage * (1 - stage_ratio)))
-            rem_stage_display = "Completed" if rem_stage <= 0 else f"{rem_stage} days"
+            if stage_age < stage_duration:
+                rem_stage = stage_duration - stage_age
+            else:
+                rem_stage = 0
+
+            rem_stage_display = f"{rem_stage} days"
 
             downstream_only = activity_df[activity_df["seq"] > current_seq]["days"].sum()
             rem_total_days = int(rem_stage + downstream_only)
 
             planned_finish = start_date + timedelta(days=total_duration)
-            planned_progress_today = min(100, ((today - start_date).days / total_duration) * 100)
 
-            historical_delay = max(0, int((planned_progress_today - progress_percent) / 4))
-            predicted_finish_dt = planned_finish + timedelta(days=historical_delay + rem_stage)
+            historical_delay = max(0, (today - planned_finish).days)
+            stagnation_penalty = max(0, stage_age - stage_duration)
 
+            predicted_finish_dt = today + timedelta(days=rem_total_days + stagnation_penalty + historical_delay)
             predicted_finish = predicted_finish_dt.date()
             actual_finish = "Not Finished"
 
-            internal_delay = max(0, (today - planned_finish).days)
-            forecast_delay = max(0, (predicted_finish_dt - planned_finish).days)
-            delay_days = max(internal_delay, forecast_delay)
+            delay_days = max(0, (predicted_finish_dt - planned_finish).days)
 
             if house in config_map:
                 sla_delay = (predicted_finish_dt.date() - config_map[house]).days
@@ -314,13 +301,13 @@ def run_engine(conn, cur):
             if pd.notna(current_stage_row["last_movement"]):
                 stagnant_days = (today - current_stage_row["last_movement"]).days
 
-            if delay_days > 7:
+            if delay_days > 10:
                 reason = "Critical Delay"
             elif house in config_map and predicted_finish_dt.date() > config_map[house]:
                 reason = "SLA Miss Risk"
-            elif stagnant_days >= stage_duration:
+            elif stagnant_days >= 3 and stage_age > stage_duration:
                 reason = "No Daily Movement"
-            elif bottleneck_stage == current_stage:
+            elif bottleneck_stage == current_stage and stage_age > stage_duration + 1:
                 reason = "Bottleneck Queue"
             elif stage_age > stage_duration:
                 reason = "Stage Slowdown"
@@ -337,7 +324,7 @@ def run_engine(conn, cur):
                     "Issue": reason
                 })
 
-            if reason in ["Critical Delay","SLA Miss Risk","No Daily Movement","Bottleneck Queue","Stage Slowdown"]:
+            if reason in ["Critical Delay","SLA Miss Risk","No Daily Movement"]:
                 early.append({
                     "House": house,
                     "Stage": current_stage,
