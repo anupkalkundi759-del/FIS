@@ -1,7 +1,6 @@
 def run_engine(conn, cur):
     import streamlit as st
     import pandas as pd
-    import numpy as np
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
 
@@ -10,6 +9,7 @@ def run_engine(conn, cur):
     tz = ZoneInfo("Asia/Kolkata")
     today = datetime.now(tz)
 
+    # ================= HOUSE CONFIG TABLE =================
     cur.execute("""
         CREATE TABLE IF NOT EXISTS house_config (
             house_no TEXT PRIMARY KEY,
@@ -18,314 +18,299 @@ def run_engine(conn, cur):
     """)
     conn.commit()
 
+    # ================= ACTIVITY MASTER =================
     cur.execute("""
         SELECT activity_name, sequence_order, duration_days
         FROM activity_master
         ORDER BY sequence_order
     """)
     act = cur.fetchall()
-    activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
 
+    activity_df = pd.DataFrame(act, columns=["stage", "seq", "days"])
     if activity_df.empty:
-        st.error("No activity master found")
+        st.error("No activities found")
         return
 
+    activity_df["days"] = activity_df["days"].astype(int)
     total_duration = int(activity_df["days"].sum())
     seq_map = dict(zip(activity_df["stage"], activity_df["seq"]))
-    dur_map = dict(zip(activity_df["stage"], activity_df["days"]))
-    stage_list = activity_df["stage"].tolist()
+    day_map = dict(zip(activity_df["stage"], activity_df["days"]))
 
-    f1, f2, f3, f4 = st.columns(4)
+    production_stages = [s for s in activity_df["stage"].tolist() if s.lower() not in ["dispatch"]]
 
-    with f1:
+    # ================= SLA UI =================
+    st.subheader("⚙️ SLA Assignment")
+    c1, c2, c3, c4, c5 = st.columns([2,2,2,2,1])
+
+    with c1:
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
         projects = cur.fetchall()
-        project_dict = {"All": None, **{p[1]: p[0] for p in projects}}
+        project_dict = {p[1]: p[0] for p in projects}
         selected_project = st.selectbox("Project", list(project_dict.keys()))
-        project_id = project_dict[selected_project]
 
-    with f2:
-        if project_id:
-            cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s ORDER BY unit_name", (project_id,))
-        else:
-            cur.execute("SELECT unit_id, unit_name FROM units ORDER BY unit_name")
+    with c2:
+        cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s ORDER BY unit_name",
+                    (project_dict[selected_project],))
         units = cur.fetchall()
-        unit_dict = {"All": None, **{u[1]: u[0] for u in units}}
+        unit_dict = {u[1]: u[0] for u in units}
         selected_unit = st.selectbox("Unit", list(unit_dict.keys()))
-        unit_id = unit_dict[selected_unit]
 
-    with f3:
-        if unit_id:
-            cur.execute("SELECT house_no FROM houses WHERE unit_id=%s ORDER BY house_no", (unit_id,))
-        elif project_id:
-            cur.execute("""
-                SELECT h.house_no
-                FROM houses h
-                JOIN units u ON h.unit_id = u.unit_id
-                WHERE u.project_id=%s
-                ORDER BY h.house_no
-            """, (project_id,))
-        else:
-            cur.execute("SELECT house_no FROM houses ORDER BY house_no")
-        house_opts = [h[0] for h in cur.fetchall()]
-        selected_house = st.selectbox("House Filter", ["All"] + house_opts)
+    with c3:
+        cur.execute("SELECT house_no FROM houses WHERE unit_id=%s ORDER BY house_no",
+                    (unit_dict[selected_unit],))
+        houses = [h[0] for h in cur.fetchall()]
+        selected_house = st.selectbox("House", houses)
 
-    with f4:
-        st.markdown("### SLA Assignment")
-        sla_house = st.selectbox("SLA House", house_opts, key="sla_house")
+    with c4:
         sla_date = st.date_input("SLA Date")
 
+    with c5:
         if st.button("Save SLA"):
-            cur.execute("""
-                INSERT INTO house_config (house_no, sla_date)
-                VALUES (%s, %s)
-                ON CONFLICT (house_no)
-                DO UPDATE SET sla_date = EXCLUDED.sla_date
-            """, (sla_house, sla_date))
-            conn.commit()
-            st.success("SLA Saved")
+            if sla_date < today.date():
+                st.error("SLA cannot be in past")
+            else:
+                cur.execute("""
+                    INSERT INTO house_config (house_no, sla_date)
+                    VALUES (%s, %s)
+                    ON CONFLICT (house_no)
+                    DO UPDATE SET sla_date = EXCLUDED.sla_date
+                """, (selected_house, sla_date))
+                conn.commit()
+                st.success("Saved")
 
     cur.execute("SELECT house_no, sla_date FROM house_config")
-    sla_map = {r[0]: r[1] for r in cur.fetchall()}
+    config_map = {r[0]: r[1] for r in cur.fetchall()}
 
-    where_sql = ""
-    params = []
+    # ================= HOUSE START DATE =================
+    cur.execute("""
+        SELECT h.house_no, MIN(t.timestamp)
+        FROM houses h
+        JOIN products p ON p.house_id = h.house_id
+        JOIN tracking_log t ON t.product_instance_id = p.product_instance_id
+        WHERE h.unit_id = %s
+        GROUP BY h.house_no
+    """, (unit_dict[selected_unit],))
 
-    if selected_house != "All":
-        where_sql += " AND h.house_no = %s"
-        params.append(selected_house)
-    elif unit_id:
-        where_sql += " AND h.unit_id = %s"
-        params.append(unit_id)
-    elif project_id:
-        where_sql += " AND u.project_id = %s"
-        params.append(project_id)
+    start_df = pd.DataFrame(cur.fetchall(), columns=["house", "start"])
+    if not start_df.empty:
+        start_df["start"] = pd.to_datetime(start_df["start"], utc=True).dt.tz_convert(tz)
+    start_map = dict(zip(start_df["house"], start_df["start"])) if not start_df.empty else {}
 
-    query = f"""
+    # ================= CURRENT LIVE PRODUCT STATUS =================
+    cur.execute("""
+        WITH latest_stage AS (
+            SELECT
+                t.product_instance_id,
+                t.stage_id,
+                t.status,
+                t.timestamp,
+                ROW_NUMBER() OVER (
+                    PARTITION BY t.product_instance_id
+                    ORDER BY t.timestamp DESC
+                ) rn
+            FROM tracking_log t
+        ),
+
+        current_products AS (
+            SELECT
+                h.house_no,
+                p.product_instance_id,
+                COALESCE(s.stage_name, 'Not Started') AS stage,
+                ls.status,
+                ls.timestamp
+            FROM houses h
+            LEFT JOIN products p ON p.house_id = h.house_id
+            LEFT JOIN latest_stage ls
+                ON p.product_instance_id = ls.product_instance_id
+                AND ls.rn = 1
+            LEFT JOIN stages s
+                ON ls.stage_id = s.stage_id
+            WHERE h.unit_id = %s
+        )
+
         SELECT
-            p.product_instance_id,
-            h.house_no,
-            s.stage_name,
-            s.sequence,
-            t.status,
-            t.timestamp
-        FROM tracking_log t
-        JOIN products p ON t.product_instance_id = p.product_instance_id
-        JOIN houses h ON p.house_id = h.house_id
-        JOIN units u ON h.unit_id = u.unit_id
-        JOIN stages s ON t.stage_id = s.stage_id
-        WHERE 1=1 {where_sql}
-        ORDER BY t.timestamp
-    """
+            house_no,
+            stage,
+            COUNT(product_instance_id) AS total,
+            COUNT(CASE WHEN status='Completed' THEN 1 END) AS completed,
+            MIN(timestamp) AS first_seen_stage
+        FROM current_products
+        GROUP BY house_no, stage
+        ORDER BY house_no
+    """, (unit_dict[selected_unit],))
 
-    cur.execute(query, tuple(params))
-    raw = cur.fetchall()
+    progress_df = pd.DataFrame(cur.fetchall(), columns=["house","stage","total","completed","first_seen_stage"])
 
-    if not raw:
-        st.warning("No tracking history found")
+    if progress_df.empty:
+        st.warning("No data")
         return
 
-    hist = pd.DataFrame(raw, columns=["pid", "house", "stage", "seq", "status", "timestamp"])
-    hist["timestamp"] = pd.to_datetime(hist["timestamp"], utc=True).dt.tz_convert(tz)
+    progress_df["first_seen_stage"] = pd.to_datetime(progress_df["first_seen_stage"], utc=True, errors="coerce")
+    progress_df["first_seen_stage"] = progress_df["first_seen_stage"].dt.tz_convert(tz)
 
-    latest = hist.sort_values("timestamp").groupby("pid").tail(1).copy()
-    house_total_products = latest.groupby("house")["pid"].count().to_dict()
-    house_last_move = hist.groupby("house")["timestamp"].max().to_dict()
+    # ================= FLOW INTELLIGENCE =================
+    flow_df = progress_df[progress_df["stage"].isin(production_stages)]
 
-    seven_days = today - timedelta(days=7)
-    recent_completed = hist[(hist["status"] == "Completed") & (hist["timestamp"] >= seven_days)]
-    throughput_map = recent_completed.groupby("house")["pid"].count().to_dict()
+    stage_wip = flow_df.groupby("stage")["total"].sum().to_dict()
+    stage_completed_dict = flow_df.groupby("stage")["completed"].sum().to_dict()
 
-    flow_data = []
+    stage_rate = {}
     bottleneck_stage = None
-    bottleneck_score = -999
+    min_rate = float("inf")
 
-    for stg in stage_list:
-        stage_hist = hist[hist["stage"] == stg]
-        current_wip = len(latest[(latest["stage"] == stg) & (latest["status"] != "Completed")])
-        entered_7d = len(stage_hist[stage_hist["timestamp"] >= seven_days])
-        exited_7d = len(stage_hist[(stage_hist["status"] == "Completed") & (stage_hist["timestamp"] >= seven_days)])
-        live_wait = latest[(latest["stage"] == stg) & (latest["status"] != "Completed")]
+    for stage in stage_wip:
+        total = stage_wip.get(stage, 0)
+        comp = stage_completed_dict.get(stage, 0)
+        rate = comp / total if total else 0
+        stage_rate[stage] = rate
 
-        if not live_wait.empty:
-            avg_wait = round((today - live_wait["timestamp"]).dt.days.mean(), 1)
-        else:
-            avg_wait = 0
+        if total >= 5 and rate < min_rate:
+            min_rate = rate
+            bottleneck_stage = stage
 
-        efficiency = round((exited_7d / entered_7d) * 100, 1) if entered_7d > 0 else 100
-        queue_pressure = current_wip + entered_7d - exited_7d
-        score = queue_pressure + avg_wait
-
-        if score > bottleneck_score:
-            bottleneck_score = score
-            bottleneck_stage = stg
-
-        flow_data.append({
-            "Stage": stg,
-            "WIP": current_wip,
-            "Entered 7d": entered_7d,
-            "Exited 7d": exited_7d,
-            "Avg Wait Days": avg_wait,
-            "Efficiency %": efficiency,
-            "Queue Pressure": queue_pressure
-        })
-
-    flow_df = pd.DataFrame(flow_data)
-
+    # ================= ENGINE =================
     results = []
-    priority_rows = []
-    warning_rows = []
+    sla_results = []
+    early = []
 
-    for house in sorted(latest["house"].unique()):
-        house_latest = latest[latest["house"] == house].copy()
-        total_products = house_total_products.get(house, 0)
+    grouped = progress_df.groupby("house")
 
-        stage_pending = {}
-        for stg in stage_list:
-            pending = len(house_latest[(house_latest["stage"] == stg) & (house_latest["status"] != "Completed")])
-            stage_pending[stg] = pending
+    for house, g in grouped:
 
-        non_zero = {k: v for k, v in stage_pending.items() if v > 0}
+        active = g.copy()
+        active["seq"] = active["stage"].map(lambda x: seq_map.get(x, 0))
+        current_stage_row = active.sort_values(["seq", "first_seen_stage"], ascending=[False, False]).iloc[0]
+        current_stage = current_stage_row["stage"]
 
-        if non_zero:
-            dominant_stage = max(non_zero.items(), key=lambda x: x[1])[0]
+        start_date = start_map.get(house, today)
+        if pd.isna(start_date):
+            start_date = today
+
+        days_elapsed = max(1, (today - start_date).days)
+
+        # ===== NOT STARTED HANDLING =====
+        if current_stage == "Not Started":
+            predicted_finish = "Awaiting Start"
+            actual_finish = "Not Finished"
+            rem_stage_display = "Not Started"
+            rem_total_days = total_duration
+            delay_days = 0
+            reason = "Awaiting Start"
+            progress_percent = 0
+
         else:
-            dominant_stage = "Dispatch"
+            stage_start = current_stage_row["first_seen_stage"]
+            if pd.isna(stage_start):
+                stage_start = start_date
 
-        earned = 0
-        for _, row in house_latest.iterrows():
-            stg = row["stage"]
-            status = row["status"]
+            stage_days_elapsed = max(1, (today - stage_start).days)
 
-            if stg in seq_map:
-                prev_stages = activity_df[activity_df["seq"] < seq_map[stg]]["days"].sum()
-                earned += prev_stages
-                if status == "Completed":
-                    earned += dur_map[stg]
-                else:
-                    earned += dur_map[stg] * 0.5
+            current_seq = seq_map.get(current_stage, 1)
+            stage_duration = day_map.get(current_stage, 1)
 
-        total_possible = total_products * total_duration if total_products > 0 else 1
-        progress_percent = round((earned / total_possible) * 100, 1)
+            stage_total = g[g["stage"] == current_stage]["total"].sum()
+            stage_completed = g[g["stage"] == current_stage]["completed"].sum()
+            stage_ratio = (stage_completed / stage_total) if stage_total > 0 else 0
 
-        idle_days = (today - house_last_move[house]).days
+            progress = ((current_seq - 1) / len(activity_df)) + (stage_ratio / len(activity_df))
+            progress_percent = round(progress * 100, 1)
 
-        throughput = throughput_map.get(house, 0) / 7
-        throughput = round(max(throughput, 0.3), 2)
+            rem_stage = max(0, stage_duration - stage_days_elapsed)
+            if stage_ratio > 0:
+                rem_stage = max(0, int(rem_stage * (1 - stage_ratio)))
 
-        remaining_work = total_possible - earned
-        remaining_days = int(max(1, remaining_work / max(throughput, 0.3) / 3))
+            rem_stage_display = "Completed" if rem_stage <= 0 else f"{rem_stage} days"
 
-        predicted_finish = (today + timedelta(days=remaining_days)).date()
+            downstream_only = activity_df[activity_df["seq"] > current_seq]["days"].sum()
+            rem_total_days = int(rem_stage + downstream_only)
 
-        actual_finish = "Not Finished"
-        dispatch_done = len(house_latest[(house_latest["stage"] == "Dispatch") & (house_latest["status"] == "Completed")])
+            # smoothing based on actual elapsed factory time
+            if days_elapsed > 0 and progress_percent > 0:
+                expected_progress = min(100, (days_elapsed / total_duration) * 100)
+                lag_factor = max(0, expected_progress - progress_percent)
+                rem_total_days += int(lag_factor / 10)
 
-        if dispatch_done == total_products and total_products > 0:
-            actual_finish = house_last_move[house].date()
+            predicted_finish = today + timedelta(days=rem_total_days)
+            actual_finish = predicted_finish.date() if progress_percent >= 99 else "Not Finished"
 
-        delay_days = 0
-        expected = None
-        if house in sla_map:
-            expected = pd.to_datetime(sla_map[house]).date()
-            delay_days = (predicted_finish - expected).days
+            delay_days = 0
+            if house in config_map:
+                expected = pd.to_datetime(config_map[house]).tz_localize(tz)
+                delay_days = (predicted_finish - expected).days
 
-        pending_stage_qty = stage_pending.get(dominant_stage, 0)
-        stage_remaining_days = max(1, int((pending_stage_qty / max(total_products,1)) * dur_map.get(dominant_stage,1)))
+            # ===== SMART REASON =====
+            if delay_days > 3:
+                reason = "Critical Delay"
+            elif delay_days > 0:
+                reason = "SLA Miss Risk"
+            elif stage_days_elapsed > stage_duration + 1 and stage_ratio < 0.4:
+                reason = "Stage Slowdown"
+            elif bottleneck_stage == current_stage:
+                reason = "Bottleneck Queue"
+            elif progress_percent < ((days_elapsed / total_duration) * 100) * 0.7:
+                reason = "Low Production Rate"
+            else:
+                reason = "On Track"
 
-        reasons = []
+            if house in config_map:
+                sla_results.append({
+                    "House": house,
+                    "Stage": current_stage,
+                    "SLA": expected.date(),
+                    "Predicted": predicted_finish.date(),
+                    "Delay": delay_days,
+                    "Issue": reason
+                })
 
-        if delay_days > 3:
-            reasons.append("Critical SLA Risk")
-        elif delay_days > 0:
-            reasons.append("SLA Miss Risk")
-
-        if idle_days >= 3:
-            reasons.append("No Movement")
-
-        if dominant_stage == bottleneck_stage:
-            reasons.append("Bottleneck Hold")
-
-        if throughput <= 0.5:
-            reasons.append("Slow Throughput")
-
-        if not reasons:
-            reasons.append("On Track")
-
-        delay_reason = ", ".join(reasons)
-
-        risk_score = max(delay_days, 0) + idle_days + (5 if dominant_stage == bottleneck_stage else 0) + (3 if throughput <= 0.5 else 0)
+            # ===== EARLY WARNING ONLY REAL RISKS =====
+            if reason in ["Critical Delay", "SLA Miss Risk", "Stage Slowdown", "Bottleneck Queue"]:
+                early.append({
+                    "House": house,
+                    "Stage": current_stage,
+                    "Issue": reason,
+                    "Predicted Finish": predicted_finish.date()
+                })
 
         results.append({
             "House": house,
-            "Stage": dominant_stage,
+            "Stage": current_stage,
             "Progress %": progress_percent,
-            "Products": f"{dispatch_done}/{total_products}",
-            "Avg Daily Throughput": throughput,
-            "Predicted Finish": predicted_finish,
+            "Predicted Finish": predicted_finish if isinstance(predicted_finish, str) else predicted_finish.date(),
             "Actual Finish": actual_finish,
-            "Remaining (Stage)": f"{stage_remaining_days} days",
-            "Remaining (Total)": f"{remaining_days} days",
-            "Idle Days": idle_days,
+            "Remaining (Stage)": rem_stage_display,
+            "Remaining (Total)": f"{rem_total_days} days",
             "Delay (Days)": delay_days,
-            "Delay Reason": delay_reason,
-            "Risk Score": risk_score
+            "Delay Reason": reason
         })
 
-        if house in sla_map:
-            priority_rows.append({
-                "House": house,
-                "Stage": dominant_stage,
-                "SLA": expected,
-                "Predicted": predicted_finish,
-                "Delay": delay_days,
-                "Idle": idle_days,
-                "Risk": risk_score,
-                "Issue": delay_reason
-            })
-
-        if (delay_days > 0 or idle_days >= 3 or dominant_stage == bottleneck_stage or throughput <= 0.5):
-            warning_rows.append({
-                "House": house,
-                "Stage": dominant_stage,
-                "Idle Days": idle_days,
-                "Predicted Finish": predicted_finish,
-                "Issue": delay_reason
-            })
-
-    result_df = pd.DataFrame(results)
-
-    total_houses = len(result_df)
-    critical = len(result_df[result_df["Risk Score"] >= 8])
-    ontrack = len(result_df[result_df["Delay Reason"] == "On Track"])
-    avg_tp = round(result_df["Avg Daily Throughput"].mean(), 2) if not result_df.empty else 0
-
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Total Houses", total_houses)
-    k2.metric("Critical Houses", critical)
-    k3.metric("On Track", ontrack)
-    k4.metric("Avg Throughput", avg_tp)
-    k5.metric("Current Bottleneck", bottleneck_stage)
-
+    # ================= OUTPUT =================
     st.subheader("🏠 House Intelligence")
-    st.dataframe(result_df.sort_values("Risk Score", ascending=False), use_container_width=True, height=420)
+    st.dataframe(pd.DataFrame(results), use_container_width=True, height=350)
 
     st.subheader("🚨 Priority Table (SLA Only)")
-    if priority_rows:
-        pri_df = pd.DataFrame(priority_rows).sort_values(["Risk", "Delay"], ascending=False)
-        st.dataframe(pri_df, use_container_width=True, height=260)
+    if sla_results:
+        sla_df = pd.DataFrame(sla_results).sort_values("Delay", ascending=False)
+        st.dataframe(sla_df, use_container_width=True, height=220)
     else:
         st.info("No SLA monitored houses")
 
     st.subheader("🏭 Flow Intelligence")
-    st.dataframe(flow_df, use_container_width=True, height=300)
+    flow_data = []
+    for stage in stage_wip:
+        flow_data.append({
+            "Stage": stage,
+            "WIP": stage_wip.get(stage, 0),
+            "Completed": stage_completed_dict.get(stage, 0),
+            "Efficiency %": round(stage_rate.get(stage, 0) * 100, 1)
+        })
+
+    st.dataframe(pd.DataFrame(flow_data), use_container_width=True, height=250)
 
     if bottleneck_stage:
-        st.error(f"🚨 Current Bottleneck Stage: {bottleneck_stage}")
+        st.error(f"🚨 Bottleneck Stage: {bottleneck_stage}")
 
     st.subheader("🚨 Early Warning")
-    if warning_rows:
-        warn_df = pd.DataFrame(warning_rows).sort_values("Idle Days", ascending=False)
-        st.dataframe(warn_df, use_container_width=True, height=260)
+    if early:
+        st.dataframe(pd.DataFrame(early), use_container_width=True, height=250)
     else:
-        st.success("No major operational risks detected")
+        st.success("No major risks")
