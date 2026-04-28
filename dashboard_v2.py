@@ -10,7 +10,7 @@ def show_dashboard_v2(conn, cur):
     tz = ZoneInfo("Asia/Kolkata")
     today = datetime.now(tz)
 
-    st.title("📊 Factory Intelligence Dashboard")
+    st.title("📊 Factory War Room Dashboard")
 
     # ================= ACTIVITY MASTER =================
     act = pd.read_sql("""
@@ -80,7 +80,7 @@ def show_dashboard_v2(conn, cur):
     start_df["start"] = pd.to_datetime(start_df["start"], utc=True, errors="coerce").dt.tz_convert(tz)
     start_map = dict(zip(start_df["house_no"], start_df["start"])) if not start_df.empty else {}
 
-    # ================= HOUSE INTELLIGENCE (DOMINANT STAGE MODEL) =================
+    # ================= HOUSE INTELLIGENCE =================
     house_rows = []
 
     for house, g in live_df.groupby("house_no"):
@@ -97,7 +97,6 @@ def show_dashboard_v2(conn, cur):
         dispatch_count = int(stage_count[stage_count["stage"] == "Dispatch"]["product_instance_id"].sum()) if "Dispatch" in stage_count["stage"].values else 0
         dispatch_ratio = dispatch_count / total_products if total_products > 0 else 0
 
-        # ===== House considered dispatched if 90% products reached dispatch
         if dispatch_ratio >= 0.90:
             current_stage = "Dispatch"
             predicted_finish = today.date()
@@ -107,10 +106,10 @@ def show_dashboard_v2(conn, cur):
             dispatched = True
         else:
             current_stage = dominant_stage
-
             current_seq = seq_map.get(current_stage, 1)
 
             stage_rows = g[g["stage"] == current_stage]
+
             if stage_rows["timestamp"].notna().any():
                 stage_enter = stage_rows["timestamp"].min()
                 stage_last = stage_rows["timestamp"].max()
@@ -140,7 +139,7 @@ def show_dashboard_v2(conn, cur):
                 delay_days = max(delay_days, (predicted_finish - config_map[house]).days)
 
             risk = "On Track"
-            if delay_days > 10:
+            if delay_days > 7:
                 risk = "Critical Delay"
             elif sla_risk:
                 risk = "SLA Risk"
@@ -163,7 +162,8 @@ def show_dashboard_v2(conn, cur):
             "Predicted Finish": predicted_finish,
             "Delay": delay_days,
             "Risk": risk,
-            "Dispatched": dispatched
+            "Dispatched": dispatched,
+            "Total Products": total_products
         })
 
     intel_df = pd.DataFrame(house_rows)
@@ -172,20 +172,16 @@ def show_dashboard_v2(conn, cur):
         st.warning("No active houses")
         return
 
-    # ================= KPI VALUES =================
+    # ================= TRUE KPI VALUES =================
     active_projects = intel_df["Project"].nunique()
     active_units = intel_df["Unit"].nunique()
     active_houses = len(intel_df[intel_df["Dispatched"] == False])
     dispatched_houses = len(intel_df[intel_df["Dispatched"] == True])
 
-    active_products = len(live_df[live_df["stage"] != "Dispatch"])
-    dispatched_products = len(live_df[live_df["stage"] == "Dispatch"])
-    throughput = round((dispatched_products / len(live_df)) * 100, 1) if len(live_df) > 0 else 0
+    active_products = int(intel_df[intel_df["Dispatched"] == False]["Total Products"].sum())
+    dispatched_products = int(intel_df[intel_df["Dispatched"] == True]["Total Products"].sum())
 
-    near_dispatch = len(intel_df[
-        (intel_df["Dispatched"] == False) &
-        (pd.to_datetime(intel_df["Predicted Finish"]) <= pd.Timestamp(today.date() + timedelta(days=7)))
-    ])
+    throughput = round((dispatched_products / (active_products + dispatched_products)) * 100, 1) if (active_products + dispatched_products) > 0 else 0
 
     critical_houses = len(intel_df[intel_df["Risk"] == "Critical Delay"])
     sla_houses = len(intel_df[intel_df["Risk"] == "SLA Risk"])
@@ -204,10 +200,8 @@ def show_dashboard_v2(conn, cur):
 
         queue = len(sdf)
         avg_age = round((today - sdf["timestamp"].min()).days, 1) if sdf["timestamp"].notna().any() else 0
-        crossed = len(live_df[live_df["stage"].map(lambda x: seq_map.get(x, 0)) > seq_map.get(stage, 0)])
-        throughput_stage = round((crossed / (queue + crossed)) * 100, 1) if (queue + crossed) > 0 else 0
-
         score = queue + avg_age
+
         alert = "Stable"
         if avg_age > day_map.get(stage, 1):
             alert = "Slow"
@@ -216,9 +210,9 @@ def show_dashboard_v2(conn, cur):
             high_score = score
             bottleneck_stage = stage
 
-        stage_analysis.append([stage, queue, avg_age, throughput_stage, alert])
+        stage_analysis.append([stage, queue, avg_age, alert])
 
-    stage_df = pd.DataFrame(stage_analysis, columns=["Stage", "Queue", "Avg Aging", "Throughput %", "Alert"])
+    stage_df = pd.DataFrame(stage_analysis, columns=["Stage", "Queue", "Avg Aging", "Alert"])
 
     # ================= KPI CARDS =================
     r1 = st.columns(4)
@@ -230,66 +224,65 @@ def show_dashboard_v2(conn, cur):
     r2 = st.columns(4)
     r2[0].metric("Active Products", active_products)
     r2[1].metric("Products Dispatched", dispatched_products)
-    r2[2].metric("Factory Throughput %", throughput)
-    r2[3].metric("Near Dispatch 7D", near_dispatch)
+    r2[2].metric("Critical Houses", critical_houses)
+    r2[3].metric("Avg Delay Days", avg_delay)
 
     r3 = st.columns(4)
-    r3[0].metric("Critical Houses", critical_houses)
-    r3[1].metric("SLA Risk Houses", sla_houses)
-    r3[2].metric("Stagnant Houses", stagnant_houses)
-    r3[3].metric("Avg Delay Days", avg_delay)
+    r3[0].metric("SLA Risk Houses", sla_houses)
+    r3[1].metric("Stagnant Houses", stagnant_houses)
+    r3[2].metric("Current Bottleneck", bottleneck_stage)
+    r3[3].metric("Factory Throughput %", throughput)
 
-    st.error(f"🚨 Current Bottleneck Stage: {bottleneck_stage}")
     st.markdown("---")
 
-    # ================= PROJECT HOTSPOT =================
-    st.subheader("🔥 Project Hotspot Analysis")
-    hotspot = intel_df.groupby("Project").agg({
+    # ================= PROJECT RANKING =================
+    st.subheader("🔥 Project Performance Ranking")
+    project_rank = intel_df.groupby("Project").agg({
         "Unit": "nunique",
         "House": "count",
         "Dispatched": "sum",
         "Delay": "mean"
     }).reset_index()
 
-    hotspot.columns = ["Project", "Units Active", "Houses Active", "Houses Dispatched", "Avg Delay"]
-    hotspot["Critical"] = hotspot["Project"].map(
+    project_rank.columns = ["Project", "Units Active", "Houses Active", "Houses Dispatched", "Avg Delay"]
+    project_rank["Critical Houses"] = project_rank["Project"].map(
         intel_df[intel_df["Risk"] != "On Track"].groupby("Project")["House"].count()
     ).fillna(0).astype(int)
 
-    st.dataframe(hotspot.sort_values("Critical", ascending=False), use_container_width=True)
-    st.plotly_chart(px.bar(hotspot, x="Project", y="Critical", title="Project Critical House Load"), use_container_width=True)
+    st.dataframe(project_rank.sort_values(["Critical Houses", "Avg Delay"], ascending=False), use_container_width=True)
 
-    # ================= STAGE FLOW =================
-    st.subheader("🏭 Stage Wise Flow Analysis")
+    # ================= UNIT RANKING =================
+    st.subheader("🏗️ Unit Performance Ranking")
+    unit_rank = intel_df.groupby(["Project", "Unit"]).agg({
+        "House": "count",
+        "Dispatched": "sum",
+        "Delay": "mean"
+    }).reset_index()
+
+    unit_rank.columns = ["Project", "Unit", "Houses Running", "Houses Dispatched", "Avg Delay"]
+    unit_rank["Critical"] = unit_rank["Unit"].map(
+        intel_df[intel_df["Risk"] != "On Track"].groupby("Unit")["House"].count()
+    ).fillna(0).astype(int)
+
+    st.dataframe(unit_rank.sort_values(["Critical", "Avg Delay"], ascending=False), use_container_width=True)
+
+    # ================= STAGE BOTTLENECK =================
+    st.subheader("🏭 Stage Bottleneck Analysis")
     st.dataframe(stage_df, use_container_width=True)
-    st.plotly_chart(px.bar(stage_df, x="Stage", y="Queue", title="Live Stage Queue"), use_container_width=True)
+    st.plotly_chart(px.bar(stage_df, x="Stage", y="Queue", title="Live Factory Queue by Stage"), use_container_width=True)
 
-    # ================= TOP PRIORITY HOUSES =================
-    st.subheader("🚨 Top Priority Houses")
-    priority = intel_df[intel_df["Risk"].isin(["Critical Delay", "SLA Risk", "Stagnant"])].sort_values(["Delay", "Stage Age"], ascending=False).head(15)
+    # ================= TOP INTERVENTION HOUSES =================
+    st.subheader("🚨 Top Intervention Houses")
+    priority = intel_df[intel_df["Risk"] != "On Track"].sort_values(["Delay", "Stage Age"], ascending=False).head(15)
     st.dataframe(priority[["Project", "Unit", "House", "Stage", "Stage Age", "Predicted Finish", "Delay", "Risk"]], use_container_width=True)
 
-    # ================= DISPATCH PIPELINE =================
-    st.subheader("🚚 Dispatch Pipeline (Next 7 Days)")
-    dispatch_table = intel_df[
-        (intel_df["Dispatched"] == False) &
-        (pd.to_datetime(intel_df["Predicted Finish"]) <= pd.Timestamp(today.date() + timedelta(days=7)))
-    ]
-    st.dataframe(dispatch_table[["Project", "Unit", "House", "Stage", "Predicted Finish", "Delay"]], use_container_width=True)
+    # ================= ACTION NOTES =================
+    st.subheader("🧠 Today's Action Zone")
 
-    # ================= MANAGEMENT NOTES =================
-    st.subheader("🧠 Management Notes")
+    worst_project = project_rank.sort_values(["Critical Houses", "Avg Delay"], ascending=False).iloc[0]["Project"]
+    worst_unit = unit_rank.sort_values(["Critical", "Avg Delay"], ascending=False).iloc[0]["Unit"]
 
-    notes = []
-    notes.append(f"🚧 Major production congestion detected at {bottleneck_stage}.")
-    if critical_houses > 0:
-        notes.append(f"🔴 {critical_houses} houses are under severe delay requiring intervention.")
-    if stagnant_houses > 0:
-        notes.append(f"⏸️ {stagnant_houses} houses show no effective movement beyond planned duration.")
-    if near_dispatch < 5:
-        notes.append("🚚 Dispatch pipeline is weak for upcoming 7 days.")
-    if avg_delay > 5:
-        notes.append(f"⚠️ Average house delay currently elevated at {avg_delay} days.")
-
-    for n in notes:
-        st.info(n)
+    st.info(f"🚧 Highest intervention required in Project: {worst_project}")
+    st.info(f"🏗️ Highest intervention required in Unit: {worst_unit}")
+    st.info(f"⚠️ Current factory bottleneck concentrated at {bottleneck_stage}")
+    st.info(f"📌 {critical_houses + stagnant_houses + sla_houses} houses need immediate supervisory attention")
