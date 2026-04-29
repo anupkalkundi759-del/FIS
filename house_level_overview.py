@@ -4,6 +4,16 @@ def show_dashboard(conn, cur):
 
     st.title("📊 Workflow Intelligence Monitor")
 
+    workflow_stages = [
+        "Measurement",
+        "Cutting List",
+        "Production",
+        "Pre Assembly",
+        "Polishing",
+        "Final Assembly",
+        "Dispatch"
+    ]
+
     # ================= LIVE PRODUCT STAGE QUERY =================
     query = """
     WITH latest_log AS (
@@ -55,36 +65,20 @@ def show_dashboard(conn, cur):
         "Product", "Type", "Orientation", "Current Stage"
     ])
 
-    workflow_stages = [
-        "Measurement",
-        "Cutting List",
-        "Production",
-        "Pre Assembly",
-        "Polishing",
-        "Final Assembly",
-        "Dispatch"
-    ]
-
     # ================= FILTERS =================
     st.subheader("📌 Drilldown Filters")
 
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        selected_project = st.selectbox(
-            "Select Project",
-            ["All"] + sorted(df["Project"].unique().tolist())
-        )
+        selected_project = st.selectbox("Select Project", ["All"] + sorted(df["Project"].unique().tolist()))
 
     temp1 = df.copy()
     if selected_project != "All":
         temp1 = temp1[temp1["Project"] == selected_project]
 
     with c2:
-        selected_unit = st.selectbox(
-            "Select Unit",
-            ["All"] + sorted(temp1["Unit"].unique().tolist())
-        )
+        selected_unit = st.selectbox("Select Unit", ["All"] + sorted(temp1["Unit"].unique().tolist()))
 
     temp2 = temp1.copy()
     if selected_unit != "All":
@@ -98,16 +92,63 @@ def show_dashboard(conn, cur):
     if selected_houses:
         temp3 = temp3[temp3["House"].astype(str).isin(selected_houses)]
 
+    # ================= TRUE MASTER COUNTS =================
+    if selected_project == "All":
+        cur.execute("SELECT COUNT(*) FROM projects")
+        total_projects = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM units")
+        total_units = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM houses")
+        total_houses = cur.fetchone()[0]
+
+    elif selected_unit == "All":
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM units u
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s
+        """, (selected_project,))
+        total_units = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM houses h
+            JOIN units u ON h.unit_id = u.unit_id
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s
+        """, (selected_project,))
+        total_houses = cur.fetchone()[0]
+
+        total_projects = 1
+
+    else:
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM houses h
+            JOIN units u ON h.unit_id = u.unit_id
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s AND u.unit_name = %s
+        """, (selected_project, selected_unit))
+        total_houses = cur.fetchone()[0]
+
+        total_projects = 1
+        total_units = 1
+
+    if selected_houses:
+        total_houses = len(selected_houses)
+
     # ================= KPI =================
     st.subheader("📈 Live Workflow Summary")
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Projects", temp3["Project"].nunique())
-    k2.metric("Units", temp3["Unit"].nunique())
-    k3.metric("Houses", temp3["House"].nunique())
+    k1.metric("Projects", total_projects)
+    k2.metric("Units", total_units)
+    k3.metric("Houses", total_houses)
     k4.metric("Total Products", len(temp3))
 
-    # ================= MAIN SMART TABLE =================
+    # ================= LEVEL 1 =================
     if selected_project == "All":
 
         st.subheader("🏗 Project Workflow Distribution")
@@ -126,16 +167,16 @@ def show_dashboard(conn, cur):
                 summary[stage] = 0
 
         summary["Total Products"] = summary[workflow_stages].sum(axis=1)
-
         summary = summary[["Project", "Total Products"] + workflow_stages]
 
-        st.dataframe(summary, use_container_width=True, height=320)
+        st.dataframe(summary, use_container_width=True, height=300)
 
+    # ================= LEVEL 2 =================
     elif selected_unit == "All":
 
         st.subheader("🏢 Unit Workflow Distribution")
 
-        summary = pd.pivot_table(
+        unit_summary = pd.pivot_table(
             temp1,
             index="Unit",
             columns="Current Stage",
@@ -145,26 +186,49 @@ def show_dashboard(conn, cur):
         ).reset_index()
 
         for stage in workflow_stages:
-            if stage not in summary.columns:
-                summary[stage] = 0
+            if stage not in unit_summary.columns:
+                unit_summary[stage] = 0
 
         house_count = temp1.groupby("Unit")["House"].nunique().reset_index(name="Houses")
         total_products = temp1.groupby("Unit")["Product"].count().reset_index(name="Total Products")
 
-        summary = summary.merge(house_count, on="Unit")
-        summary = summary.merge(total_products, on="Unit")
+        unit_summary = unit_summary.merge(house_count, on="Unit")
+        unit_summary = unit_summary.merge(total_products, on="Unit")
 
-        summary = summary[["Unit", "Houses", "Total Products"] + workflow_stages]
+        unit_summary = unit_summary[["Unit", "Houses", "Total Products"] + workflow_stages]
 
-        st.dataframe(summary, use_container_width=True, height=320)
+        st.dataframe(unit_summary, use_container_width=True, height=260)
 
+        st.subheader("🏠 House Workflow Distribution")
+
+        house_summary = pd.pivot_table(
+            temp1,
+            index="House",
+            columns="Current Stage",
+            values="Product",
+            aggfunc="count",
+            fill_value=0
+        ).reset_index()
+
+        for stage in workflow_stages:
+            if stage not in house_summary.columns:
+                house_summary[stage] = 0
+
+        total_products_house = temp1.groupby("House")["Product"].count().reset_index(name="Total Products")
+        house_summary = house_summary.merge(total_products_house, on="House")
+
+        house_summary = house_summary[["House", "Total Products"] + workflow_stages]
+
+        st.dataframe(house_summary, use_container_width=True, height=320)
+
+    # ================= LEVEL 3 =================
     else:
 
         st.subheader("🧩 Product Workflow Distribution")
 
-        summary = pd.pivot_table(
+        product_summary = pd.pivot_table(
             temp3,
-            index=["Product"],
+            index="Product",
             columns="Current Stage",
             values="House",
             aggfunc="count",
@@ -172,14 +236,13 @@ def show_dashboard(conn, cur):
         ).reset_index()
 
         for stage in workflow_stages:
-            if stage not in summary.columns:
-                summary[stage] = 0
+            if stage not in product_summary.columns:
+                product_summary[stage] = 0
 
         total_qty = temp3.groupby("Product")["Product"].count().reset_index(name="Total Qty")
-        summary = summary.merge(total_qty, on="Product")
+        product_summary = product_summary.merge(total_qty, on="Product")
 
-        summary = summary[["Product", "Total Qty"] + workflow_stages]
+        product_summary = product_summary[["Product", "Total Qty"] + workflow_stages]
+        product_summary = product_summary.sort_values("Total Qty", ascending=False)
 
-        summary = summary.sort_values("Total Qty", ascending=False)
-
-        st.dataframe(summary, use_container_width=True, height=450)
+        st.dataframe(product_summary, use_container_width=True, height=450)
