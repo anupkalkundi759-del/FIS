@@ -5,6 +5,7 @@ def show_dashboard(conn, cur):
     st.title("📊 Workflow Intelligence Monitor")
 
     workflow_stages = [
+        "No Product Loaded",
         "Not Started",
         "Measurement",
         "Cutting List",
@@ -17,7 +18,7 @@ def show_dashboard(conn, cur):
 
     stage_rank = {s: i for i, s in enumerate(workflow_stages)}
 
-    # ===================== MASTER COUNTS =====================
+    # ================= MASTER COUNTS =================
     cur.execute("SELECT COUNT(*) FROM projects")
     master_projects = cur.fetchone()[0]
 
@@ -30,15 +31,16 @@ def show_dashboard(conn, cur):
     cur.execute("SELECT COUNT(*) FROM products")
     master_products = cur.fetchone()[0]
 
-    # ===================== LIVE WORKFLOW QUERY =====================
+    # ================= LIVE WORKFLOW QUERY =================
     query = """
     WITH latest_tracking AS (
         SELECT
-            t.product_instance_id,
+            t.house_id,
+            t.product_id,
             s.stage_name,
             t.status,
             ROW_NUMBER() OVER (
-                PARTITION BY t.product_instance_id
+                PARTITION BY t.house_id, t.product_id
                 ORDER BY t.timestamp DESC
             ) AS rn
         FROM tracking_log t
@@ -49,18 +51,28 @@ def show_dashboard(conn, cur):
         p.project_name,
         u.unit_name,
         h.house_no,
-        pm.product_code,
-        COALESCE(lt.stage_name, 'Not Started') AS current_stage,
+        COALESCE(pm.product_code, 'NO PRODUCT') AS product_code,
+
+        COALESCE(
+            lt.stage_name,
+            CASE
+                WHEN pr.id IS NULL THEN 'No Product Loaded'
+                ELSE 'Not Started'
+            END
+        ) AS current_stage,
+
         COALESCE(lt.status, 'Pending') AS current_status
 
-    FROM products pr
-    JOIN products_master pm ON pr.product_id = pm.product_id
-    JOIN houses h ON pr.house_id = h.house_id
+    FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
     JOIN projects p ON u.project_id = p.project_id
 
+    LEFT JOIN products pr ON h.house_id = pr.house_id
+    LEFT JOIN products_master pm ON pr.product_id = pm.product_id
+
     LEFT JOIN latest_tracking lt
-        ON pr.product_instance_id = lt.product_instance_id
+        ON lt.house_id = h.house_id
+        AND lt.product_id = pr.product_id
         AND lt.rn = 1
     """
 
@@ -75,7 +87,7 @@ def show_dashboard(conn, cur):
         "Project", "Unit", "House", "Product", "Current Stage", "Current Status"
     ])
 
-    # ===================== FILTERS =====================
+    # ================= FILTERS =================
     st.subheader("📌 Drilldown Filters")
 
     c1, c2, c3 = st.columns(3)
@@ -83,7 +95,7 @@ def show_dashboard(conn, cur):
     with c1:
         selected_project = st.selectbox(
             "Select Project",
-            ["All"] + sorted(df["Project"].unique().tolist())
+            ["All"] + sorted(df["Project"].dropna().unique().tolist())
         )
 
     temp1 = df.copy()
@@ -93,7 +105,7 @@ def show_dashboard(conn, cur):
     with c2:
         selected_unit = st.selectbox(
             "Select Unit",
-            ["All"] + sorted(temp1["Unit"].unique().tolist())
+            ["All"] + sorted(temp1["Unit"].dropna().unique().tolist())
         )
 
     temp2 = temp1.copy()
@@ -101,29 +113,29 @@ def show_dashboard(conn, cur):
         temp2 = temp2[temp2["Unit"] == selected_unit]
 
     with c3:
-        house_options = sorted(temp2["House"].astype(str).unique().tolist())
+        house_options = sorted(temp2["House"].astype(str).dropna().unique().tolist())
         selected_houses = st.multiselect("Select Houses (Optional)", house_options)
 
     temp3 = temp2.copy()
     if selected_houses:
         temp3 = temp3[temp3["House"].astype(str).isin(selected_houses)]
 
-    # ===================== KPI =====================
+    # ================= KPI =================
     st.subheader("📈 Live Workflow Summary")
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Projects", master_projects if selected_project == "All" else temp3["Project"].nunique())
-    k2.metric("Units", master_units if selected_project == "All" else temp3["Unit"].nunique())
-    k3.metric("Houses", master_houses if selected_project == "All" else temp3["House"].nunique())
-    k4.metric("Total Products", len(temp3))
+    k1.metric("Projects", temp3["Project"].nunique())
+    k2.metric("Units", temp3["Unit"].nunique())
+    k3.metric("Houses", temp3["House"].nunique())
+    k4.metric("Total Products", len(temp3[temp3["Product"] != "NO PRODUCT"]))
 
-    # ===================== STAGE WISE HOUSE PENDING =====================
+    # ================= HOUSE STAGE PENDING SUMMARY =================
     house_bottleneck = temp3.groupby("House")["Current Stage"].apply(
-        lambda x: sorted(list(x), key=lambda y: stage_rank.get(y, 99))[0]
+        lambda x: sorted(list(set(x)), key=lambda y: stage_rank.get(y, 999))[0]
     ).reset_index(name="Bottleneck Stage")
 
-    pending_qty = temp3.groupby("House")["Product"].count().reset_index(name="Pending Products")
-    house_bottleneck = house_bottleneck.merge(pending_qty, on="House")
+    pending_products = temp3[temp3["Current Stage"] != "Dispatch"].groupby("House")["Product"].count().reset_index(name="Pending Products")
+    house_bottleneck = house_bottleneck.merge(pending_products, on="House", how="left").fillna(0)
 
     stage_summary = house_bottleneck.groupby("Bottleneck Stage")["House"].count().reset_index(name="Houses Pending")
 
@@ -135,16 +147,16 @@ def show_dashboard(conn, cur):
     stage_summary = stage_summary.sort_values("rank").drop("rank", axis=1)
 
     st.subheader("🚦 Stage Wise House Pending Summary")
-    st.dataframe(stage_summary, use_container_width=True, height=320)
+    st.dataframe(stage_summary, use_container_width=True, height=340)
 
-    # ===================== HOUSE DETAIL =====================
+    # ================= HOUSE DETAIL =================
     st.subheader("🏠 Which Houses Are Pending In Which Stage")
     house_bottleneck = house_bottleneck.sort_values("Bottleneck Stage", key=lambda x: x.map(stage_rank))
     st.dataframe(house_bottleneck, use_container_width=True, height=350)
 
-    # ===================== PRODUCT STAGE DETAIL =====================
+    # ================= PRODUCT DETAIL ONLY WHEN UNIT SELECTED =================
     if selected_unit != "All":
-        st.subheader("🧩 Product Stage Distribution Inside Selected Unit")
+        st.subheader("🧩 Product Pending Distribution In Selected Unit")
 
         product_stage = pd.pivot_table(
             temp3,
@@ -159,11 +171,10 @@ def show_dashboard(conn, cur):
             if s not in product_stage.columns:
                 product_stage[s] = 0
 
-        total_qty = temp3.groupby("Product")["Product"].count().reset_index(name="Total Qty")
+        total_qty = temp3.groupby("Product")["House"].count().reset_index(name="Total Qty")
         product_stage = product_stage.merge(total_qty, on="Product")
 
-        product_stage = product_stage[
-            ["Product", "Total Qty"] + workflow_stages
-        ].sort_values("Total Qty", ascending=False)
+        ordered_cols = ["Product", "Total Qty"] + workflow_stages
+        product_stage = product_stage[ordered_cols].sort_values("Total Qty", ascending=False)
 
         st.dataframe(product_stage, use_container_width=True, height=420)
