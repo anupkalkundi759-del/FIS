@@ -30,7 +30,7 @@ def show_dashboard(conn, cur):
     cur.execute("SELECT COUNT(*) FROM products")
     master_products = cur.fetchone()[0]
 
-    # ================= LIVE WORKFLOW QUERY =================
+    # ================= LIVE QUERY =================
     query = """
     WITH latest_tracking AS (
         SELECT
@@ -49,6 +49,7 @@ def show_dashboard(conn, cur):
         p.project_name,
         u.unit_name,
         h.house_no,
+        pr.product_instance_id,
         COALESCE(pm.product_code, 'NO PRODUCT') AS product_code,
 
         COALESCE(
@@ -81,7 +82,7 @@ def show_dashboard(conn, cur):
         return
 
     df = pd.DataFrame(rows, columns=[
-        "Project", "Unit", "House", "Product", "Current Stage", "Current Status"
+        "Project", "Unit", "House", "ProductInstance", "Product", "Current Stage", "Current Status"
     ])
 
     # ================= FILTERS =================
@@ -120,11 +121,22 @@ def show_dashboard(conn, cur):
     # ================= KPI =================
     st.subheader("📈 Live Workflow Summary")
 
+    if selected_project == "All" and selected_unit == "All" and not selected_houses:
+        live_projects = master_projects
+        live_units = master_units
+        live_houses = master_houses
+    else:
+        live_projects = temp3["Project"].nunique()
+        live_units = temp3["Unit"].nunique()
+        live_houses = temp3["House"].nunique()
+
+    live_products = len(temp3[temp3["Product"] != "NO PRODUCT"])
+
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Projects", temp3["Project"].nunique())
-    k2.metric("Units", temp3["Unit"].nunique())
-    k3.metric("Houses", temp3["House"].nunique())
-    k4.metric("Total Products", len(temp3[temp3["Product"] != "NO PRODUCT"]))
+    k1.metric("Projects", live_projects)
+    k2.metric("Units", live_units)
+    k3.metric("Houses", live_houses)
+    k4.metric("Total Products", live_products)
 
     # ================= HOUSE BOTTLENECK =================
     house_bottleneck = temp3.groupby("House")["Current Stage"].apply(
@@ -133,6 +145,19 @@ def show_dashboard(conn, cur):
 
     pending_products = temp3[temp3["Current Stage"] != "Dispatch"].groupby("House")["Product"].count().reset_index(name="Pending Products")
     house_bottleneck = house_bottleneck.merge(pending_products, on="House", how="left").fillna(0)
+
+    # ADD ZERO PRODUCT HOUSES
+    all_houses = set(temp3["House"].astype(str).unique())
+    bottleneck_houses = set(house_bottleneck["House"].astype(str).unique())
+    missing_houses = list(all_houses - bottleneck_houses)
+
+    if missing_houses:
+        extra = pd.DataFrame({
+            "House": missing_houses,
+            "Bottleneck Stage": ["No Product Loaded"] * len(missing_houses),
+            "Pending Products": [0] * len(missing_houses)
+        })
+        house_bottleneck = pd.concat([house_bottleneck, extra], ignore_index=True)
 
     # ================= STAGE SUMMARY =================
     stage_summary = house_bottleneck.groupby("Bottleneck Stage")["House"].count().reset_index(name="Houses Pending")
@@ -149,15 +174,16 @@ def show_dashboard(conn, cur):
 
     # ================= HOUSE DETAIL =================
     st.subheader("🏠 Which Houses Are Pending In Which Stage")
-    house_bottleneck = house_bottleneck.sort_values("Bottleneck Stage", key=lambda x: x.map(stage_rank))
+    house_bottleneck["rank"] = house_bottleneck["Bottleneck Stage"].map(stage_rank)
+    house_bottleneck = house_bottleneck.sort_values(["rank", "House"]).drop("rank", axis=1)
     st.dataframe(house_bottleneck, use_container_width=True, height=350)
 
-    # ================= PRODUCT DETAIL WHEN UNIT SELECTED =================
+    # ================= PRODUCT DETAIL =================
     if selected_unit != "All":
         st.subheader("🧩 Product Pending Distribution In Selected Unit")
 
         product_stage = pd.pivot_table(
-            temp3,
+            temp3[temp3["Product"] != "NO PRODUCT"],
             index="Product",
             columns="Current Stage",
             values="House",
@@ -169,7 +195,7 @@ def show_dashboard(conn, cur):
             if s not in product_stage.columns:
                 product_stage[s] = 0
 
-        total_qty = temp3.groupby("Product")["House"].count().reset_index(name="Total Qty")
+        total_qty = temp3[temp3["Product"] != "NO PRODUCT"].groupby("Product")["House"].count().reset_index(name="Total Qty")
         product_stage = product_stage.merge(total_qty, on="Product")
 
         ordered_cols = ["Product", "Total Qty"] + workflow_stages
