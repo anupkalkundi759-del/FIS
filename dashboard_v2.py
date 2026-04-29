@@ -10,7 +10,7 @@ def show_dashboard_v2(conn, cur):
     tz = ZoneInfo("Asia/Kolkata")
     today = datetime.now(tz)
 
-    st.title("📊 Factory War Room Dashboard")
+    st.title("📊 Factory Dashboard")
 
     # ================= ACTIVITY MASTER =================
     act = pd.read_sql("""
