@@ -67,14 +67,20 @@ def show_dashboard(conn, cur):
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        selected_project = st.selectbox("Select Project", ["All"] + sorted(df["Project"].unique().tolist()))
+        selected_project = st.selectbox(
+            "Select Project",
+            ["All"] + sorted(df["Project"].unique().tolist())
+        )
 
     temp1 = df.copy()
     if selected_project != "All":
         temp1 = temp1[temp1["Project"] == selected_project]
 
     with c2:
-        selected_unit = st.selectbox("Select Unit", ["All"] + sorted(temp1["Unit"].unique().tolist()))
+        selected_unit = st.selectbox(
+            "Select Unit",
+            ["All"] + sorted(temp1["Unit"].unique().tolist())
+        )
 
     temp2 = temp1.copy()
     if selected_unit != "All":
@@ -88,12 +94,57 @@ def show_dashboard(conn, cur):
     if selected_houses:
         temp3 = temp3[temp3["House"].astype(str).isin(selected_houses)]
 
-    # ================= TRUE COUNTS =================
-    total_projects = temp3["Project"].nunique()
-    total_units = temp3["Unit"].nunique()
-    total_houses = temp3["House"].nunique()
+    # ================= TRUE SQL MASTER COUNTS =================
+    if selected_project == "All":
+        cur.execute("SELECT COUNT(*) FROM projects")
+        total_projects = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM units")
+        total_units = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM houses")
+        total_houses = cur.fetchone()[0]
+
+    elif selected_unit == "All":
+        total_projects = 1
+
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM units u
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s
+        """, (selected_project,))
+        total_units = cur.fetchone()[0]
+
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM houses h
+            JOIN units u ON h.unit_id = u.unit_id
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s
+        """, (selected_project,))
+        total_houses = cur.fetchone()[0]
+
+    else:
+        total_projects = 1
+        total_units = 1
+
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM houses h
+            JOIN units u ON h.unit_id = u.unit_id
+            JOIN projects p ON u.project_id = p.project_id
+            WHERE p.project_name = %s
+            AND u.unit_name = %s
+        """, (selected_project, selected_unit))
+        total_houses = cur.fetchone()[0]
+
+    if selected_houses:
+        total_houses = len(selected_houses)
+
     total_products = len(temp3)
 
+    # ================= KPI =================
     st.subheader("📈 Live Workflow Summary")
 
     k1, k2, k3, k4 = st.columns(4)
@@ -102,16 +153,15 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", total_houses)
     k4.metric("Total Products", total_products)
 
-    # ================= HOUSE BOTTLENECK STAGE =================
+    # ================= HOUSE BOTTLENECK =================
     house_stage = temp3.groupby("House")["Current Stage"].apply(
         lambda x: sorted(list(x), key=lambda y: stage_rank.get(y, 99))[0]
     ).reset_index(name="Bottleneck Stage")
 
     pending_products = temp3.groupby("House")["Product"].count().reset_index(name="Pending Products")
-
     house_stage = house_stage.merge(pending_products, on="House")
 
-    # ================= STAGE WISE HOUSE COUNT =================
+    # ================= STAGE SUMMARY =================
     stage_house_count = house_stage.groupby("Bottleneck Stage")["House"].count().reset_index(name="Houses Pending")
 
     for stage in workflow_stages:
@@ -129,7 +179,7 @@ def show_dashboard(conn, cur):
     house_stage = house_stage.sort_values("Bottleneck Stage", key=lambda x: x.map(stage_rank))
     st.dataframe(house_stage, use_container_width=True, height=350)
 
-    # ================= PRODUCT DETAIL ONLY WHEN UNIT SELECTED =================
+    # ================= PRODUCT DETAIL WHEN UNIT SELECTED =================
     if selected_unit != "All":
 
         st.subheader("🧩 Product Pending Distribution")
