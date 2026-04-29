@@ -36,7 +36,7 @@ def show_product_tracking(conn, cur):
         return ["All"] + [h[0] for h in cur.fetchall()]
 
     def get_stages():
-        cur.execute("SELECT DISTINCT stage_name FROM stages ORDER BY stage_name")
+        cur.execute("SELECT DISTINCT stage_name FROM stages ORDER BY sequence")
         return ["All"] + [s[0] for s in cur.fetchall()]
 
     # ================= FILTERS =================
@@ -171,11 +171,13 @@ def show_product_tracking(conn, cur):
 
             COUNT(*) - COUNT(CASE WHEN s.stage_name = 'Dispatch' AND ls.status = 'Completed' THEN 1 END) AS remaining,
 
-            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Design & Engineering' THEN 1 END) AS "Design & Engineering",
+            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Measurement' THEN 1 END) AS "Measurement",
+            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Cutting List' THEN 1 END) AS "Cutting List",
             COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Production' THEN 1 END) AS "Production",
             COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Pre Assembly' THEN 1 END) AS "Pre Assembly",
             COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Polishing' THEN 1 END) AS "Polishing",
-            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Final Assembly' THEN 1 END) AS "Final Assembly"
+            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Final Assembly' THEN 1 END) AS "Final Assembly",
+            COUNT(CASE WHEN COALESCE(s.stage_name,'Not Started') = 'Dispatch' THEN 1 END) AS "Dispatch"
 
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
@@ -209,7 +211,8 @@ def show_product_tracking(conn, cur):
         status_df = pd.DataFrame(status_data, columns=[
             "Project", "Unit", "Product",
             "Total", "Completed", "Remaining",
-            "Design & Engineering", "Production", "Pre Assembly", "Polishing", "Final Assembly"
+            "Measurement", "Cutting List", "Production",
+            "Pre Assembly", "Polishing", "Final Assembly", "Dispatch"
         ])
         st.dataframe(status_df, use_container_width=True, height=420)
     else:
