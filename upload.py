@@ -48,7 +48,6 @@ def show_upload(conn, cur):
             axis=1
         )
 
-        # 🔥 FIX: REMOVE drop_duplicates and use grouping
         df = df.groupby(
             ["project_name", "unit_name", "house_no", "full_code", "orientation", "product_category"],
             as_index=False
@@ -127,20 +126,9 @@ def show_upload(conn, cur):
         cur.execute("SELECT product_id, product_code FROM products_master")
         product_map = {code: pid for pid, code in cur.fetchall()}
 
-        # ================= SAFE DELETE =================
-        for project_name, unit_name, house_no in house_set:
-            unit_id = unit_map[(unit_name, project_map[project_name])]
-            house_id = house_map[(house_no, unit_id)]
-
-            cur.execute("""
-                DELETE FROM products
-                WHERE house_id = %s
-            """, (house_id,))
-
-        conn.commit()
-
-        # ================= PRODUCTS INSERT =================
+        # ================= PRODUCTS INSERT (SAFE MERGE) =================
         inserted_products = 0
+        skipped_existing = 0
         processed = 0
         loop_start = time.time()
 
@@ -151,7 +139,23 @@ def show_upload(conn, cur):
                 house_id = house_map[(row["house_no"], unit_id)]
                 product_id = product_map[row["full_code"]]
 
-                for _ in range(row["quantity"]):
+                # check existing quantity already available
+                cur.execute("""
+                    SELECT COUNT(*)
+                    FROM products
+                    WHERE house_id = %s
+                    AND product_id = %s
+                    AND COALESCE(orientation,'') = COALESCE(%s,'')
+                """, (house_id, product_id, row["orientation"]))
+
+                existing_qty = cur.fetchone()[0]
+
+                upload_qty = int(row["quantity"])
+                qty_to_insert = max(upload_qty - existing_qty, 0)
+
+                skipped_existing += min(existing_qty, upload_qty)
+
+                for _ in range(qty_to_insert):
 
                     cur.execute("""
                         INSERT INTO products (house_id, product_id, orientation)
@@ -159,19 +163,20 @@ def show_upload(conn, cur):
                     """, (house_id, product_id, row["orientation"]))
 
                     inserted_products += 1
-                    processed += 1
 
-                    if processed % 20 == 0 or processed == total_items:
+                processed += upload_qty
 
-                        elapsed = time.time() - loop_start
-                        speed = processed / elapsed if elapsed > 0 else 0
-                        remaining = total_items - processed
-                        eta = remaining / speed if speed > 0 else 0
+                if processed % 20 == 0 or processed >= total_items:
 
-                        percent = 60 + int((processed / total_items) * 35)
-                        progress.progress(min(percent, 95))
+                    elapsed = time.time() - loop_start
+                    speed = processed / elapsed if elapsed > 0 else 0
+                    remaining = total_items - processed
+                    eta = remaining / speed if speed > 0 else 0
 
-                        eta_box.info(f"""
+                    percent = 60 + int((processed / total_items) * 35)
+                    progress.progress(min(percent, 95))
+
+                    eta_box.info(f"""
 ⏳ Processed: {processed}/{total_items}  
 ⚡ Speed: {round(speed, 2)} items/sec  
 ⌛ Estimated Time Remaining: {round(eta, 2)} sec
@@ -200,7 +205,8 @@ def show_upload(conn, cur):
 - Units: {len(unit_set)}
 - Houses: {len(house_set)}
 - Product Types: {len(product_set)}
-- Total Product Items: {inserted_products}
+- Newly Added Product Items: {inserted_products}
+- Existing Preserved Items: {skipped_existing}
 """)
 
-        st.info(f"⚡ Speed: {round(inserted_products / total_time, 2)} items/sec")
+        st.info(f"⚡ Speed: {round((inserted_products + skipped_existing) / total_time, 2)} items/sec")
