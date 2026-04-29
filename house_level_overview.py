@@ -5,7 +5,6 @@ def show_dashboard(conn, cur):
     st.title("📊 Workflow Intelligence Monitor")
 
     workflow_stages = [
-        "No Product Loaded",
         "Not Started",
         "Measurement",
         "Cutting List",
@@ -54,10 +53,7 @@ def show_dashboard(conn, cur):
 
         COALESCE(
             lt.stage_name,
-            CASE
-                WHEN pr.product_instance_id IS NULL THEN 'No Product Loaded'
-                ELSE 'Not Started'
-            END
+            'Not Started'
         ) AS current_stage,
 
         COALESCE(lt.status, 'Pending') AS current_status
@@ -165,7 +161,7 @@ def show_dashboard(conn, cur):
     def get_earliest_stage(stage_series):
         valid = [s for s in stage_series if pd.notna(s)]
         if not valid:
-            return "No Product Loaded"
+            return "Not Started"
         return sorted(valid, key=lambda x: stage_rank.get(x, 999))[0]
 
     bottleneck_calc = temp3.groupby("House")["Current Stage"].apply(get_earliest_stage).reset_index(name="Bottleneck Stage")
@@ -183,14 +179,10 @@ def show_dashboard(conn, cur):
     house_bottleneck = master_house_df.merge(bottleneck_calc, on="House", how="left")
     house_bottleneck = house_bottleneck.merge(pending_products, on="House", how="left")
 
-    house_bottleneck["Bottleneck Stage"] = house_bottleneck["Bottleneck Stage"].fillna("No Product Loaded")
+    house_bottleneck["Bottleneck Stage"] = house_bottleneck["Bottleneck Stage"].fillna("Not Started")
     house_bottleneck["Pending Products"] = house_bottleneck["Pending Products"].fillna(0).astype(int)
 
     house_bottleneck = house_bottleneck[["House", "Bottleneck Stage", "Pending Products"]]
-
-    # FORCE NO TRACKING CASE TO FIRST PENDING STAGE
-    if temp3["Current Stage"].isin(["Measurement","Cutting List","Production","Pre Assembly","Polishing","Final Assembly","Dispatch"]).sum() == 0:
-        house_bottleneck["Bottleneck Stage"] = house_bottleneck["Bottleneck Stage"].replace("Not Started", "Measurement")
 
     # ================= STAGE SUMMARY =================
     stage_summary = house_bottleneck.groupby("Bottleneck Stage")["House"].count().reset_index(name="Houses Pending")
