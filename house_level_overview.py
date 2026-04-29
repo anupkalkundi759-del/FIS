@@ -4,7 +4,7 @@ def show_dashboard(conn, cur):
 
     st.title("📊 Stage Breakdown Monitor")
 
-    # ================= STAGE ORDER =================
+    # ================= WORKFLOW =================
     stage_order = {
         "Design & Engineering": 1,
         "Production": 2,
@@ -17,7 +17,17 @@ def show_dashboard(conn, cur):
     selected_stage = st.selectbox("🔍 Select Workflow Stage", list(stage_order.keys()))
     selected_rank = stage_order[selected_stage]
 
-    # ================= MASTER LIVE QUERY =================
+    # ================= MASTER STRUCTURE COUNTS =================
+    cur.execute("SELECT COUNT(*) FROM projects")
+    total_projects_master = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM units")
+    total_units_master = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM houses")
+    total_houses_master = cur.fetchone()[0]
+
+    # ================= LIVE PRODUCT QUERY =================
     query = """
     WITH latest_log AS (
         SELECT
@@ -74,13 +84,14 @@ def show_dashboard(conn, cur):
 
     df["Current Rank"] = df["Current Stage"].map(stage_order).fillna(0)
 
-    # ================= 3 STATUS ENGINE =================
-    def get_stage_result(row):
+    # ================= TRUE 3 STATUS ENGINE =================
+    def classify(row):
         rank = row["Current Rank"]
         status = row["Current Status"]
 
         if rank > selected_rank:
             return "Completed"
+
         elif rank == selected_rank:
             if status == "Completed":
                 return "Completed"
@@ -91,7 +102,7 @@ def show_dashboard(conn, cur):
         else:
             return "Pending"
 
-    df["Stage Result"] = df.apply(get_stage_result, axis=1)
+    df["Stage Result"] = df.apply(classify, axis=1)
 
     # ================= FILTERS =================
     st.subheader("📌 Drilldown Filters")
@@ -99,51 +110,43 @@ def show_dashboard(conn, cur):
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        selected_project = st.selectbox(
-            "Select Project",
-            ["All"] + sorted(df["Project"].dropna().unique().tolist())
-        )
+        selected_project = st.selectbox("Select Project", ["All"] + sorted(df["Project"].unique().tolist()))
 
     temp1 = df.copy()
     if selected_project != "All":
         temp1 = temp1[temp1["Project"] == selected_project]
 
     with c2:
-        selected_unit = st.selectbox(
-            "Select Unit",
-            ["All"] + sorted(temp1["Unit"].dropna().unique().tolist())
-        )
+        selected_unit = st.selectbox("Select Unit", ["All"] + sorted(temp1["Unit"].unique().tolist()))
 
     temp2 = temp1.copy()
     if selected_unit != "All":
         temp2 = temp2[temp2["Unit"] == selected_unit]
 
     with c3:
-        selected_house = st.selectbox(
-            "Select House",
-            ["All"] + sorted(temp2["House"].astype(str).dropna().unique().tolist())
-        )
+        selected_house = st.selectbox("Select House", ["All"] + sorted(temp2["House"].astype(str).unique().tolist()))
 
     temp3 = temp2.copy()
     if selected_house != "All":
         temp3 = temp3[temp3["House"].astype(str) == selected_house]
 
-    # ================= TOP KPI =================
+    # ================= KPI =================
     st.subheader(f"📈 {selected_stage} Summary")
 
-    total_projects = temp3["Project"].nunique()
-    total_units = temp3["Unit"].nunique()
-    total_houses = temp3["House"].nunique()
     total_products = len(temp3)
-
     completed = (temp3["Stage Result"] == "Completed").sum()
     in_progress = (temp3["Stage Result"] == "In Progress").sum()
     pending = (temp3["Stage Result"] == "Pending").sum()
 
+    # structure counts based on selected filters
+    visible_projects = temp3["Project"].nunique() if selected_project != "All" else total_projects_master
+    visible_units = temp3["Unit"].nunique() if selected_unit != "All" else (temp1["Unit"].nunique() if selected_project != "All" else total_units_master)
+    visible_houses = temp3["House"].nunique() if selected_house != "All" else (temp2["House"].nunique() if selected_unit != "All" else (temp1["House"].nunique() if selected_project != "All" else total_houses_master))
+
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Projects", total_projects)
-    k2.metric("Units", total_units)
-    k3.metric("Houses", total_houses)
+    k1.metric("Projects", visible_projects)
+    k2.metric("Units", visible_units)
+    k3.metric("Houses", visible_houses)
     k4.metric("Total Products", total_products)
 
     k5, k6, k7 = st.columns(3)
@@ -151,7 +154,7 @@ def show_dashboard(conn, cur):
     k6.metric("In Progress", in_progress)
     k7.metric("Pending", pending)
 
-    # ================= CONDITIONAL SUMMARY =================
+    # ================= SMART SUMMARY TABLE =================
     if selected_project == "All":
         st.subheader("🏗 Project Wise Summary")
 
@@ -165,32 +168,31 @@ def show_dashboard(conn, cur):
         st.dataframe(summary, use_container_width=True, height=260)
 
     elif selected_unit == "All":
-        st.subheader("🏢 Unit Wise Summary")
+        st.subheader("🏢 Unit Wise Product Summary")
 
-        summary = temp3.groupby("Unit").agg(
-            Houses=("House", "nunique"),
-            Total_Products=("Product", "count"),
+        summary = temp1.groupby(["Unit", "Product"]).agg(
+            Total_Qty=("Product", "count"),
             Completed=("Stage Result", lambda x: (x == "Completed").sum()),
             In_Progress=("Stage Result", lambda x: (x == "In Progress").sum()),
             Pending=("Stage Result", lambda x: (x == "Pending").sum())
         ).reset_index()
 
-        st.dataframe(summary, use_container_width=True, height=260)
+        st.dataframe(summary, use_container_width=True, height=350)
 
     elif selected_house == "All":
-        st.subheader("🏠 House Wise Summary")
+        st.subheader("🏠 House Wise Product Summary")
 
-        summary = temp3.groupby("House").agg(
-            Total_Products=("Product", "count"),
+        summary = temp2.groupby(["House", "Product"]).agg(
+            Total_Qty=("Product", "count"),
             Completed=("Stage Result", lambda x: (x == "Completed").sum()),
             In_Progress=("Stage Result", lambda x: (x == "In Progress").sum()),
             Pending=("Stage Result", lambda x: (x == "Pending").sum())
         ).reset_index()
 
-        st.dataframe(summary, use_container_width=True, height=260)
+        st.dataframe(summary, use_container_width=True, height=350)
 
     else:
-        st.subheader("🧩 Product Quantity Status Summary")
+        st.subheader("🧩 Selected House Product Summary")
 
         summary = temp3.groupby(["Product", "Type", "Orientation"]).agg(
             Total_Qty=("Product", "count"),
