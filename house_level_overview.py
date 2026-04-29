@@ -15,7 +15,6 @@ def show_dashboard(conn, cur):
         "Final Assembly",
         "Dispatch"
     ]
-
     stage_rank = {s: i for i, s in enumerate(workflow_stages)}
 
     # ================= MASTER COUNTS =================
@@ -35,12 +34,11 @@ def show_dashboard(conn, cur):
     query = """
     WITH latest_tracking AS (
         SELECT
-            t.house_id,
-            t.product_id,
+            t.product_instance_id,
             s.stage_name,
             t.status,
             ROW_NUMBER() OVER (
-                PARTITION BY t.house_id, t.product_id
+                PARTITION BY t.product_instance_id
                 ORDER BY t.timestamp DESC
             ) AS rn
         FROM tracking_log t
@@ -56,7 +54,7 @@ def show_dashboard(conn, cur):
         COALESCE(
             lt.stage_name,
             CASE
-                WHEN pr.id IS NULL THEN 'No Product Loaded'
+                WHEN pr.product_instance_id IS NULL THEN 'No Product Loaded'
                 ELSE 'Not Started'
             END
         ) AS current_stage,
@@ -71,8 +69,7 @@ def show_dashboard(conn, cur):
     LEFT JOIN products_master pm ON pr.product_id = pm.product_id
 
     LEFT JOIN latest_tracking lt
-        ON lt.house_id = h.house_id
-        AND lt.product_id = pr.product_id
+        ON pr.product_instance_id = lt.product_instance_id
         AND lt.rn = 1
     """
 
@@ -129,7 +126,7 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", temp3["House"].nunique())
     k4.metric("Total Products", len(temp3[temp3["Product"] != "NO PRODUCT"]))
 
-    # ================= HOUSE STAGE PENDING SUMMARY =================
+    # ================= HOUSE BOTTLENECK =================
     house_bottleneck = temp3.groupby("House")["Current Stage"].apply(
         lambda x: sorted(list(set(x)), key=lambda y: stage_rank.get(y, 999))[0]
     ).reset_index(name="Bottleneck Stage")
@@ -137,6 +134,7 @@ def show_dashboard(conn, cur):
     pending_products = temp3[temp3["Current Stage"] != "Dispatch"].groupby("House")["Product"].count().reset_index(name="Pending Products")
     house_bottleneck = house_bottleneck.merge(pending_products, on="House", how="left").fillna(0)
 
+    # ================= STAGE SUMMARY =================
     stage_summary = house_bottleneck.groupby("Bottleneck Stage")["House"].count().reset_index(name="Houses Pending")
 
     for s in workflow_stages:
@@ -154,7 +152,7 @@ def show_dashboard(conn, cur):
     house_bottleneck = house_bottleneck.sort_values("Bottleneck Stage", key=lambda x: x.map(stage_rank))
     st.dataframe(house_bottleneck, use_container_width=True, height=350)
 
-    # ================= PRODUCT DETAIL ONLY WHEN UNIT SELECTED =================
+    # ================= PRODUCT DETAIL WHEN UNIT SELECTED =================
     if selected_unit != "All":
         st.subheader("🧩 Product Pending Distribution In Selected Unit")
 
