@@ -2,10 +2,23 @@ def show_dashboard(conn, cur):
     import streamlit as st
     import pandas as pd
 
-    st.title("📊 House Level Overview")
+    st.title("📊 Stage Breakdown Monitor")
 
-    # ================= LATEST LIVE STATUS CTE =================
-    latest_cte = """
+    # ================== STAGE ORDER ==================
+    stage_order = {
+        "Design & Engineering": 1,
+        "Production": 2,
+        "Pre Assembly": 3,
+        "Polishing": 4,
+        "Final Assembly": 5,
+        "Dispatch": 6
+    }
+
+    selected_stage = st.selectbox("🔍 Select Workflow Stage", list(stage_order.keys()))
+    selected_stage_rank = stage_order[selected_stage]
+
+    # ================== GET LATEST LIVE STATUS ==================
+    query = """
     WITH latest_log AS (
         SELECT
             product_instance_id,
@@ -18,167 +31,144 @@ def show_dashboard(conn, cur):
             ) rn
         FROM tracking_log
     )
-    """
 
-    # ================= PROJECT OVERVIEW =================
-    st.subheader("🏗 Project Overview")
-
-    query1 = latest_cte + """
     SELECT
         p.project_name,
-        COUNT(DISTINCT h.house_id) AS total_houses,
-        COUNT(DISTINCT pr.product_instance_id) AS total_products,
+        u.unit_name,
+        h.house_no,
+        pr.product_name,
+        pr.product_type,
+        pr.orientation,
+        s.stage_name,
+        ll.status,
+        ll.timestamp
 
-        COUNT(DISTINCT CASE
-            WHEN s.stage_name = 'Final Assembly' AND ll.status = 'Completed'
-            THEN pr.product_instance_id
-        END) AS completed,
+    FROM products pr
+    JOIN houses h ON pr.house_id = h.house_id
+    JOIN units u ON h.unit_id = u.unit_id
+    JOIN projects p ON u.project_id = p.project_id
 
-        COUNT(DISTINCT CASE
-            WHEN s.stage_name = 'Dispatch' AND ll.status = 'Completed'
-            THEN pr.product_instance_id
-        END) AS dispatched
-
-    FROM projects p
-    LEFT JOIN units u ON p.project_id = u.project_id
-    LEFT JOIN houses h ON u.unit_id = h.unit_id
-    LEFT JOIN products pr ON h.house_id = pr.house_id
     LEFT JOIN latest_log ll
         ON pr.product_instance_id = ll.product_instance_id
         AND ll.rn = 1
+
     LEFT JOIN stages s
         ON ll.stage_id = s.stage_id
 
-    GROUP BY p.project_name
-    ORDER BY p.project_name
+    ORDER BY p.project_name, u.unit_name, h.house_no
     """
 
-    cur.execute(query1)
-    data = cur.fetchall()
+    cur.execute(query)
+    rows = cur.fetchall()
 
-    if not data:
+    if not rows:
         st.warning("No data available")
         return
 
-    df = pd.DataFrame(data, columns=[
-        "Project",
-        "Total Houses",
-        "Total Products",
-        "Completed",
-        "Dispatched"
+    live_df = pd.DataFrame(rows, columns=[
+        "Project", "Unit", "House", "Product", "Type", "Orientation",
+        "Current Stage", "Current Status", "Timestamp"
     ])
 
-    df["Pending"] = df["Total Products"] - df["Dispatched"]
+    # ================== MAP CURRENT RANK ==================
+    live_df["Current Rank"] = live_df["Current Stage"].map(stage_order).fillna(0)
 
-    # ================= KPI ROW =================
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Projects", len(df))
-    k2.metric("Total Houses", int(df["Total Houses"].sum()))
-    k3.metric("Completed Products", int(df["Completed"].sum()))
-    k4.metric("Dispatched Products", int(df["Dispatched"].sum()))
+    # ================== COMPLETED / PENDING FOR SELECTED STAGE ==================
+    live_df["Stage Result"] = live_df["Current Rank"].apply(
+        lambda x: "Completed" if x > selected_stage_rank else (
+            "Completed" if x == selected_stage_rank else "Pending"
+        )
+    )
 
-    st.dataframe(df, use_container_width=True, height=220)
+    # =========================================================
+    # PROJECT LEVEL
+    # =========================================================
+    st.subheader(f"🏗 Project Level Status - {selected_stage}")
 
-    # ================= FILTER =================
+    project_df = live_df.groupby("Project").agg(
+        Total_Products=("Product", "count"),
+        Completed=("Stage Result", lambda x: (x == "Completed").sum()),
+        Pending=("Stage Result", lambda x: (x == "Pending").sum())
+    ).reset_index()
+
+    pk1, pk2, pk3, pk4 = st.columns(4)
+    pk1.metric("Projects", project_df["Project"].nunique())
+    pk2.metric("Total Products", int(project_df["Total_Products"].sum()))
+    pk3.metric(f"{selected_stage} Completed", int(project_df["Completed"].sum()))
+    pk4.metric(f"{selected_stage} Pending", int(project_df["Pending"].sum()))
+
+    st.dataframe(project_df, use_container_width=True, height=250)
+
+    # =========================================================
+    # UNIT LEVEL FILTER
+    # =========================================================
     st.divider()
-    st.subheader("📌 Project Detailed View")
+    st.subheader("📌 Drilldown Filters")
 
-    col1, col2, col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    with col1:
-        selected_project = st.selectbox("Project", df["Project"].tolist())
+    with c1:
+        selected_project = st.selectbox("Select Project", ["All"] + sorted(live_df["Project"].unique().tolist()))
 
-    with col2:
-        cur.execute("""
-            SELECT DISTINCT u.unit_name
-            FROM units u
-            JOIN projects p ON u.project_id = p.project_id
-            WHERE p.project_name = %s
-            ORDER BY u.unit_name
-        """, (selected_project,))
-        units = [row[0] for row in cur.fetchall()]
-        selected_unit = st.selectbox("Unit", units)
+    unit_filtered = live_df.copy()
+    if selected_project != "All":
+        unit_filtered = unit_filtered[unit_filtered["Project"] == selected_project]
 
-    with col3:
-        cur.execute("""
-            SELECT h.house_no
-            FROM houses h
-            JOIN units u ON h.unit_id = u.unit_id
-            JOIN projects p ON u.project_id = p.project_id
-            WHERE p.project_name = %s AND u.unit_name = %s
-            ORDER BY h.house_no
-        """, (selected_project, selected_unit))
+    with c2:
+        selected_unit = st.selectbox("Select Unit", ["All"] + sorted(unit_filtered["Unit"].unique().tolist()))
 
-        houses = [row[0] for row in cur.fetchall()]
-        houses.insert(0, "All")
-        selected_house = st.selectbox("House", houses)
+    house_filtered = unit_filtered.copy()
+    if selected_unit != "All":
+        house_filtered = house_filtered[house_filtered["Unit"] == selected_unit]
 
-    # ================= HOUSE LEVEL =================
-    st.subheader("🏠 House-Level Status")
+    with c3:
+        selected_house = st.selectbox("Select House", ["All"] + sorted(house_filtered["House"].astype(str).unique().tolist()))
 
-    query2 = latest_cte + """
-    SELECT
-        h.house_no,
+    # =========================================================
+    # UNIT LEVEL
+    # =========================================================
+    st.subheader(f"🏢 Unit Level Status - {selected_stage}")
 
-        COUNT(DISTINCT pr.product_instance_id) AS total_products,
+    temp_df = unit_filtered.copy()
 
-        COUNT(DISTINCT CASE
-            WHEN s.stage_name = 'Dispatch' AND ll.status = 'Completed'
-            THEN pr.product_instance_id
-        END) AS dispatched,
+    unit_df = temp_df.groupby("Unit").agg(
+        Total_Products=("Product", "count"),
+        Completed=("Stage Result", lambda x: (x == "Completed").sum()),
+        Pending=("Stage Result", lambda x: (x == "Pending").sum())
+    ).reset_index()
 
-        COUNT(DISTINCT pr.product_instance_id) -
-        COUNT(DISTINCT CASE
-            WHEN s.stage_name = 'Dispatch' AND ll.status = 'Completed'
-            THEN pr.product_instance_id
-        END) AS pending,
+    st.dataframe(unit_df, use_container_width=True, height=220)
 
-        MAX(ll.timestamp) AS last_update
+    # =========================================================
+    # HOUSE LEVEL
+    # =========================================================
+    st.subheader(f"🏠 House Level Status - {selected_stage}")
 
-    FROM projects p
-    JOIN units u ON p.project_id = u.project_id
-    JOIN houses h ON u.unit_id = h.unit_id
-    JOIN products pr ON h.house_id = pr.house_id
+    temp_house_df = house_filtered.copy()
 
-    LEFT JOIN latest_log ll
-        ON pr.product_instance_id = ll.product_instance_id
-        AND ll.rn = 1
+    house_df = temp_house_df.groupby("House").agg(
+        Total_Products=("Product", "count"),
+        Completed=("Stage Result", lambda x: (x == "Completed").sum()),
+        Pending=("Stage Result", lambda x: (x == "Pending").sum())
+    ).reset_index()
 
-    LEFT JOIN stages s
-        ON ll.stage_id = s.stage_id
+    st.dataframe(house_df, use_container_width=True, height=220)
 
-    WHERE p.project_name = %s
-    AND u.unit_name = %s
-    """
+    # =========================================================
+    # PRODUCT LEVEL
+    # =========================================================
+    st.subheader(f"🧩 Product Level Detailed Status - {selected_stage}")
 
-    params = [selected_project, selected_unit]
+    final_df = house_filtered.copy()
 
     if selected_house != "All":
-        query2 += " AND h.house_no = %s"
-        params.append(selected_house)
+        final_df = final_df[final_df["House"].astype(str) == selected_house]
 
-    query2 += " GROUP BY h.house_no ORDER BY h.house_no"
+    product_df = final_df[[
+        "Project", "Unit", "House", "Product", "Type", "Orientation",
+        "Current Stage", "Stage Result", "Timestamp"
+    ]].copy()
 
-    cur.execute(query2, tuple(params))
-    house_data = cur.fetchall()
+    product_df["Timestamp"] = pd.to_datetime(product_df["Timestamp"], errors="coerce").dt.strftime("%d-%m-%Y %I:%M %p")
 
-    house_df = pd.DataFrame(house_data, columns=[
-        "House",
-        "Total Products",
-        "Dispatched",
-        "Pending",
-        "Last Update"
-    ])
-
-    if not house_df.empty:
-        house_df["Last Update"] = pd.to_datetime(
-            house_df["Last Update"], errors="coerce"
-        ).dt.strftime("%d-%m-%Y %I:%M %p")
-
-    # ================= HOUSE KPI =================
-    hk1, hk2, hk3 = st.columns(3)
-    hk1.metric("Visible Houses", len(house_df))
-    hk2.metric("Visible Dispatched", int(house_df["Dispatched"].sum()) if not house_df.empty else 0)
-    hk3.metric("Visible Pending", int(house_df["Pending"].sum()) if not house_df.empty else 0)
-
-    st.dataframe(house_df, use_container_width=True, height=350)
+    st.dataframe(product_df, use_container_width=True, height=400)
