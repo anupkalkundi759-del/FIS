@@ -136,7 +136,7 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", live_houses)
     k4.metric("Total Products", live_products)
 
-    # ================= MASTER HOUSE LIST SAFE =================
+    # ================= MASTER HOUSE LIST =================
     master_house_query = """
     SELECT
         p.project_name,
@@ -162,19 +162,35 @@ def show_dashboard(conn, cur):
         master_house_df = master_house_df[master_house_df["House"].astype(str).isin(selected_houses)]
 
     # ================= HOUSE BOTTLENECK =================
-    bottleneck_calc = temp3.groupby("House")["Current Stage"].apply(
-        lambda x: sorted(list(set(x)), key=lambda y: stage_rank.get(y, 999))[0]
-    ).reset_index(name="Bottleneck Stage")
+    def get_earliest_stage(stage_series):
+        valid = [s for s in stage_series if pd.notna(s)]
+        if not valid:
+            return "No Product Loaded"
+        return sorted(valid, key=lambda x: stage_rank.get(x, 999))[0]
 
-    pending_products = temp3[temp3["Current Stage"] != "Dispatch"].groupby("House")["Product"].count().reset_index(name="Pending Products")
+    bottleneck_calc = temp3.groupby("House")["Current Stage"].apply(get_earliest_stage).reset_index(name="Bottleneck Stage")
+
+    pending_products = (
+        temp3[
+            (temp3["Current Stage"] != "Dispatch") &
+            (temp3["Product"] != "NO PRODUCT")
+        ]
+        .groupby("House")["Product"]
+        .count()
+        .reset_index(name="Pending Products")
+    )
 
     house_bottleneck = master_house_df.merge(bottleneck_calc, on="House", how="left")
     house_bottleneck = house_bottleneck.merge(pending_products, on="House", how="left")
 
     house_bottleneck["Bottleneck Stage"] = house_bottleneck["Bottleneck Stage"].fillna("No Product Loaded")
-    house_bottleneck["Pending Products"] = house_bottleneck["Pending Products"].fillna(0)
+    house_bottleneck["Pending Products"] = house_bottleneck["Pending Products"].fillna(0).astype(int)
 
     house_bottleneck = house_bottleneck[["House", "Bottleneck Stage", "Pending Products"]]
+
+    # FORCE NO TRACKING CASE TO FIRST PENDING STAGE
+    if temp3["Current Stage"].isin(["Measurement","Cutting List","Production","Pre Assembly","Polishing","Final Assembly","Dispatch"]).sum() == 0:
+        house_bottleneck["Bottleneck Stage"] = house_bottleneck["Bottleneck Stage"].replace("Not Started", "Measurement")
 
     # ================= STAGE SUMMARY =================
     stage_summary = house_bottleneck.groupby("Bottleneck Stage")["House"].count().reset_index(name="Houses Pending")
@@ -185,6 +201,8 @@ def show_dashboard(conn, cur):
 
     stage_summary["rank"] = stage_summary["Bottleneck Stage"].map(stage_rank)
     stage_summary = stage_summary.sort_values("rank").drop("rank", axis=1)
+    stage_summary = stage_summary.reset_index(drop=True)
+    stage_summary.index = stage_summary.index + 1
 
     st.subheader("🚦 Stage Wise House Pending Summary")
     st.dataframe(stage_summary, use_container_width=True, height=340)
@@ -193,6 +211,8 @@ def show_dashboard(conn, cur):
     st.subheader("🏠 Which Houses Are Pending In Which Stage")
     house_bottleneck["rank"] = house_bottleneck["Bottleneck Stage"].map(stage_rank)
     house_bottleneck = house_bottleneck.sort_values(["rank", "House"]).drop("rank", axis=1)
+    house_bottleneck = house_bottleneck.reset_index(drop=True)
+    house_bottleneck.index = house_bottleneck.index + 1
     st.dataframe(house_bottleneck, use_container_width=True, height=350)
 
     # ================= PRODUCT DETAIL =================
@@ -217,5 +237,7 @@ def show_dashboard(conn, cur):
 
         ordered_cols = ["Product", "Total Qty"] + workflow_stages
         product_stage = product_stage[ordered_cols].sort_values("Total Qty", ascending=False)
+        product_stage = product_stage.reset_index(drop=True)
+        product_stage.index = product_stage.index + 1
 
         st.dataframe(product_stage, use_container_width=True, height=420)
