@@ -36,7 +36,7 @@ def show_product_tracking(conn, cur):
         return ["All"] + [h[0] for h in cur.fetchall()]
 
     def get_stages():
-        cur.execute("SELECT DISTINCT stage_name FROM stages ORDER BY sequence")
+        cur.execute("SELECT stage_name FROM stages ORDER BY sequence")
         return ["All"] + [s[0] for s in cur.fetchall()]
 
     # ================= FILTERS =================
