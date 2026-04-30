@@ -1,16 +1,51 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
 from zoneinfo import ZoneInfo
+from datetime import datetime
 
 
 def show_dashboard_v2(conn, cur):
 
     st.title("🏭 Factory Intelligence Command Center")
 
-    tz = ZoneInfo("Asia/Kolkata")
-    now = datetime.now(tz)
+    # ===================== CUSTOM DASHBOARD CSS =====================
+    st.markdown("""
+    <style>
+    .kpi-box{
+        border:1px solid #d9d9d9;
+        border-radius:10px;
+        padding:12px;
+        text-align:center;
+        background:#fafafa;
+        min-height:90px;
+    }
+    .kpi-title{
+        font-size:12px;
+        color:#666;
+        margin-bottom:8px;
+    }
+    .kpi-value{
+        font-size:28px;
+        font-weight:700;
+        color:#111;
+    }
+    .panel-box{
+        border:1px solid #d9d9d9;
+        border-radius:10px;
+        padding:15px;
+        background:#ffffff;
+        min-height:320px;
+    }
+    .bottom-box{
+        border:1px solid #d9d9d9;
+        border-radius:10px;
+        padding:15px;
+        background:#ffffff;
+        min-height:450px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
     stage_order = [
         "Measurement",
@@ -22,18 +57,11 @@ def show_dashboard_v2(conn, cur):
         "Dispatch"
     ]
 
-    stage_rank = {
-        "Not Started": 0,
-        "Measurement": 1,
-        "Cutting List": 2,
-        "Production": 3,
-        "Pre Assembly": 4,
-        "Polishing": 5,
-        "Final Assembly": 6,
-        "Dispatch": 7
-    }
+    # ===================== MASTER HOUSE COUNT =====================
+    total_houses_query = "SELECT COUNT(DISTINCT house_no) as cnt FROM houses"
+    total_houses = pd.read_sql(total_houses_query, conn)["cnt"][0]
 
-    # ================= LIVE DATA =================
+    # ===================== LIVE PRODUCT QUERY =====================
     live_query = """
     WITH latest_tracking AS (
         SELECT DISTINCT ON (t.product_instance_id)
@@ -69,10 +97,9 @@ def show_dashboard_v2(conn, cur):
         return
 
     live_df["timestamp"] = pd.to_datetime(live_df["timestamp"], errors="coerce")
-    live_df["StageRank"] = live_df["current_stage"].map(stage_rank)
 
+    # ===================== KPI ENGINE =====================
     total_products = len(live_df)
-    active_houses = live_df["house_no"].nunique()
 
     dispatch_products = len(live_df[live_df["current_stage"] == "Dispatch"])
     completion_pct = round((dispatch_products / total_products) * 100, 2) if total_products > 0 else 0
@@ -87,17 +114,18 @@ def show_dashboard_v2(conn, cur):
     bottleneck_stage = max(backlog_counts, key=backlog_counts.get)
     highest_pending = backlog_counts[bottleneck_stage]
 
-    house_group = live_df.groupby("house_no")["current_stage"].apply(list)
+    # ===================== CLOSED HOUSE CALCULATION =====================
+    house_stage = live_df.groupby("house_no")["current_stage"].apply(list)
 
     closed_houses = 0
-    critical_houses = 0
-
-    for h, vals in house_group.items():
+    for h, vals in house_stage.items():
         if all(v == "Dispatch" for v in vals):
             closed_houses += 1
-        else:
-            critical_houses += 1
 
+    critical_houses = total_houses - closed_houses
+    active_houses = critical_houses
+
+    # ===================== TOP UNIT/PROJECT =====================
     unit_rank = live_df.dropna(subset=["unit_name"]).groupby("unit_name").size().sort_values(ascending=False)
     project_rank = live_df.dropna(subset=["project_name"]).groupby("project_name").size().sort_values(ascending=False)
 
@@ -108,59 +136,76 @@ def show_dashboard_v2(conn, cur):
     production_backlog = backlog_counts["Production"]
     dispatch_backlog = backlog_counts["Dispatch"]
 
-    # ================= KPI ROW =================
-    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
+    # ===================== KPI ROW =====================
+    k1,k2,k3,k4,k5,k6,k7 = st.columns(7)
 
-    k1.metric("Live Products", total_products)
-    k2.metric("Active Houses", active_houses)
-    k3.metric("Completion %", f"{completion_pct}%")
-    k4.metric("Bottleneck", bottleneck_stage)
-    k5.metric("Highest Pending", highest_pending)
-    k6.metric("Closed Houses", closed_houses)
-    k7.metric("Critical Houses", critical_houses)
+    kpis = [
+        ("Live Products", total_products),
+        ("Active Houses", active_houses),
+        ("Completion %", f"{completion_pct}%"),
+        ("Bottleneck", bottleneck_stage),
+        ("Highest Pending", highest_pending),
+        ("Closed Houses", closed_houses),
+        ("Critical Houses", critical_houses)
+    ]
 
-    st.markdown("---")
+    for col, (title, value) in zip([k1,k2,k3,k4,k5,k6,k7], kpis):
+        with col:
+            st.markdown(f"""
+            <div class="kpi-box">
+                <div class="kpi-title">{title}</div>
+                <div class="kpi-value">{value}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-    # ================= ROW 2 =================
-    a1, a2, a3 = st.columns([1, 1, 1])
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    with a1:
+    # ===================== ROW 2 =====================
+    r1,r2,r3 = st.columns([1,1,1])
+
+    with r1:
+        st.markdown('<div class="panel-box">', unsafe_allow_html=True)
         st.subheader("📦 Stage Backlog Snapshot")
         for stg in stage_order:
-            st.write(f"**{stg}** : {backlog_counts[stg]} pending products")
+            st.write(f"**{stg}** → {backlog_counts[stg]} pending products")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    with a2:
+    with r2:
+        st.markdown('<div class="panel-box">', unsafe_allow_html=True)
         st.subheader("🏠 House Impact Snapshot")
         for stg in stage_order:
             if stg == "Measurement":
-                hc = live_df[live_df["current_stage"].isin(["Not Started", "Measurement"])]["house_no"].nunique()
+                hc = live_df[live_df["current_stage"].isin(["Not Started","Measurement"])]["house_no"].nunique()
             else:
                 hc = live_df[live_df["current_stage"] == stg]["house_no"].nunique()
-            st.write(f"**{stg}** : {hc} impacted houses")
+            st.write(f"**{stg}** → {hc} impacted houses")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    with a3:
+    with r3:
+        st.markdown('<div class="panel-box">', unsafe_allow_html=True)
         st.subheader("🧠 Smart Manager Insights")
+        st.info(f"🔴 Worst bottleneck : {bottleneck_stage}")
+        st.info(f"🟠 Measurement pending : {measurement_backlog}")
+        st.info(f"🟡 Dispatch pending : {dispatch_backlog}")
+        st.info(f"🏗 Max operational unit : {top_unit}")
+        st.info(f"📍 Max operational project : {top_project}")
+        st.info(f"⚠ Open critical houses : {critical_houses}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        st.info(f"🔴 Worst bottleneck at {bottleneck_stage}")
-        st.info(f"🟠 {measurement_backlog} products waiting from measurement")
-        st.info(f"🟡 {dispatch_backlog} products pending for dispatch closure")
-        st.info(f"🏗 Highest supervisory load in Unit {top_unit}")
-        st.info(f"📍 Highest running volume in Project {top_project}")
-        st.info(f"⚠ {critical_houses} houses still under execution")
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    st.markdown("---")
-
-    # ================= ROW 3 =================
-    b1, b2 = st.columns([1.7, 1])
+    # ===================== ROW 3 =====================
+    b1,b2 = st.columns([1.7,1])
 
     with b1:
+        st.markdown('<div class="bottom-box">', unsafe_allow_html=True)
         st.subheader("📈 Daily Workflow Pending Trend")
 
         trend_df = live_df.dropna(subset=["timestamp"]).copy()
 
         if not trend_df.empty:
             trend_df["Date"] = trend_df["timestamp"].dt.date
-            daily = trend_df.groupby(["Date", "current_stage"]).size().reset_index(name="Count")
+            daily = trend_df.groupby(["Date","current_stage"]).size().reset_index(name="Count")
 
             if not daily.empty:
                 fig = px.line(
@@ -169,23 +214,23 @@ def show_dashboard_v2(conn, cur):
                     y="Count",
                     color="current_stage",
                     markers=True,
-                    height=430
+                    height=360
                 )
-                fig.update_layout(
-                    margin=dict(l=5, r=5, t=5, b=5)
-                )
+                fig.update_layout(margin=dict(l=5,r=5,t=5,b=5))
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.warning("No daily movement records available.")
+                st.warning("No trend records available.")
         else:
-            st.warning("No timestamp trend data available.")
+            st.warning("No timestamp trend available.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with b2:
+        st.markdown('<div class="bottom-box">', unsafe_allow_html=True)
         st.subheader("🚨 SLA Breach Audit + Recommendations")
 
-        measurement_pct = round((measurement_backlog / total_products) * 100, 2) if total_products > 0 else 0
-        production_pct = round((production_backlog / total_products) * 100, 2) if total_products > 0 else 0
-        dispatch_pct = round((dispatch_backlog / total_products) * 100, 2) if total_products > 0 else 0
+        measurement_pct = round((measurement_backlog/total_products)*100,2)
+        production_pct = round((production_backlog/total_products)*100,2)
+        dispatch_pct = round((dispatch_backlog/total_products)*100,2)
 
         if measurement_pct > 30:
             st.error(f"Measurement backlog critical : {measurement_pct}%")
@@ -208,8 +253,9 @@ def show_dashboard_v2(conn, cur):
             st.success(f"Factory throughput acceptable : {completion_pct}%")
 
         st.markdown("### 📌 Recommended Actions")
-        st.write(f"• Deploy manpower immediately to {bottleneck_stage}")
-        st.write("• Run supervisor review on all critical houses")
-        st.write("• Conduct dispatch closure meeting")
-        st.write(f"• Management intervention required in Unit {top_unit}")
-        st.write("• Push unfinished houses aggressively to next stage")
+        st.write(f"• Push manpower immediately to {bottleneck_stage}")
+        st.write("• Run supervisor review on open houses")
+        st.write("• Conduct dispatch closure review")
+        st.write(f"• Management intervention required in {top_unit}")
+        st.write("• Force unfinished products to next stage")
+        st.markdown('</div>', unsafe_allow_html=True)
