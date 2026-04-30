@@ -14,17 +14,6 @@ def show_dashboard(conn, cur):
         "Dispatch"
     ]
 
-    full_stage_order = {
-        "Not Started": 0,
-        "Measurement": 1,
-        "Cutting List": 2,
-        "Production": 3,
-        "Pre Assembly": 4,
-        "Polishing": 5,
-        "Final Assembly": 6,
-        "Dispatch": 7
-    }
-
     # ================= CURRENT LATEST STATUS QUERY =================
     latest_query = """
     WITH latest_tracking AS (
@@ -63,8 +52,6 @@ def show_dashboard(conn, cur):
     latest_df = pd.DataFrame(latest_rows, columns=[
         "Project", "Unit", "House", "ProductInstance", "Product", "Current Stage"
     ])
-
-    latest_df["Stage Rank"] = latest_df["Current Stage"].map(full_stage_order)
 
     # ================= MASTER HOUSE QUERY =================
     house_query = """
@@ -127,22 +114,25 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", total_houses)
     k4.metric("Total Products", total_products_scope)
 
-    # ================= STAGE COMPLETION MATRIX =================
+    # ================= KPI MATRIX =================
     st.subheader("🚦 Stage Completion Performance Matrix")
 
     kpi_rows = []
 
     for stage in workflow_stages:
 
-        target_rank = full_stage_order[stage]
-
-        pending_df = latest_df[
-            (latest_df["Product"] != "NO PRODUCT") &
-            (latest_df["Stage Rank"] < target_rank)
-        ]
+        if stage == "Measurement":
+            pending_df = latest_df[
+                (latest_df["Product"] != "NO PRODUCT") &
+                (latest_df["Current Stage"].isin(["Not Started", "Measurement"]))
+            ]
+        else:
+            pending_df = latest_df[
+                (latest_df["Product"] != "NO PRODUCT") &
+                (latest_df["Current Stage"] == stage)
+            ]
 
         pending_products = len(pending_df)
-
         houses_impacted = pending_df["House"].astype(str).nunique()
 
         completion_pct = round(((total_products_scope - pending_products) / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
@@ -155,7 +145,7 @@ def show_dashboard(conn, cur):
             f"{completion_pct}%"
         ])
 
-    # OVERALL COMPLETION = products fully dispatched
+    # OVERALL COMPLETION
     dispatch_completed = len(
         latest_df[
             (latest_df["Product"] != "NO PRODUCT") &
