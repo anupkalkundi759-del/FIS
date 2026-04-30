@@ -10,7 +10,7 @@ def show_dashboard_v2(conn, cur):
     except:
         pass
 
-    st.title("📊 Workflow Intelligence Monitor")
+    st.title("📊 Workflow Monitor")
 
     # ============================================================
     # LIVE MASTER QUERY
@@ -135,7 +135,7 @@ def show_dashboard_v2(conn, cur):
 
     with r1:
         with st.container(border=True):
-            st.subheader("🏠 House Execution Snapshot")
+            st.subheader("🏠 House Execution")
 
             st.markdown("**Not Started Heavy Houses**")
             for _, row in not_started_house.iterrows():
@@ -147,7 +147,7 @@ def show_dashboard_v2(conn, cur):
 
     with r2:
         with st.container(border=True):
-            st.subheader("🏗 Unit Load Snapshot")
+            st.subheader("🏗 Unit Load")
 
             st.markdown("**Units With Max Untouched Load**")
             for _, row in not_started_unit.iterrows():
