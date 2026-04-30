@@ -13,6 +13,7 @@ def show_dashboard_v2(conn, cur):
     st.title("📊 Workflow Intelligence Monitor")
 
     stage_order = [
+        "Not Started",
         "Measurement",
         "Cutting List",
         "Production",
@@ -22,6 +23,9 @@ def show_dashboard_v2(conn, cur):
         "Dispatch"
     ]
 
+    # ============================================================
+    # LIVE MASTER QUERY WITH TRUE UNIT JOIN
+    # ============================================================
     live_query = """
     WITH latest_tracking AS (
         SELECT DISTINCT ON (product_instance_id)
@@ -35,17 +39,15 @@ def show_dashboard_v2(conn, cur):
     SELECT
         h.house_id,
         h.house_no,
-        h.unit_name,
-        h.unit,
+        u.unit_name AS real_unit,
         p.product_instance_id,
         COALESCE(s.stage_name, 'Not Started') AS current_stage,
         lt.timestamp
     FROM products p
     JOIN houses h ON p.house_id = h.house_id
-    LEFT JOIN latest_tracking lt
-        ON p.product_instance_id = lt.product_instance_id
-    LEFT JOIN stages s
-        ON lt.stage_id = s.stage_id
+    LEFT JOIN units u ON h.unit_id = u.unit_id
+    LEFT JOIN latest_tracking lt ON p.product_instance_id = lt.product_instance_id
+    LEFT JOIN stages s ON lt.stage_id = s.stage_id
     """
 
     live_df = pd.read_sql_query(live_query, conn)
@@ -55,14 +57,13 @@ def show_dashboard_v2(conn, cur):
         return
 
     live_df["timestamp"] = pd.to_datetime(live_df["timestamp"], errors="coerce")
-    live_df["unit_live"] = live_df["unit_name"].fillna(live_df["unit"]).fillna("N/A")
 
     total_products = len(live_df)
     total_houses = pd.read_sql_query("SELECT COUNT(DISTINCT house_id) AS cnt FROM houses", conn)["cnt"][0]
 
-    # ==========================
-    # COMPLETED / RUNNING HOUSES
-    # ==========================
+    # ============================================================
+    # HOUSE COMPLETION
+    # ============================================================
     house_stage = live_df.groupby("house_id")["current_stage"].apply(list)
 
     completed_houses = 0
@@ -72,24 +73,27 @@ def show_dashboard_v2(conn, cur):
 
     running_houses = total_houses - completed_houses
 
-    # ==========================
-    # STAGE BACKLOG
-    # ==========================
-    backlog_counts = {}
+    # ============================================================
+    # BUSINESS BACKLOG DEFINITIONS
+    # ============================================================
+    measurement_pending = len(live_df[live_df["current_stage"] == "Not Started"])
+    production_pending = len(live_df[live_df["current_stage"] == "Production"])
+    dispatch_pending = len(live_df[live_df["current_stage"] == "Dispatch"])
 
-    for stg in stage_order:
-        temp = live_df[live_df["current_stage"] == stg]
-        backlog_counts[stg] = len(temp)
+    backlog_counts = {
+        "Measurement": measurement_pending,
+        "Production": production_pending,
+        "Dispatch": dispatch_pending
+    }
 
     bottleneck_stage = max(backlog_counts, key=backlog_counts.get)
     highest_pending = backlog_counts[bottleneck_stage]
 
-    dispatch_products = len(live_df[live_df["current_stage"] == "Dispatch"])
-    overall_completion = round((dispatch_products / total_products) * 100, 2)
+    overall_completion = round((dispatch_pending / total_products) * 100, 2)
 
-    # ==========================
-    # KPI ROW
-    # ==========================
+    # ============================================================
+    # KPI CARDS
+    # ============================================================
     k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
 
     k1.metric("Total Products", total_products)
@@ -102,9 +106,9 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ==========================
+    # ============================================================
     # ROW 2
-    # ==========================
+    # ============================================================
     r1, r2, r3 = st.columns(3)
 
     pending_house = (
@@ -118,7 +122,7 @@ def show_dashboard_v2(conn, cur):
 
     busy_units = (
         live_df[live_df["current_stage"] != "Dispatch"]
-        .groupby("unit_live")
+        .groupby("real_unit")
         .size()
         .reset_index(name="Pending Products")
         .sort_values("Pending Products", ascending=False)
@@ -135,48 +139,38 @@ def show_dashboard_v2(conn, cur):
         with st.container(border=True):
             st.subheader("🏗 Top Busy Units")
             for _, row in busy_units.iterrows():
-                st.write(f"{row['unit_live']} → {row['Pending Products']} pending")
+                st.write(f"{row['real_unit']} → {row['Pending Products']} pending")
 
     with r3:
         with st.container(border=True):
             st.subheader("🚦 Stage Pressure")
-            st.write(f"Measurement → {backlog_counts['Measurement']}")
-            st.write(f"Production → {backlog_counts['Production']}")
-            st.write(f"Dispatch → {backlog_counts['Dispatch']}")
+            st.write(f"Measurement → {measurement_pending}")
+            st.write(f"Production → {production_pending}")
+            st.write(f"Dispatch → {dispatch_pending}")
 
     st.markdown("---")
 
-    # ==========================
+    # ============================================================
     # ROW 3
-    # ==========================
+    # ============================================================
     b1, b2 = st.columns([1.9, 1])
 
     with b1:
         with st.container(border=True):
-            st.subheader("📈 Factory Pending Products Movement")
+            st.subheader("📈 Factory Pending Products Movement (Apr29 vs Apr30)")
 
             trend_df = live_df.dropna(subset=["timestamp"]).copy()
 
             if not trend_df.empty:
                 trend_df["Date"] = trend_df["timestamp"].dt.date
 
-                records = []
-                unique_dates = sorted(trend_df["Date"].unique())
-
-                for dt in unique_dates:
-                    upto = trend_df[trend_df["Date"] <= dt]
-
-                    for stg in stage_order:
-                        cnt = len(upto[upto["current_stage"] == stg])
-                        records.append([dt, stg, cnt])
-
-                daily_stage = pd.DataFrame(records, columns=["Date", "Stage", "Count"])
+                daily = trend_df.groupby(["Date", "current_stage"]).size().reset_index(name="Count")
 
                 fig = px.line(
-                    daily_stage,
+                    daily,
                     x="Date",
                     y="Count",
-                    color="Stage",
+                    color="current_stage",
                     markers=True,
                     height=420
                 )
@@ -189,26 +183,16 @@ def show_dashboard_v2(conn, cur):
 
                 st.plotly_chart(fig, use_container_width=True)
             else:
-                st.warning("No trend data available.")
+                st.warning("No trend records available.")
 
     with b2:
         with st.container(border=True):
             st.subheader("📌 Immediate Actions Needed")
 
-            measurement_backlog = backlog_counts["Measurement"]
-            production_backlog = backlog_counts["Production"]
-            dispatch_backlog = backlog_counts["Dispatch"]
+            top_unit = busy_units.iloc[0]["real_unit"] if not busy_units.empty else "N/A"
 
-            top_unit = busy_units.iloc[0]["unit_live"] if not busy_units.empty else "N/A"
-
-            if measurement_backlog > 1000:
-                st.error(f"Measurement pending too high ({measurement_backlog})")
-
-            if dispatch_backlog > 100:
-                st.error(f"Dispatch closure low ({dispatch_backlog})")
-
-            if production_backlog > 500:
-                st.warning(f"Production queue building ({production_backlog})")
-
+            st.error(f"Measurement pending too high ({measurement_pending})")
+            st.warning(f"Production queue building ({production_pending})")
+            st.error(f"Dispatch closure low ({dispatch_pending})")
             st.info(f"Unit {top_unit} needs monitoring")
             st.info(f"{running_houses} houses still open")
