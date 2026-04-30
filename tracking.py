@@ -5,6 +5,9 @@ def show_tracking(conn, cur):
 
     st.title("🏭 Production Tracker")
 
+    if "edit_selection" not in st.session_state:
+        st.session_state.edit_selection = True
+
     # ================= DATA FUNCTIONS =================
     def get_projects():
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
@@ -102,27 +105,43 @@ def show_tracking(conn, cur):
     select_all = st.checkbox("Select All Visible Products", value=False)
     df["Select"] = select_all
 
-    with st.expander("📦 Product Selection Table", expanded=True):
+    if st.session_state.edit_selection:
         edited_df = st.data_editor(
             df[["Select", "display"]],
             use_container_width=True,
             hide_index=True,
-            height=320
+            height=320,
+            key="main_select_editor"
         )
+    else:
+        edited_df = pd.DataFrame(columns=["Select", "display"])
 
-    selected_rows = edited_df[edited_df["Select"] == True]
+    selected_rows = edited_df[edited_df["Select"] == True] if not edited_df.empty else pd.DataFrame()
 
-    if selected_rows.empty:
+    if selected_rows.empty and st.session_state.edit_selection:
         st.info("Select products to continue")
         return
 
-    selected_ids = df.loc[selected_rows.index, "product_instance_id"].tolist()
-    st.success(f"{len(selected_ids)} products selected")
+    if not selected_rows.empty:
+        selected_ids = df.loc[selected_rows.index, "product_instance_id"].tolist()
+        st.session_state.saved_selected_ids = selected_ids
+        st.session_state.edit_selection = False
+    else:
+        selected_ids = st.session_state.get("saved_selected_ids", [])
+
+    if not selected_ids:
+        st.info("Select products to continue")
+        return
+
+    colx, coly = st.columns([4,1])
+    colx.success(f"{len(selected_ids)} products selected")
+    if coly.button("Modify Product Selection"):
+        st.session_state.edit_selection = True
+        st.rerun()
 
     # ================= STAGES =================
     stage_sequence = get_stages()
 
-    # ================= GET CURRENT LIVE STAGES =================
     cur.execute("""
         WITH latest_stage AS (
             SELECT
@@ -173,18 +192,16 @@ def show_tracking(conn, cur):
             available_stages.append(stg)
             stage_counts[stg] = cnt
 
-    clicked_stage = None
     stage_cols = st.columns(len(available_stages))
-
     for i, stg in enumerate(available_stages):
         if stage_cols[i].button(f"{stg} ({stage_counts[stg]})", use_container_width=True):
             st.session_state["inspect_stage"] = stg
 
     inspect_stage = st.session_state.get("inspect_stage", available_stages[0])
 
-    stage_group = matrix_df[matrix_df["stage"] == inspect_stage].copy()
-
     st.info(f"Inspecting: {inspect_stage}")
+
+    stage_group = matrix_df[matrix_df["stage"] == inspect_stage].copy()
 
     stage_search = st.text_input(f"🔎 Search inside {inspect_stage}", key=f"search_{inspect_stage}")
     if stage_search:
@@ -227,25 +244,24 @@ def show_tracking(conn, cur):
 
     if current_status == "In Progress":
         col4.warning(f"Current Stage: {current_stage} (In Progress)")
+        allowed_stages = [current_stage]
     elif current_status == "Completed":
         col4.info(f"Last Completed Stage: {current_stage}")
+        allowed_stages = [next_stage] if next_stage != "Completed" else []
     else:
         col4.info("Last Completed Stage: Not Started")
+        allowed_stages = [next_stage]
 
     col5.success(f"Next Allowed Stage: {next_stage}")
 
-    selected_stage = st.selectbox("Move Selected Products To Stage", stage_sequence)
+    if not allowed_stages:
+        st.warning("No further stage movement allowed")
+        return
+
+    selected_stage = st.selectbox("Move Selected Products To Stage", allowed_stages)
     status = st.selectbox("Update Status", ["In Progress", "Completed"])
 
     if st.button("Update Selected", use_container_width=True):
-
-        allowed_stages = []
-
-        if current_status == "In Progress":
-            allowed_stages = [current_stage]
-        else:
-            if next_stage != "Completed":
-                allowed_stages = [next_stage]
 
         if selected_stage not in allowed_stages:
             if current_status == "In Progress":
@@ -259,7 +275,6 @@ def show_tracking(conn, cur):
             return
 
         with st.spinner("Updating selected products..."):
-
             cur.execute("SELECT stage_id FROM stages WHERE stage_name = %s", (selected_stage,))
             stage_id = cur.fetchone()[0]
 
