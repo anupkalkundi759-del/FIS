@@ -169,9 +169,50 @@ def show_tracking(conn, cur):
         })
         latest_df = pd.concat([latest_df, extra], ignore_index=True)
 
-    # Mixed stage warning removed
-    current_stage = latest_df.iloc[0]["stage"]
-    current_status = latest_df.iloc[0]["status"]
+    # ================= LIVE PRODUCT STAGE MATRIX ADDED =================
+    matrix_df = df[df["product_instance_id"].isin(selected_ids)][["product_instance_id", "product_code", "display"]].copy()
+    matrix_df = matrix_df.merge(latest_df, left_on="product_instance_id", right_on="pid", how="left")
+    matrix_df["stage"] = matrix_df["stage"].fillna("Not Started")
+
+    st.markdown("### 📊 Live Product Stage Matrix")
+
+    pivot = pd.pivot_table(
+        matrix_df,
+        index="product_code",
+        columns="stage",
+        values="product_instance_id",
+        aggfunc="count",
+        fill_value=0
+    )
+
+    for stg in ["Not Started"] + stage_sequence:
+        if stg not in pivot.columns:
+            pivot[stg] = 0
+
+    pivot = pivot[["Not Started"] + stage_sequence]
+    st.dataframe(pivot, use_container_width=True)
+
+    stage_filter_options = ["All Products"]
+    filter_map = {}
+
+    for _, row in matrix_df.iterrows():
+        label = f"{row['product_code']}  |  {row['stage']}  |  {row['display']}"
+        stage_filter_options.append(label)
+        filter_map[label] = row["product_instance_id"]
+
+    selected_filter = st.selectbox(
+        "🎯 Optional: Select Exact Product + Current Stage To Update Only That Item",
+        stage_filter_options
+    )
+
+    if selected_filter != "All Products":
+        selected_ids = [filter_map[selected_filter]]
+        matrix_df = matrix_df[matrix_df["product_instance_id"].isin(selected_ids)]
+        st.info("Filtered to 1 exact product item for stage-specific update")
+
+    # ================= CURRENT STAGE DETECTION =================
+    current_stage = matrix_df.iloc[0]["stage"]
+    current_status = matrix_df.iloc[0]["status"]
 
     # ================= NEXT STAGE =================
     if current_stage == "Not Started":
