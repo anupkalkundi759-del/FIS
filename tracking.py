@@ -169,46 +169,45 @@ def show_tracking(conn, cur):
         })
         latest_df = pd.concat([latest_df, extra], ignore_index=True)
 
-    # ================= LIVE PRODUCT STAGE MATRIX ADDED =================
+    # ================= COMPACT PRODUCT STAGE TRACE ADDED =================
     matrix_df = df[df["product_instance_id"].isin(selected_ids)][["product_instance_id", "product_code", "display"]].copy()
     matrix_df = matrix_df.merge(latest_df, left_on="product_instance_id", right_on="pid", how="left")
     matrix_df["stage"] = matrix_df["stage"].fillna("Not Started")
 
-    st.markdown("### 📊 Live Product Stage Matrix")
+    st.markdown("### 📌 Exact Product Stage Trace")
 
-    pivot = pd.pivot_table(
-        matrix_df,
-        index="product_code",
-        columns="stage",
-        values="product_instance_id",
-        aggfunc="count",
-        fill_value=0
-    )
+    filtered_selected_ids = None
 
-    for stg in ["Not Started"] + stage_sequence:
-        if stg not in pivot.columns:
-            pivot[stg] = 0
+    grouped_products = matrix_df.groupby("product_code")
 
-    pivot = pivot[["Not Started"] + stage_sequence]
-    st.dataframe(pivot, use_container_width=True)
+    for product_code, product_group in grouped_products:
+        with st.expander(f"{product_code}", expanded=False):
 
-    stage_filter_options = ["All Products"]
-    filter_map = {}
+            grouped_stage = product_group.groupby("stage")
 
-    for _, row in matrix_df.iterrows():
-        label = f"{row['product_code']}  |  {row['stage']}  |  {row['display']}"
-        stage_filter_options.append(label)
-        filter_map[label] = row["product_instance_id"]
+            for stage_name, stage_group in grouped_stage:
+                st.markdown(f"**{stage_name} ({len(stage_group)} items)**")
 
-    selected_filter = st.selectbox(
-        "🎯 Optional: Select Exact Product + Current Stage To Update Only That Item",
-        stage_filter_options
-    )
+                for disp in stage_group["display"].tolist()[:8]:
+                    st.write(f"- {disp}")
 
-    if selected_filter != "All Products":
-        selected_ids = [filter_map[selected_filter]]
+                if len(stage_group) > 8:
+                    st.caption(f"... and {len(stage_group)-8} more items")
+
+                chk = st.checkbox(
+                    f"Select all {stage_name} items of {product_code}",
+                    key=f"{product_code}_{stage_name}"
+                )
+
+                if chk:
+                    filtered_selected_ids = stage_group["product_instance_id"].tolist()
+
+                st.markdown("---")
+
+    if filtered_selected_ids is not None:
+        selected_ids = filtered_selected_ids
         matrix_df = matrix_df[matrix_df["product_instance_id"].isin(selected_ids)]
-        st.info("Filtered to 1 exact product item for stage-specific update")
+        st.success(f"{len(selected_ids)} exact grouped items selected for update")
 
     # ================= CURRENT STAGE DETECTION =================
     current_stage = matrix_df.iloc[0]["stage"]
