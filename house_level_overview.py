@@ -5,7 +5,6 @@ def show_dashboard(conn, cur):
     st.title("📊 Workflow Intelligence Monitor")
 
     workflow_stages = [
-        "Not Started",
         "Measurement",
         "Cutting List",
         "Production",
@@ -14,7 +13,6 @@ def show_dashboard(conn, cur):
         "Final Assembly",
         "Dispatch"
     ]
-    stage_rank = {s: i for i, s in enumerate(workflow_stages)}
 
     # ================= MASTER COUNTS =================
     cur.execute("SELECT COUNT(*) FROM projects")
@@ -29,13 +27,12 @@ def show_dashboard(conn, cur):
     cur.execute("SELECT COUNT(*) FROM products")
     master_products = cur.fetchone()[0]
 
-    # ================= LIVE QUERY =================
-    query = """
+    # ================= QUERY 1 : CURRENT LATEST STATUS =================
+    latest_query = """
     WITH latest_tracking AS (
         SELECT
             t.product_instance_id,
             s.stage_name,
-            t.status,
             ROW_NUMBER() OVER (
                 PARTITION BY t.product_instance_id
                 ORDER BY t.timestamp DESC
@@ -49,9 +46,8 @@ def show_dashboard(conn, cur):
         u.unit_name,
         h.house_no,
         pr.product_instance_id,
-        COALESCE(pm.product_code, 'NO PRODUCT') AS product_code,
-        COALESCE(lt.stage_name, 'Not Started') AS current_stage,
-        COALESCE(lt.status, 'Pending') AS current_status
+        COALESCE(pm.product_code,'NO PRODUCT') AS product_code,
+        COALESCE(lt.stage_name,'Not Started') AS current_stage
 
     FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
@@ -63,52 +59,40 @@ def show_dashboard(conn, cur):
         AND lt.rn = 1
     """
 
-    cur.execute(query)
-    rows = cur.fetchall()
+    cur.execute(latest_query)
+    latest_rows = cur.fetchall()
 
-    if not rows:
-        st.warning("No workflow records found.")
-        return
-
-    df = pd.DataFrame(rows, columns=[
-        "Project", "Unit", "House", "ProductInstance", "Product", "Current Stage", "Current Status"
+    latest_df = pd.DataFrame(latest_rows, columns=[
+        "Project", "Unit", "House", "ProductInstance", "Product", "Current Stage"
     ])
 
-    # ================= FILTERS =================
-    st.subheader("📌 Drilldown Filters")
+    # ================= QUERY 2 : HISTORICAL TRACKING TOUCH =================
+    history_query = """
+    SELECT DISTINCT
+        p.project_name,
+        u.unit_name,
+        h.house_no,
+        pr.product_instance_id,
+        pm.product_code,
+        s.stage_name
+    FROM tracking_log t
+    JOIN stages s ON t.stage_id = s.stage_id
+    JOIN products pr ON t.product_instance_id = pr.product_instance_id
+    JOIN products_master pm ON pr.product_id = pm.product_id
+    JOIN houses h ON pr.house_id = h.house_id
+    JOIN units u ON h.unit_id = u.unit_id
+    JOIN projects p ON u.project_id = p.project_id
+    """
 
-    c1, c2, c3 = st.columns(3)
+    cur.execute(history_query)
+    history_rows = cur.fetchall()
 
-    with c1:
-        selected_project = st.selectbox(
-            "Select Project",
-            ["All"] + sorted(df["Project"].dropna().unique().tolist())
-        )
+    history_df = pd.DataFrame(history_rows, columns=[
+        "Project", "Unit", "House", "ProductInstance", "Product", "Touched Stage"
+    ])
 
-    temp1 = df.copy()
-    if selected_project != "All":
-        temp1 = temp1[temp1["Project"] == selected_project]
-
-    with c2:
-        selected_unit = st.selectbox(
-            "Select Unit",
-            ["All"] + sorted(temp1["Unit"].dropna().unique().tolist())
-        )
-
-    temp2 = temp1.copy()
-    if selected_unit != "All":
-        temp2 = temp2[temp2["Unit"] == selected_unit]
-
-    with c3:
-        house_options = sorted(temp2["House"].astype(str).dropna().unique().tolist())
-        selected_houses = st.multiselect("Select Houses (Optional)", house_options)
-
-    temp3 = temp2.copy()
-    if selected_houses:
-        temp3 = temp3[temp3["House"].astype(str).isin(selected_houses)]
-
-    # ================= TRUE MASTER HOUSE LIST =================
-    master_house_query = """
+    # ================= MASTER HOUSE QUERY =================
+    house_query = """
     SELECT
         p.project_name,
         u.unit_name,
@@ -118,69 +102,90 @@ def show_dashboard(conn, cur):
     JOIN projects p ON u.project_id = p.project_id
     """
 
-    cur.execute(master_house_query)
-    master_house_rows = cur.fetchall()
+    cur.execute(house_query)
+    house_rows = cur.fetchall()
 
-    master_house_df = pd.DataFrame(master_house_rows, columns=["Project", "Unit", "House"])
+    master_house_df = pd.DataFrame(house_rows, columns=["Project", "Unit", "House"])
+
+    # ================= FILTERS =================
+    st.subheader("📌 Drilldown Filters")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        selected_project = st.selectbox(
+            "Select Project",
+            ["All"] + sorted(master_house_df["Project"].dropna().unique().tolist())
+        )
 
     if selected_project != "All":
+        latest_df = latest_df[latest_df["Project"] == selected_project]
+        history_df = history_df[history_df["Project"] == selected_project]
         master_house_df = master_house_df[master_house_df["Project"] == selected_project]
 
+    with c2:
+        selected_unit = st.selectbox(
+            "Select Unit",
+            ["All"] + sorted(master_house_df["Unit"].dropna().unique().tolist())
+        )
+
     if selected_unit != "All":
+        latest_df = latest_df[latest_df["Unit"] == selected_unit]
+        history_df = history_df[history_df["Unit"] == selected_unit]
         master_house_df = master_house_df[master_house_df["Unit"] == selected_unit]
 
+    with c3:
+        house_options = sorted(master_house_df["House"].astype(str).dropna().unique().tolist())
+        selected_houses = st.multiselect("Select Houses (Optional)", house_options)
+
     if selected_houses:
+        latest_df = latest_df[latest_df["House"].astype(str).isin(selected_houses)]
+        history_df = history_df[history_df["House"].astype(str).isin(selected_houses)]
         master_house_df = master_house_df[master_house_df["House"].astype(str).isin(selected_houses)]
 
     total_houses = len(master_house_df)
 
-    # ================= LIVE KPI =================
+    # ================= LIVE SUMMARY =================
     st.subheader("📈 Live Workflow Summary")
 
-    live_projects = master_house_df["Project"].nunique()
-    live_units = master_house_df["Unit"].nunique()
-    live_houses = total_houses
-    live_products = len(temp3[temp3["Product"] != "NO PRODUCT"])
-
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Projects", live_projects)
-    k2.metric("Units", live_units)
-    k3.metric("Houses", live_houses)
-    k4.metric("Total Products", live_products)
+    k1.metric("Projects", master_house_df["Project"].nunique())
+    k2.metric("Units", master_house_df["Unit"].nunique())
+    k3.metric("Houses", total_houses)
+    k4.metric("Total Products", len(latest_df[latest_df["Product"] != "NO PRODUCT"]))
 
-    # ================= EXACT CURRENT STAGE KPI =================
+    # ================= TRUE HISTORICAL KPI =================
     st.subheader("🚦 House Stage Completion KPI")
 
-    for stage in workflow_stages[1:]:
+    for stage in workflow_stages:
 
-        stage_house_updated = temp3[
-            (temp3["Product"] != "NO PRODUCT") &
-            (temp3["Current Stage"] == stage)
+        houses_updated = history_df[
+            history_df["Touched Stage"] == stage
         ]["House"].astype(str).nunique()
 
-        stage_house_pending = total_houses - stage_house_updated
+        houses_yet = total_houses - houses_updated
 
-        stage_products_pending = len(
-            temp3[
-                (temp3["Product"] != "NO PRODUCT") &
-                (temp3["Current Stage"] == stage)
+        products_pending = len(
+            latest_df[
+                (latest_df["Product"] != "NO PRODUCT") &
+                (latest_df["Current Stage"] == stage)
             ]
         )
 
-        stage_progress_pct = round((stage_house_updated / total_houses) * 100, 2) if total_houses > 0 else 0
+        pct = round((houses_updated / total_houses) * 100, 2) if total_houses > 0 else 0
 
         a, b, c, d = st.columns(4)
-        a.metric(f"{stage} Houses Updated", stage_house_updated)
-        b.metric(f"{stage} Houses Yet To Reach", stage_house_pending)
-        c.metric(f"{stage} Products Pending", stage_products_pending)
-        d.metric(f"{stage} Progress %", f"{stage_progress_pct}%")
+        a.metric(f"{stage} Houses Updated", houses_updated)
+        b.metric(f"{stage} Houses Yet To Reach", houses_yet)
+        c.metric(f"{stage} Products Pending", products_pending)
+        d.metric(f"{stage} Progress %", f"{pct}%")
 
-    # ================= PRODUCT LEVEL PENDING DISTRIBUTION =================
+    # ================= PRODUCT LEVEL CURRENT PENDING =================
     if selected_unit != "All":
         st.subheader("🧩 Product Level Pending Distribution In Selected Unit")
 
         product_stage = pd.pivot_table(
-            temp3[temp3["Product"] != "NO PRODUCT"],
+            latest_df[latest_df["Product"] != "NO PRODUCT"],
             index="Product",
             columns="Current Stage",
             values="House",
@@ -188,44 +193,38 @@ def show_dashboard(conn, cur):
             fill_value=0
         ).reset_index()
 
-        for s in workflow_stages:
+        for s in ["Not Started"] + workflow_stages:
             if s not in product_stage.columns:
                 product_stage[s] = 0
 
-        total_qty = temp3[temp3["Product"] != "NO PRODUCT"].groupby("Product")["House"].count().reset_index(name="Total Qty")
+        total_qty = latest_df[latest_df["Product"] != "NO PRODUCT"].groupby("Product")["House"].count().reset_index(name="Total Qty")
         product_stage = product_stage.merge(total_qty, on="Product")
 
-        ordered_cols = ["Product", "Total Qty"] + workflow_stages
+        ordered_cols = ["Product", "Total Qty", "Not Started"] + workflow_stages
         product_stage = product_stage[ordered_cols].sort_values("Total Qty", ascending=False)
         product_stage = product_stage.reset_index(drop=True)
         product_stage.index = product_stage.index + 1
 
         st.dataframe(product_stage, use_container_width=True, height=420)
 
-    # ================= HOUSE DETAIL =================
+    # ================= HOUSE CURRENT DETAIL =================
     if selected_houses:
         for house in selected_houses:
             st.subheader(f"🏠 {house} Detailed Pending Product Status")
 
-            house_df = temp3[
-                (temp3["House"].astype(str) == str(house)) &
-                (temp3["Product"] != "NO PRODUCT") &
-                (temp3["Current Stage"] != "Dispatch")
+            house_df = latest_df[
+                (latest_df["House"].astype(str) == str(house)) &
+                (latest_df["Product"] != "NO PRODUCT") &
+                (latest_df["Current Stage"] != "Dispatch")
             ].copy()
 
             if house_df.empty:
                 st.success("All products dispatched in this house.")
                 continue
 
-            house_pending_df = house_df[["Product", "Current Stage"]].copy()
-            house_pending_df.columns = ["Product", "Pending In Stage"]
+            detail = house_df[["Product", "Current Stage"]].copy()
+            detail.columns = ["Product", "Pending In Stage"]
+            detail = detail.reset_index(drop=True)
+            detail.index = detail.index + 1
 
-            house_pending_df = house_pending_df.sort_values(
-                "Pending In Stage",
-                key=lambda x: x.map(stage_rank)
-            )
-
-            house_pending_df = house_pending_df.reset_index(drop=True)
-            house_pending_df.index = house_pending_df.index + 1
-
-            st.dataframe(house_pending_df, use_container_width=True, height=320)
+            st.dataframe(detail, use_container_width=True, height=320)
