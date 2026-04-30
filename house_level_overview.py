@@ -127,50 +127,61 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", live_houses)
     k4.metric("Total Products", live_products)
 
-    # ================= HOUSE STAGE COMPLETION KPI =================
+    # ================= STAGE KPI CARDS =================
     st.subheader("🚦 House Stage Completion KPI")
 
     filtered_houses = sorted(temp3["House"].astype(str).dropna().unique().tolist())
-    stage_kpi_rows = []
 
-    for stage in workflow_stages[1:]:
-        completed_list = []
-        pending_list = []
+    for i in range(1, len(workflow_stages)):
+        stage = workflow_stages[i]
+
+        completed_houses = 0
+        pending_houses = 0
+        pending_products_in_stage = len(
+            temp3[
+                (temp3["Product"] != "NO PRODUCT") &
+                (temp3["Current Stage"] == stage)
+            ]
+        )
+
+        crossed_products = len(
+            temp3[
+                (temp3["Product"] != "NO PRODUCT") &
+                (temp3["Current Stage"].map(stage_rank) > stage_rank[stage])
+            ]
+        )
+
+        total_products = len(temp3[temp3["Product"] != "NO PRODUCT"])
+
+        completion_pct = round((crossed_products / total_products) * 100, 2) if total_products > 0 else 0
 
         for house in filtered_houses:
             house_df = temp3[
                 (temp3["House"].astype(str) == str(house)) &
                 (temp3["Product"] != "NO PRODUCT")
-            ].copy()
+            ]
 
             if house_df.empty:
                 continue
 
-            total_products = len(house_df)
+            total_house_products = len(house_df)
 
-            completed_products = len(
+            crossed_house_products = len(
                 house_df[
-                    house_df["Current Stage"].map(stage_rank) >= stage_rank[stage]
+                    house_df["Current Stage"].map(stage_rank) > stage_rank[stage]
                 ]
             )
 
-            if completed_products == total_products:
-                completed_list.append(str(house))
+            if crossed_house_products == total_house_products:
+                completed_houses += 1
             else:
-                pending_list.append(str(house))
+                pending_houses += 1
 
-        stage_kpi_rows.append({
-            "Stage": stage,
-            "Houses Completed": len(completed_list),
-            "Completed House Nos": ", ".join(completed_list) if completed_list else "-",
-            "Houses Pending": len(pending_list),
-            "Pending House Nos": ", ".join(pending_list) if pending_list else "-"
-        })
-
-    stage_kpi_df = pd.DataFrame(stage_kpi_rows)
-    stage_kpi_df.index = stage_kpi_df.index + 1
-
-    st.dataframe(stage_kpi_df, use_container_width=True, height=350)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(f"{stage} Houses Completed", completed_houses)
+        c2.metric(f"{stage} Houses Pending", pending_houses)
+        c3.metric(f"{stage} Products Pending", pending_products_in_stage)
+        c4.metric(f"{stage} Completion %", f"{completion_pct}%")
 
     # ================= UNIT LEVEL PRODUCT PENDING DISTRIBUTION =================
     if selected_unit != "All":
@@ -190,25 +201,14 @@ def show_dashboard(conn, cur):
             fill_value=0
         ).reset_index()
 
-        for s in workflow_stages:
+        for s in workflow_stages[:-1]:
             if s not in product_stage.columns:
                 product_stage[s] = 0
 
         ordered_cols = ["Product"] + workflow_stages[:-1]
         product_stage = product_stage[ordered_cols]
 
-        rename_cols = {
-            "Not Started": "Measurement Pending",
-            "Measurement": "Cutting Pending",
-            "Cutting List": "Production Pending",
-            "Production": "Pre Assembly Pending",
-            "Pre Assembly": "Polishing Pending",
-            "Polishing": "Final Assembly Pending",
-            "Final Assembly": "Dispatch Pending"
-        }
-
-        product_stage = product_stage.rename(columns=rename_cols)
-        product_stage = product_stage.sort_values(by=product_stage.columns[1:].tolist(), ascending=False)
+        product_stage = product_stage.sort_values(by=ordered_cols[1:], ascending=False)
         product_stage = product_stage.reset_index(drop=True)
         product_stage.index = product_stage.index + 1
 
