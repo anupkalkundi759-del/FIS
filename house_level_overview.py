@@ -5,7 +5,7 @@ def show_dashboard(conn, cur):
     st.title("📊 Workflow Intelligence Monitor")
 
     workflow_stages = [
-        "Measurement",
+        "Not Started",
         "Cutting List",
         "Production",
         "Pre Assembly",
@@ -114,31 +114,27 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", total_houses)
     k4.metric("Total Products", total_products_scope)
 
-    # ================= KPI MATRIX =================
+    # ================= STAGE COMPLETION MATRIX =================
     st.subheader("🚦 Stage Completion Performance Matrix")
 
     kpi_rows = []
 
     for stage in workflow_stages:
 
-        if stage == "Measurement":
-            pending_df = latest_df[
-                (latest_df["Product"] != "NO PRODUCT") &
-                (latest_df["Current Stage"].isin(["Not Started", "Measurement"]))
-            ]
-        else:
-            pending_df = latest_df[
-                (latest_df["Product"] != "NO PRODUCT") &
-                (latest_df["Current Stage"] == stage)
-            ]
+        pending_df = latest_df[
+            (latest_df["Product"] != "NO PRODUCT") &
+            (latest_df["Current Stage"] == stage)
+        ]
 
         pending_products = len(pending_df)
         houses_impacted = pending_df["House"].astype(str).nunique()
 
         completion_pct = round(((total_products_scope - pending_products) / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
 
+        stage_label = "Measurement" if stage == "Not Started" else stage
+
         kpi_rows.append([
-            stage,
+            stage_label,
             total_products_scope,
             pending_products,
             houses_impacted,
