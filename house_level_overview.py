@@ -103,7 +103,8 @@ def show_dashboard(conn, cur):
         master_house_df = master_house_df[master_house_df["House"].astype(str).isin(selected_houses)]
 
     total_houses = len(master_house_df)
-    total_products_scope = len(latest_df[latest_df["Product"] != "NO PRODUCT"])
+    product_df = latest_df[latest_df["Product"] != "NO PRODUCT"].copy()
+    total_products_scope = len(product_df)
 
     # ================= LIVE SUMMARY =================
     st.subheader("📈 Live Workflow Summary")
@@ -117,19 +118,33 @@ def show_dashboard(conn, cur):
     # ================= STAGE COMPLETION MATRIX =================
     st.subheader("🚦 Stage Completion Performance Matrix")
 
+    stage_rank = {
+        "Not Started": 0,
+        "Cutting List": 1,
+        "Production": 2,
+        "Pre Assembly": 3,
+        "Polishing": 4,
+        "Final Assembly": 5,
+        "Dispatch": 6
+    }
+
+    product_df["StageRank"] = product_df["Current Stage"].map(stage_rank)
+
     kpi_rows = []
 
     for stage in workflow_stages:
 
-        pending_df = latest_df[
-            (latest_df["Product"] != "NO PRODUCT") &
-            (latest_df["Current Stage"] == stage)
-        ]
+        current_rank = stage_rank[stage]
+
+        # cumulative products not yet crossed this stage
+        pending_df = product_df[product_df["StageRank"] <= current_rank]
 
         pending_products = len(pending_df)
         houses_impacted = pending_df["House"].astype(str).nunique()
 
-        completion_pct = round(((total_products_scope - pending_products) / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
+        completion_pct = round(
+            ((total_products_scope - pending_products) / total_products_scope) * 100, 2
+        ) if total_products_scope > 0 else 0
 
         stage_label = "Measurement" if stage == "Not Started" else stage
 
@@ -141,25 +156,27 @@ def show_dashboard(conn, cur):
             f"{completion_pct}%"
         ])
 
-    # OVERALL COMPLETION
-    dispatch_completed = len(
-        latest_df[
-            (latest_df["Product"] != "NO PRODUCT") &
-            (latest_df["Current Stage"] == "Dispatch")
-        ]
-    )
+    # ================= OVERALL COMPLETION =================
+    house_group = product_df.groupby("House")["Current Stage"].apply(list)
 
-    overall_pending = total_products_scope - dispatch_completed
-    overall_completion = round((dispatch_completed / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
+    fully_dispatch_houses = 0
+    for house, stages in house_group.items():
+        if all(str(x) == "Dispatch" for x in stages):
+            fully_dispatch_houses += 1
+
+    overall_houses_impacted = total_houses - fully_dispatch_houses
+
+    dispatch_completed_products = len(product_df[product_df["Current Stage"] == "Dispatch"])
+    overall_pending = total_products_scope - dispatch_completed_products
+    overall_completion = round(
+        (dispatch_completed_products / total_products_scope) * 100, 2
+    ) if total_products_scope > 0 else 0
 
     kpi_rows.append([
         "OVERALL COMPLETION",
         total_products_scope,
         overall_pending,
-        latest_df[
-            (latest_df["Product"] != "NO PRODUCT") &
-            (latest_df["Current Stage"] != "Dispatch")
-        ]["House"].astype(str).nunique(),
+        overall_houses_impacted,
         f"{overall_completion}%"
     ])
 
@@ -176,10 +193,9 @@ def show_dashboard(conn, cur):
         for house in selected_houses:
             st.subheader(f"🏠 {house} Detailed Pending Product Status")
 
-            house_df = latest_df[
-                (latest_df["House"].astype(str) == str(house)) &
-                (latest_df["Product"] != "NO PRODUCT") &
-                (latest_df["Current Stage"] != "Dispatch")
+            house_df = product_df[
+                (product_df["House"].astype(str) == str(house)) &
+                (product_df["Current Stage"] != "Dispatch")
             ].copy()
 
             if house_df.empty:
