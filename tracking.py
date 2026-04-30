@@ -188,8 +188,20 @@ def show_tracking(conn, cur):
 
         with st.expander(f"{stg} ({len(stage_group)} items)", expanded=False):
 
+            stage_search = st.text_input(f"Search in {stg}", key=f"search_{stg}")
+
+            if stage_search:
+                stage_group = stage_group[
+                    stage_group["display"].str.contains(stage_search, case=False, na=False)
+                ]
+
+            select_stage_all = st.checkbox(
+                f"Select All Visible in {stg}",
+                key=f"all_{stg}"
+            )
+
             shown_rows = stage_group[["product_instance_id", "display"]].copy()
-            shown_rows["Move"] = False
+            shown_rows["Move"] = select_stage_all
 
             edited_stage = st.data_editor(
                 shown_rows[["Move", "display"]],
