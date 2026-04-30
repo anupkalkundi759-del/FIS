@@ -12,19 +12,8 @@ def show_dashboard_v2(conn, cur):
 
     st.title("📊 Workflow Intelligence Monitor")
 
-    stage_order = [
-        "Not Started",
-        "Measurement",
-        "Cutting List",
-        "Production",
-        "Pre Assembly",
-        "Polishing",
-        "Final Assembly",
-        "Dispatch"
-    ]
-
     # ============================================================
-    # LIVE MASTER QUERY WITH TRUE UNIT JOIN
+    # LIVE MASTER QUERY
     # ============================================================
     live_query = """
     WITH latest_tracking AS (
@@ -62,7 +51,7 @@ def show_dashboard_v2(conn, cur):
     total_houses = pd.read_sql_query("SELECT COUNT(DISTINCT house_id) AS cnt FROM houses", conn)["cnt"][0]
 
     # ============================================================
-    # HOUSE COMPLETION
+    # HOUSE STATUS
     # ============================================================
     house_stage = live_df.groupby("house_id")["current_stage"].apply(list)
 
@@ -74,20 +63,14 @@ def show_dashboard_v2(conn, cur):
     running_houses = total_houses - completed_houses
 
     # ============================================================
-    # BUSINESS BACKLOG DEFINITIONS
+    # BACKLOG COUNTS
     # ============================================================
     measurement_pending = len(live_df[live_df["current_stage"] == "Not Started"])
     production_pending = len(live_df[live_df["current_stage"] == "Production"])
     dispatch_pending = len(live_df[live_df["current_stage"] == "Dispatch"])
 
-    backlog_counts = {
-        "Measurement": measurement_pending,
-        "Production": production_pending,
-        "Dispatch": dispatch_pending
-    }
-
-    bottleneck_stage = max(backlog_counts, key=backlog_counts.get)
-    highest_pending = backlog_counts[bottleneck_stage]
+    bottleneck_stage = "Measurement"
+    highest_pending = measurement_pending
 
     overall_completion = round((dispatch_pending / total_products) * 100, 2)
 
@@ -107,46 +90,79 @@ def show_dashboard_v2(conn, cur):
     st.markdown("---")
 
     # ============================================================
-    # ROW 2
+    # ROW 2 DATA SPLIT
+    # ============================================================
+    not_started_house = (
+        live_df[live_df["current_stage"] == "Not Started"]
+        .groupby(["house_id", "house_no"])
+        .size()
+        .reset_index(name="Untouched")
+        .sort_values("Untouched", ascending=False)
+        .head(4)
+    )
+
+    active_running_house = (
+        live_df[~live_df["current_stage"].isin(["Not Started", "Dispatch"])]
+        .groupby(["house_id", "house_no"])
+        .size()
+        .reset_index(name="Running Pending")
+        .sort_values("Running Pending", ascending=False)
+        .head(4)
+    )
+
+    not_started_unit = (
+        live_df[live_df["current_stage"] == "Not Started"]
+        .groupby("real_unit")
+        .size()
+        .reset_index(name="Untouched")
+        .sort_values("Untouched", ascending=False)
+        .head(4)
+    )
+
+    active_running_unit = (
+        live_df[~live_df["current_stage"].isin(["Not Started", "Dispatch"])]
+        .groupby("real_unit")
+        .size()
+        .reset_index(name="Running Pending")
+        .sort_values("Running Pending", ascending=False)
+        .head(4)
+    )
+
+    # ============================================================
+    # ROW 2 DISPLAY
     # ============================================================
     r1, r2, r3 = st.columns(3)
 
-    pending_house = (
-        live_df[live_df["current_stage"] != "Dispatch"]
-        .groupby(["house_id", "house_no"])
-        .size()
-        .reset_index(name="Pending Products")
-        .sort_values("Pending Products", ascending=False)
-        .head(8)
-    )
-
-    busy_units = (
-        live_df[live_df["current_stage"] != "Dispatch"]
-        .groupby("real_unit")
-        .size()
-        .reset_index(name="Pending Products")
-        .sort_values("Pending Products", ascending=False)
-        .head(8)
-    )
-
     with r1:
         with st.container(border=True):
-            st.subheader("🏠 Top Delayed Houses")
-            for _, row in pending_house.iterrows():
-                st.write(f"{row['house_no']} → {row['Pending Products']} pending")
+            st.subheader("🏠 House Execution Snapshot")
+
+            st.markdown("**Not Started Heavy Houses**")
+            for _, row in not_started_house.iterrows():
+                st.write(f"{row['house_no']} → {row['Untouched']} untouched")
+
+            st.markdown("**Active Running Houses**")
+            for _, row in active_running_house.iterrows():
+                st.write(f"{row['house_no']} → {row['Running Pending']} running pending")
 
     with r2:
         with st.container(border=True):
-            st.subheader("🏗 Top Busy Units")
-            for _, row in busy_units.iterrows():
-                st.write(f"{row['real_unit']} → {row['Pending Products']} pending")
+            st.subheader("🏗 Unit Load Snapshot")
+
+            st.markdown("**Units With Max Untouched Load**")
+            for _, row in not_started_unit.iterrows():
+                st.write(f"{row['real_unit']} → {row['Untouched']} untouched")
+
+            st.markdown("**Units With Max Active Load**")
+            for _, row in active_running_unit.iterrows():
+                st.write(f"{row['real_unit']} → {row['Running Pending']} running pending")
 
     with r3:
         with st.container(border=True):
             st.subheader("🚦 Stage Pressure")
-            st.write(f"Measurement → {measurement_pending}")
-            st.write(f"Production → {production_pending}")
-            st.write(f"Dispatch → {dispatch_pending}")
+            st.write(f"Measurement Untouched → {measurement_pending}")
+            st.write(f"Production Running → {production_pending}")
+            st.write(f"Dispatch Closure → {dispatch_pending}")
 
     st.markdown("---")
 
@@ -189,10 +205,10 @@ def show_dashboard_v2(conn, cur):
         with st.container(border=True):
             st.subheader("📌 Immediate Actions Needed")
 
-            top_unit = busy_units.iloc[0]["real_unit"] if not busy_units.empty else "N/A"
+            top_unit = not_started_unit.iloc[0]["real_unit"] if not not_started_unit.empty else "N/A"
 
-            st.error(f"Measurement pending too high ({measurement_pending})")
+            st.error(f"Measurement untouched too high ({measurement_pending})")
             st.warning(f"Production queue building ({production_pending})")
             st.error(f"Dispatch closure low ({dispatch_pending})")
-            st.info(f"Unit {top_unit} needs monitoring")
+            st.info(f"Unit {top_unit} needs measurement release")
             st.info(f"{running_houses} houses still open")
