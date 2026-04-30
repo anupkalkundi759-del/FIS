@@ -107,15 +107,43 @@ def show_dashboard(conn, cur):
     if selected_houses:
         temp3 = temp3[temp3["House"].astype(str).isin(selected_houses)]
 
-    # ================= TRUE MASTER FILTERED HOUSES =================
-    filtered_master_houses = sorted(temp3["House"].astype(str).dropna().unique().tolist())
-    total_houses = len(filtered_master_houses)
+    # ================= TRUE MASTER HOUSE LIST (OLD CODE FOUNDATION) =================
+    master_house_query = """
+    SELECT
+        p.project_name,
+        u.unit_name,
+        h.house_no
+    FROM houses h
+    JOIN units u ON h.unit_id = u.unit_id
+    JOIN projects p ON u.project_id = p.project_id
+    """
+
+    cur.execute(master_house_query)
+    master_house_rows = cur.fetchall()
+
+    master_house_df = pd.DataFrame(master_house_rows, columns=["Project", "Unit", "House"])
+
+    if selected_project != "All":
+        master_house_df = master_house_df[master_house_df["Project"] == selected_project]
+
+    if selected_unit != "All":
+        master_house_df = master_house_df[master_house_df["Unit"] == selected_unit]
+
+    if selected_houses:
+        master_house_df = master_house_df[master_house_df["House"].astype(str).isin(selected_houses)]
+
+    total_houses = len(master_house_df)
 
     # ================= LIVE KPI =================
     st.subheader("📈 Live Workflow Summary")
 
-    live_projects = temp3["Project"].nunique()
-    live_units = temp3["Unit"].nunique()
+    if selected_project == "All" and selected_unit == "All" and not selected_houses:
+        live_projects = master_projects
+        live_units = master_units
+    else:
+        live_projects = master_house_df["Project"].nunique()
+        live_units = master_house_df["Unit"].nunique()
+
     live_houses = total_houses
     live_products = len(temp3[temp3["Product"] != "NO PRODUCT"])
 
@@ -125,56 +153,53 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", live_houses)
     k4.metric("Total Products", live_products)
 
-    # ================= HOUSE STAGE KPI =================
+    # ================= NEW HOUSE STAGE KPI =================
     st.subheader("🚦 House Stage Completion KPI")
+
+    master_house_list = master_house_df["House"].astype(str).tolist()
 
     for stage in workflow_stages[1:]:
 
-        stage_updated_houses = 0
+        updated_houses = 0
 
-        for house in filtered_master_houses:
+        for house in master_house_list:
             house_df = temp3[
                 (temp3["House"].astype(str) == str(house)) &
                 (temp3["Product"] != "NO PRODUCT")
             ]
 
-            reached = len(
+            reached_count = len(
                 house_df[
                     house_df["Current Stage"].map(stage_rank) >= stage_rank[stage]
                 ]
             )
 
-            if reached > 0:
-                stage_updated_houses += 1
+            if reached_count > 0:
+                updated_houses += 1
 
-        stage_yet_to_reach = total_houses - stage_updated_houses
+        yet_to_reach = total_houses - updated_houses
 
-        stage_pending_products = len(
+        pending_products = len(
             temp3[
                 (temp3["Product"] != "NO PRODUCT") &
                 (temp3["Current Stage"] == stage)
             ]
         )
 
-        stage_progress_pct = round((stage_updated_houses / total_houses) * 100, 2) if total_houses > 0 else 0
+        progress_pct = round((updated_houses / total_houses) * 100, 2) if total_houses > 0 else 0
 
         a, b, c, d = st.columns(4)
-        a.metric(f"{stage} Houses Updated", stage_updated_houses)
-        b.metric(f"{stage} Houses Yet To Reach", stage_yet_to_reach)
-        c.metric(f"{stage} Products Pending", stage_pending_products)
-        d.metric(f"{stage} Progress %", f"{stage_progress_pct}%")
+        a.metric(f"{stage} Houses Updated", updated_houses)
+        b.metric(f"{stage} Houses Yet To Reach", yet_to_reach)
+        c.metric(f"{stage} Products Pending", pending_products)
+        d.metric(f"{stage} Progress %", f"{progress_pct}%")
 
-    # ================= UNIT PRODUCT LEVEL PENDING =================
+    # ================= PRODUCT LEVEL PENDING DISTRIBUTION =================
     if selected_unit != "All":
         st.subheader("🧩 Product Level Pending Distribution In Selected Unit")
 
-        pending_unit_df = temp3[
-            (temp3["Product"] != "NO PRODUCT") &
-            (temp3["Current Stage"] != "Dispatch")
-        ].copy()
-
         product_stage = pd.pivot_table(
-            pending_unit_df,
+            temp3[temp3["Product"] != "NO PRODUCT"],
             index="Product",
             columns="Current Stage",
             values="House",
@@ -182,20 +207,21 @@ def show_dashboard(conn, cur):
             fill_value=0
         ).reset_index()
 
-        for s in workflow_stages[:-1]:
+        for s in workflow_stages:
             if s not in product_stage.columns:
                 product_stage[s] = 0
 
-        ordered_cols = ["Product"] + workflow_stages[:-1]
-        product_stage = product_stage[ordered_cols]
+        total_qty = temp3[temp3["Product"] != "NO PRODUCT"].groupby("Product")["House"].count().reset_index(name="Total Qty")
+        product_stage = product_stage.merge(total_qty, on="Product")
 
-        product_stage = product_stage.sort_values(by=ordered_cols[1:], ascending=False)
+        ordered_cols = ["Product", "Total Qty"] + workflow_stages
+        product_stage = product_stage[ordered_cols].sort_values("Total Qty", ascending=False)
         product_stage = product_stage.reset_index(drop=True)
         product_stage.index = product_stage.index + 1
 
-        st.dataframe(product_stage, use_container_width=True, height=350)
+        st.dataframe(product_stage, use_container_width=True, height=420)
 
-    # ================= HOUSE EXACT DETAIL =================
+    # ================= HOUSE DETAIL =================
     if selected_houses:
         for house in selected_houses:
             st.subheader(f"🏠 {house} Detailed Pending Product Status")
