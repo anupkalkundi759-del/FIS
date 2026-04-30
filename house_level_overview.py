@@ -134,18 +134,16 @@ def show_dashboard(conn, cur):
 
     for stage in workflow_stages:
 
-        target_rank = full_stage_order[stage]
-
         products_pending = len(
             latest_df[
                 (latest_df["Product"] != "NO PRODUCT") &
-                (latest_df["Stage Rank"] < target_rank)
+                (latest_df["Current Stage"] == stage)
             ]
         )
 
         houses_impacted = latest_df[
             (latest_df["Product"] != "NO PRODUCT") &
-            (latest_df["Stage Rank"] < target_rank)
+            (latest_df["Current Stage"] == stage)
         ]["House"].astype(str).nunique()
 
         completion_pct = round(((total_products_scope - products_pending) / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
@@ -157,6 +155,27 @@ def show_dashboard(conn, cur):
             houses_impacted,
             f"{completion_pct}%"
         ])
+
+    # OVERALL COMPLETION ROW
+    total_pending_all = len(
+        latest_df[
+            (latest_df["Product"] != "NO PRODUCT") &
+            (latest_df["Current Stage"] != "Dispatch")
+        ]
+    )
+
+    overall_completion = round(((total_products_scope - total_pending_all) / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
+
+    kpi_rows.append([
+        "OVERALL COMPLETION",
+        total_products_scope,
+        total_pending_all,
+        latest_df[
+            (latest_df["Product"] != "NO PRODUCT") &
+            (latest_df["Current Stage"] != "Dispatch")
+        ]["House"].astype(str).nunique(),
+        f"{overall_completion}%"
+    ])
 
     kpi_df = pd.DataFrame(
         kpi_rows,
@@ -170,7 +189,7 @@ def show_dashboard(conn, cur):
     )
 
     kpi_df.index = kpi_df.index + 1
-    st.dataframe(kpi_df, use_container_width=True, height=320)
+    st.dataframe(kpi_df, use_container_width=True, height=370)
 
     # ================= HOUSE DETAIL ONLY =================
     if selected_houses:
