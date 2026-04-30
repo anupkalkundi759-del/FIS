@@ -25,7 +25,7 @@ def show_dashboard(conn, cur):
         "Dispatch": 7
     }
 
-    # ================= QUERY CURRENT LATEST STATUS =================
+    # ================= CURRENT LATEST STATUS QUERY =================
     latest_query = """
     WITH latest_tracking AS (
         SELECT
@@ -127,49 +127,49 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", total_houses)
     k4.metric("Total Products", total_products_scope)
 
-    # ================= TRUE KPI MATRIX =================
+    # ================= STAGE COMPLETION MATRIX =================
     st.subheader("🚦 Stage Completion Performance Matrix")
 
     kpi_rows = []
 
     for stage in workflow_stages:
 
-        products_pending = len(
-            latest_df[
-                (latest_df["Product"] != "NO PRODUCT") &
-                (latest_df["Current Stage"] == stage)
-            ]
-        )
+        target_rank = full_stage_order[stage]
 
-        houses_impacted = latest_df[
+        pending_df = latest_df[
             (latest_df["Product"] != "NO PRODUCT") &
-            (latest_df["Current Stage"] == stage)
-        ]["House"].astype(str).nunique()
+            (latest_df["Stage Rank"] < target_rank)
+        ]
 
-        completion_pct = round(((total_products_scope - products_pending) / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
+        pending_products = len(pending_df)
+
+        houses_impacted = pending_df["House"].astype(str).nunique()
+
+        completion_pct = round(((total_products_scope - pending_products) / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
 
         kpi_rows.append([
             stage,
             total_products_scope,
-            products_pending,
+            pending_products,
             houses_impacted,
             f"{completion_pct}%"
         ])
 
-    # OVERALL COMPLETION ROW
-    total_pending_all = len(
+    # OVERALL COMPLETION = products fully dispatched
+    dispatch_completed = len(
         latest_df[
             (latest_df["Product"] != "NO PRODUCT") &
-            (latest_df["Current Stage"] != "Dispatch")
+            (latest_df["Current Stage"] == "Dispatch")
         ]
     )
 
-    overall_completion = round(((total_products_scope - total_pending_all) / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
+    overall_pending = total_products_scope - dispatch_completed
+    overall_completion = round((dispatch_completed / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
 
     kpi_rows.append([
         "OVERALL COMPLETION",
         total_products_scope,
-        total_pending_all,
+        overall_pending,
         latest_df[
             (latest_df["Product"] != "NO PRODUCT") &
             (latest_df["Current Stage"] != "Dispatch")
@@ -179,19 +179,13 @@ def show_dashboard(conn, cur):
 
     kpi_df = pd.DataFrame(
         kpi_rows,
-        columns=[
-            "Stage",
-            "Total Products",
-            "Pending Products",
-            "Houses Impacted",
-            "Completion %"
-        ]
+        columns=["Stage", "Total Products", "Pending Products", "Houses Impacted", "Completion %"]
     )
 
     kpi_df.index = kpi_df.index + 1
     st.dataframe(kpi_df, use_container_width=True, height=370)
 
-    # ================= HOUSE DETAIL ONLY =================
+    # ================= HOUSE DETAILED PENDING =================
     if selected_houses:
         for house in selected_houses:
             st.subheader(f"🏠 {house} Detailed Pending Product Status")
