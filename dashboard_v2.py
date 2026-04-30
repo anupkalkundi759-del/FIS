@@ -75,7 +75,7 @@ def show_dashboard_v2(conn, cur):
     active_houses = live_df["house_no"].nunique()
 
     dispatch_products = len(live_df[live_df["current_stage"] == "Dispatch"])
-    completion_pct = round((dispatch_products / total_products) * 100, 2)
+    completion_pct = round((dispatch_products / total_products) * 100, 2) if total_products > 0 else 0
 
     backlog_counts = {}
     for stg in stage_order:
@@ -98,15 +98,18 @@ def show_dashboard_v2(conn, cur):
         else:
             critical_houses += 1
 
-    top_unit = live_df.groupby("unit_name").size().sort_values(ascending=False).index[0]
-    top_project = live_df.groupby("project_name").size().sort_values(ascending=False).index[0]
+    unit_rank = live_df.dropna(subset=["unit_name"]).groupby("unit_name").size().sort_values(ascending=False)
+    project_rank = live_df.dropna(subset=["project_name"]).groupby("project_name").size().sort_values(ascending=False)
+
+    top_unit = unit_rank.index[0] if not unit_rank.empty else "N/A"
+    top_project = project_rank.index[0] if not project_rank.empty else "N/A"
 
     measurement_backlog = backlog_counts["Measurement"]
     production_backlog = backlog_counts["Production"]
     dispatch_backlog = backlog_counts["Dispatch"]
 
     # ================= KPI ROW =================
-    k1,k2,k3,k4,k5,k6,k7 = st.columns(7)
+    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
 
     k1.metric("Live Products", total_products)
     k2.metric("Active Houses", active_houses)
@@ -119,7 +122,7 @@ def show_dashboard_v2(conn, cur):
     st.markdown("---")
 
     # ================= ROW 2 =================
-    a1,a2,a3 = st.columns([1,1,1])
+    a1, a2, a3 = st.columns([1, 1, 1])
 
     with a1:
         st.subheader("📦 Stage Backlog Snapshot")
@@ -139,16 +142,16 @@ def show_dashboard_v2(conn, cur):
         st.subheader("🧠 Smart Manager Insights")
 
         st.info(f"🔴 Worst bottleneck at {bottleneck_stage}")
-        st.info(f"🟠 {measurement_backlog} products waiting from measurement side")
-        st.info(f"🟡 {dispatch_backlog} products pending for closure")
-        st.info(f"🏗 Heavy supervisory load in Unit {top_unit}")
-        st.info(f"📍 Highest project running volume : {top_project}")
-        st.info(f"⚠ {critical_houses} houses still operationally open")
+        st.info(f"🟠 {measurement_backlog} products waiting from measurement")
+        st.info(f"🟡 {dispatch_backlog} products pending for dispatch closure")
+        st.info(f"🏗 Highest supervisory load in Unit {top_unit}")
+        st.info(f"📍 Highest running volume in Project {top_project}")
+        st.info(f"⚠ {critical_houses} houses still under execution")
 
     st.markdown("---")
 
     # ================= ROW 3 =================
-    b1,b2 = st.columns([1.7,1])
+    b1, b2 = st.columns([1.7, 1])
 
     with b1:
         st.subheader("📈 Daily Workflow Pending Trend")
@@ -159,27 +162,30 @@ def show_dashboard_v2(conn, cur):
             trend_df["Date"] = trend_df["timestamp"].dt.date
             daily = trend_df.groupby(["Date", "current_stage"]).size().reset_index(name="Count")
 
-            fig = px.line(
-                daily,
-                x="Date",
-                y="Count",
-                color="current_stage",
-                markers=True,
-                height=430
-            )
-            fig.update_layout(
-                margin=dict(l=5,r=5,t=5,b=5)
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            if not daily.empty:
+                fig = px.line(
+                    daily,
+                    x="Date",
+                    y="Count",
+                    color="current_stage",
+                    markers=True,
+                    height=430
+                )
+                fig.update_layout(
+                    margin=dict(l=5, r=5, t=5, b=5)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("No daily movement records available.")
         else:
             st.warning("No timestamp trend data available.")
 
     with b2:
         st.subheader("🚨 SLA Breach Audit + Recommendations")
 
-        measurement_pct = round((measurement_backlog/total_products)*100,2)
-        production_pct = round((production_backlog/total_products)*100,2)
-        dispatch_pct = round((dispatch_backlog/total_products)*100,2)
+        measurement_pct = round((measurement_backlog / total_products) * 100, 2) if total_products > 0 else 0
+        production_pct = round((production_backlog / total_products) * 100, 2) if total_products > 0 else 0
+        dispatch_pct = round((dispatch_backlog / total_products) * 100, 2) if total_products > 0 else 0
 
         if measurement_pct > 30:
             st.error(f"Measurement backlog critical : {measurement_pct}%")
@@ -206,4 +212,4 @@ def show_dashboard_v2(conn, cur):
         st.write("• Run supervisor review on all critical houses")
         st.write("• Conduct dispatch closure meeting")
         st.write(f"• Management intervention required in Unit {top_unit}")
-        st.write("• Push unfinished houses to next stage aggressively")
+        st.write("• Push unfinished houses aggressively to next stage")
