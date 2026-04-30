@@ -6,7 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
-def show_dashboard(conn, cur):
+def show_dashboard_v2(conn, cur):
 
     st.title("🏭 Factory Intelligence Command Center")
 
