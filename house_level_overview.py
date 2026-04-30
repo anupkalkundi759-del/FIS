@@ -127,16 +127,15 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", live_houses)
     k4.metric("Total Products", live_products)
 
-    # ================= STAGE COMPLETION KPI =================
+    # ================= HOUSE STAGE COMPLETION KPI =================
     st.subheader("🚦 House Stage Completion KPI")
 
     filtered_houses = sorted(temp3["House"].astype(str).dropna().unique().tolist())
-
     stage_kpi_rows = []
 
-    for stage in workflow_stages[1:]:   # skip Not Started for KPI
-        completed_houses = 0
-        pending_houses = 0
+    for stage in workflow_stages[1:]:
+        completed_list = []
+        pending_list = []
 
         for house in filtered_houses:
             house_df = temp3[
@@ -156,24 +155,67 @@ def show_dashboard(conn, cur):
             )
 
             if completed_products == total_products:
-                completed_houses += 1
+                completed_list.append(str(house))
             else:
-                pending_houses += 1
+                pending_list.append(str(house))
 
         stage_kpi_rows.append({
             "Stage": stage,
-            "Houses Completed": completed_houses,
-            "Houses Pending": pending_houses
+            "Houses Completed": len(completed_list),
+            "Completed House Nos": ", ".join(completed_list) if completed_list else "-",
+            "Houses Pending": len(pending_list),
+            "Pending House Nos": ", ".join(pending_list) if pending_list else "-"
         })
 
     stage_kpi_df = pd.DataFrame(stage_kpi_rows)
     stage_kpi_df.index = stage_kpi_df.index + 1
 
-    st.dataframe(stage_kpi_df, use_container_width=True, height=320)
+    st.dataframe(stage_kpi_df, use_container_width=True, height=350)
 
-    # ================= HOUSE LEVEL PRODUCT DETAIL ONLY WHEN HOUSE SELECTED =================
+    # ================= UNIT LEVEL PRODUCT PENDING DISTRIBUTION =================
+    if selected_unit != "All":
+        st.subheader("🧩 Product Level Pending Distribution In Selected Unit")
+
+        pending_unit_df = temp3[
+            (temp3["Product"] != "NO PRODUCT") &
+            (temp3["Current Stage"] != "Dispatch")
+        ].copy()
+
+        product_stage = pd.pivot_table(
+            pending_unit_df,
+            index="Product",
+            columns="Current Stage",
+            values="House",
+            aggfunc="count",
+            fill_value=0
+        ).reset_index()
+
+        for s in workflow_stages:
+            if s not in product_stage.columns:
+                product_stage[s] = 0
+
+        ordered_cols = ["Product"] + workflow_stages[:-1]
+        product_stage = product_stage[ordered_cols]
+
+        rename_cols = {
+            "Not Started": "Measurement Pending",
+            "Measurement": "Cutting Pending",
+            "Cutting List": "Production Pending",
+            "Production": "Pre Assembly Pending",
+            "Pre Assembly": "Polishing Pending",
+            "Polishing": "Final Assembly Pending",
+            "Final Assembly": "Dispatch Pending"
+        }
+
+        product_stage = product_stage.rename(columns=rename_cols)
+        product_stage = product_stage.sort_values(by=product_stage.columns[1:].tolist(), ascending=False)
+        product_stage = product_stage.reset_index(drop=True)
+        product_stage.index = product_stage.index + 1
+
+        st.dataframe(product_stage, use_container_width=True, height=350)
+
+    # ================= HOUSE LEVEL EXACT PRODUCT DETAIL =================
     if selected_houses:
-
         for house in selected_houses:
             st.subheader(f"🏠 {house} Detailed Pending Product Status")
 
@@ -198,4 +240,4 @@ def show_dashboard(conn, cur):
             house_pending_df = house_pending_df.reset_index(drop=True)
             house_pending_df.index = house_pending_df.index + 1
 
-            st.dataframe(house_pending_df, use_container_width=True, height=350)
+            st.dataframe(house_pending_df, use_container_width=True, height=320)
