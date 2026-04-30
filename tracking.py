@@ -67,12 +67,7 @@ def show_tracking(conn, cur):
 
     with col3:
         if unit_id:
-            cur.execute("""
-                SELECT house_id, house_no
-                FROM houses
-                WHERE unit_id = %s
-                ORDER BY house_no
-            """, (unit_id,))
+            cur.execute("SELECT house_id, house_no FROM houses WHERE unit_id = %s ORDER BY house_no", (unit_id,))
         elif project_id:
             cur.execute("""
                 SELECT h.house_id, h.house_no
@@ -82,11 +77,7 @@ def show_tracking(conn, cur):
                 ORDER BY h.house_no
             """, (project_id,))
         else:
-            cur.execute("""
-                SELECT house_id, house_no
-                FROM houses
-                ORDER BY house_no
-            """)
+            cur.execute("SELECT house_id, house_no FROM houses ORDER BY house_no")
 
         house_data = cur.fetchall()
         house_dict = {h[1]: h[0] for h in house_data}
@@ -104,13 +95,10 @@ def show_tracking(conn, cur):
     df = pd.DataFrame(products, columns=["product_instance_id", "product_code", "house_no"])
     df["display"] = df["house_no"].astype(str) + " • " + df["product_code"]
 
-    # ================= SEARCH =================
     search_text = st.text_input("🔍 Filter Products")
-
     if search_text:
         df = df[df["display"].str.contains(search_text, case=False, na=False)]
 
-    # ================= SELECT ALL =================
     select_all = st.checkbox("Select All Visible Products", value=False)
     df["Select"] = select_all
 
@@ -169,60 +157,60 @@ def show_tracking(conn, cur):
         })
         latest_df = pd.concat([latest_df, extra], ignore_index=True)
 
-    # ================= STAGE WISE SELECTABLE TRACE ADDED =================
-    matrix_df = df[df["product_instance_id"].isin(selected_ids)][["product_instance_id", "product_code", "display"]].copy()
+    matrix_df = df[df["product_instance_id"].isin(selected_ids)][["product_instance_id", "display"]].copy()
     matrix_df = matrix_df.merge(latest_df, left_on="product_instance_id", right_on="pid", how="left")
     matrix_df["stage"] = matrix_df["stage"].fillna("Not Started")
 
-    st.markdown("### 📌 Exact Stage Product Trace")
+    # ================= COMPACT STAGE SUMMARY =================
+    st.markdown("### 📍 Current Live Stages Found")
 
-    filtered_selected_ids = []
+    available_stages = []
+    stage_counts = {}
 
-    all_stages_to_show = ["Not Started"] + stage_sequence
+    for stg in ["Not Started"] + stage_sequence:
+        cnt = len(matrix_df[matrix_df["stage"] == stg])
+        if cnt > 0:
+            available_stages.append(stg)
+            stage_counts[stg] = cnt
 
-    for stg in all_stages_to_show:
-        stage_group = matrix_df[matrix_df["stage"] == stg]
+    cols = st.columns(len(available_stages))
+    for i, stg in enumerate(available_stages):
+        cols[i].info(f"{stg}\n{stage_counts[stg]}")
 
-        if stage_group.empty:
-            continue
+    inspect_stage = st.selectbox(
+        "Choose a stage bucket to inspect and update",
+        available_stages
+    )
 
-        with st.expander(f"{stg} ({len(stage_group)} items)", expanded=False):
+    stage_group = matrix_df[matrix_df["stage"] == inspect_stage].copy()
 
-            stage_search = st.text_input(f"Search in {stg}", key=f"search_{stg}")
+    stage_search = st.text_input(f"🔎 Search inside {inspect_stage}", key=f"search_{inspect_stage}")
+    if stage_search:
+        stage_group = stage_group[stage_group["display"].str.contains(stage_search, case=False, na=False)]
 
-            if stage_search:
-                stage_group = stage_group[
-                    stage_group["display"].str.contains(stage_search, case=False, na=False)
-                ]
+    select_stage_all = st.checkbox(f"Select All Visible in {inspect_stage}", key=f"all_{inspect_stage}")
 
-            select_stage_all = st.checkbox(
-                f"Select All Visible in {stg}",
-                key=f"all_{stg}"
-            )
+    shown_rows = stage_group[["product_instance_id", "display"]].copy()
+    shown_rows["Move"] = select_stage_all
 
-            shown_rows = stage_group[["product_instance_id", "display"]].copy()
-            shown_rows["Move"] = select_stage_all
+    edited_stage = st.data_editor(
+        shown_rows[["Move", "display"]],
+        use_container_width=True,
+        hide_index=True,
+        key=f"editor_{inspect_stage}"
+    )
 
-            edited_stage = st.data_editor(
-                shown_rows[["Move", "display"]],
-                use_container_width=True,
-                hide_index=True,
-                key=f"editor_{stg}"
-            )
+    chosen = edited_stage[edited_stage["Move"] == True]
 
-            chosen = edited_stage[edited_stage["Move"] == True]
+    if chosen.empty:
+        return
 
-            if not chosen.empty:
-                chosen_ids = shown_rows.loc[chosen.index, "product_instance_id"].tolist()
-                filtered_selected_ids.extend(chosen_ids)
-
-    if filtered_selected_ids:
-        selected_ids = filtered_selected_ids
-        matrix_df = matrix_df[matrix_df["product_instance_id"].isin(selected_ids)]
-        st.success(f"{len(selected_ids)} exact stage items selected for update")
+    selected_ids = shown_rows.loc[chosen.index, "product_instance_id"].tolist()
+    matrix_df = matrix_df[matrix_df["product_instance_id"].isin(selected_ids)]
+    st.success(f"{len(selected_ids)} products chosen for movement from {inspect_stage}")
 
     # ================= CURRENT STAGE DETECTION =================
-    current_stage = matrix_df.iloc[0]["stage"]
+    current_stage = inspect_stage
     current_status = matrix_df.iloc[0]["status"]
 
     # ================= NEXT STAGE =================
@@ -235,7 +223,6 @@ def show_tracking(conn, cur):
         except:
             next_stage = "Completed"
 
-    # ================= DISPLAY =================
     col4, col5 = st.columns(2)
 
     if current_status == "In Progress":
@@ -247,11 +234,9 @@ def show_tracking(conn, cur):
 
     col5.success(f"Next Allowed Stage: {next_stage}")
 
-    # ================= INPUT =================
-    selected_stage = st.selectbox("Select Stage", stage_sequence)
-    status = st.selectbox("Status", ["In Progress", "Completed"])
+    selected_stage = st.selectbox("Move Selected Products To Stage", stage_sequence)
+    status = st.selectbox("Update Status", ["In Progress", "Completed"])
 
-    # ================= VALIDATION =================
     allowed_stages = []
 
     if current_status == "In Progress":
@@ -260,19 +245,19 @@ def show_tracking(conn, cur):
         if next_stage != "Completed":
             allowed_stages = [next_stage]
 
-    if selected_stage not in allowed_stages:
-        if current_status == "In Progress":
-            st.error(f"Complete current stage '{current_stage}' before moving forward")
-        else:
-            st.error(f"You must follow stage order. Next allowed: {next_stage}")
-        return
-
-    if selected_stage == current_stage and current_status == "Completed":
-        st.warning("Stage already completed")
-        return
-
-    # ================= BULK UPDATE =================
     if st.button("Update Selected", use_container_width=True):
+
+        if selected_stage not in allowed_stages:
+            if current_status == "In Progress":
+                st.error(f"Complete current stage '{current_stage}' before moving forward")
+            else:
+                st.error(f"You must follow stage order. Next allowed: {next_stage}")
+            return
+
+        if selected_stage == current_stage and current_status == "Completed":
+            st.warning("Stage already completed")
+            return
+
         with st.spinner("Updating selected products..."):
 
             cur.execute("SELECT stage_id FROM stages WHERE stage_name = %s", (selected_stage,))
