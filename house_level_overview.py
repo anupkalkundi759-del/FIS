@@ -107,7 +107,7 @@ def show_dashboard(conn, cur):
     if selected_houses:
         temp3 = temp3[temp3["House"].astype(str).isin(selected_houses)]
 
-    # ================= KPI =================
+    # ================= LIVE KPI =================
     st.subheader("📈 Live Workflow Summary")
 
     if selected_project == "All" and selected_unit == "All" and not selected_houses:
@@ -127,63 +127,48 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", live_houses)
     k4.metric("Total Products", live_products)
 
-    # ================= STAGE KPI CARDS =================
+    # ================= HOUSE STAGE KPI =================
     st.subheader("🚦 House Stage Completion KPI")
 
-    filtered_houses = sorted(temp3["House"].astype(str).dropna().unique().tolist())
+    total_houses = len(sorted(temp3["House"].astype(str).dropna().unique().tolist()))
+    total_products = len(temp3[temp3["Product"] != "NO PRODUCT"])
 
-    for i in range(1, len(workflow_stages)):
-        stage = workflow_stages[i]
+    for stage in workflow_stages[1:]:
+        stage_completed_houses = 0
 
-        completed_houses = 0
-        pending_houses = 0
-        pending_products_in_stage = len(
+        for house in sorted(temp3["House"].astype(str).dropna().unique().tolist()):
+            house_df = temp3[
+                (temp3["House"].astype(str) == str(house)) &
+                (temp3["Product"] != "NO PRODUCT")
+            ]
+
+            reached = len(
+                house_df[
+                    house_df["Current Stage"].map(stage_rank) >= stage_rank[stage]
+                ]
+            )
+
+            if reached > 0:
+                stage_completed_houses += 1
+
+        stage_pending_houses = total_houses - stage_completed_houses
+
+        stage_pending_products = len(
             temp3[
                 (temp3["Product"] != "NO PRODUCT") &
                 (temp3["Current Stage"] == stage)
             ]
         )
 
-        crossed_products = len(
-            temp3[
-                (temp3["Product"] != "NO PRODUCT") &
-                (temp3["Current Stage"].map(stage_rank) > stage_rank[stage])
-            ]
-        )
+        stage_completion_pct = round((stage_completed_houses / total_houses) * 100, 2) if total_houses > 0 else 0
 
-        total_products = len(temp3[temp3["Product"] != "NO PRODUCT"])
+        a, b, c, d = st.columns(4)
+        a.metric(f"{stage} Houses Updated", stage_completed_houses)
+        b.metric(f"{stage} Houses Yet To Reach", stage_pending_houses)
+        c.metric(f"{stage} Products Pending", stage_pending_products)
+        d.metric(f"{stage} Progress %", f"{stage_completion_pct}%")
 
-        completion_pct = round((crossed_products / total_products) * 100, 2) if total_products > 0 else 0
-
-        for house in filtered_houses:
-            house_df = temp3[
-                (temp3["House"].astype(str) == str(house)) &
-                (temp3["Product"] != "NO PRODUCT")
-            ]
-
-            if house_df.empty:
-                continue
-
-            total_house_products = len(house_df)
-
-            crossed_house_products = len(
-                house_df[
-                    house_df["Current Stage"].map(stage_rank) > stage_rank[stage]
-                ]
-            )
-
-            if crossed_house_products == total_house_products:
-                completed_houses += 1
-            else:
-                pending_houses += 1
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric(f"{stage} Houses Completed", completed_houses)
-        c2.metric(f"{stage} Houses Pending", pending_houses)
-        c3.metric(f"{stage} Products Pending", pending_products_in_stage)
-        c4.metric(f"{stage} Completion %", f"{completion_pct}%")
-
-    # ================= UNIT LEVEL PRODUCT PENDING DISTRIBUTION =================
+    # ================= UNIT PRODUCT LEVEL PENDING =================
     if selected_unit != "All":
         st.subheader("🧩 Product Level Pending Distribution In Selected Unit")
 
@@ -214,7 +199,7 @@ def show_dashboard(conn, cur):
 
         st.dataframe(product_stage, use_container_width=True, height=350)
 
-    # ================= HOUSE LEVEL EXACT PRODUCT DETAIL =================
+    # ================= HOUSE EXACT DETAIL =================
     if selected_houses:
         for house in selected_houses:
             st.subheader(f"🏠 {house} Detailed Pending Product Status")
