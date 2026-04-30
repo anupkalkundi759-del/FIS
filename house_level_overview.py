@@ -154,16 +154,14 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", total_houses)
     k4.metric("Total Products", len(latest_df[latest_df["Product"] != "NO PRODUCT"]))
 
-    # ================= TRUE HISTORICAL KPI =================
-    st.subheader("🚦 House Stage Completion KPI")
+    # ================= MANAGER STAGE COMPLETION KPI =================
+    st.subheader("🚦 Stage Completion Performance Matrix")
+
+    total_products_scope = len(latest_df[latest_df["Product"] != "NO PRODUCT"])
+
+    kpi_rows = []
 
     for stage in workflow_stages:
-
-        houses_updated = history_df[
-            history_df["Touched Stage"] == stage
-        ]["House"].astype(str).nunique()
-
-        houses_yet = total_houses - houses_updated
 
         products_pending = len(
             latest_df[
@@ -172,13 +170,40 @@ def show_dashboard(conn, cur):
             ]
         )
 
-        pct = round((houses_updated / total_houses) * 100, 2) if total_houses > 0 else 0
+        houses_impacted = latest_df[
+            (latest_df["Product"] != "NO PRODUCT") &
+            (latest_df["Current Stage"] == stage)
+        ]["House"].astype(str).nunique()
 
-        a, b, c, d = st.columns(4)
-        a.metric(f"{stage} Houses Updated", houses_updated)
-        b.metric(f"{stage} Houses Yet To Reach", houses_yet)
-        c.metric(f"{stage} Products Pending", products_pending)
-        d.metric(f"{stage} Progress %", f"{pct}%")
+        if total_products_scope > 0:
+            if stage != "Dispatch":
+                completion_pct = round(((total_products_scope - products_pending) / total_products_scope) * 100, 2)
+            else:
+                completion_pct = round((products_pending / total_products_scope) * 100, 2)
+        else:
+            completion_pct = 0
+
+        kpi_rows.append([
+            stage,
+            total_products_scope,
+            products_pending,
+            houses_impacted,
+            f"{completion_pct}%"
+        ])
+
+    kpi_df = pd.DataFrame(
+        kpi_rows,
+        columns=[
+            "Stage",
+            "Total Products",
+            "Pending Products",
+            "Houses Impacted",
+            "Completion %"
+        ]
+    )
+
+    kpi_df.index = kpi_df.index + 1
+    st.dataframe(kpi_df, use_container_width=True, height=320)
 
     # ================= PRODUCT LEVEL CURRENT PENDING =================
     if selected_unit != "All":
