@@ -127,78 +127,75 @@ def show_dashboard(conn, cur):
     k3.metric("Houses", live_houses)
     k4.metric("Total Products", live_products)
 
-    # ================= STAGE WISE HOUSE PENDING SUMMARY =================
-    stage_summary_rows = []
+    # ================= STAGE COMPLETION KPI =================
+    st.subheader("🚦 House Stage Completion KPI")
 
     filtered_houses = sorted(temp3["House"].astype(str).dropna().unique().tolist())
 
-    for stage in workflow_stages:
-        if stage == "Dispatch":
-            continue
+    stage_kpi_rows = []
 
-        count_houses = 0
+    for stage in workflow_stages[1:]:   # skip Not Started for KPI
+        completed_houses = 0
+        pending_houses = 0
 
         for house in filtered_houses:
             house_df = temp3[
                 (temp3["House"].astype(str) == str(house)) &
+                (temp3["Product"] != "NO PRODUCT")
+            ].copy()
+
+            if house_df.empty:
+                continue
+
+            total_products = len(house_df)
+
+            completed_products = len(
+                house_df[
+                    house_df["Current Stage"].map(stage_rank) >= stage_rank[stage]
+                ]
+            )
+
+            if completed_products == total_products:
+                completed_houses += 1
+            else:
+                pending_houses += 1
+
+        stage_kpi_rows.append({
+            "Stage": stage,
+            "Houses Completed": completed_houses,
+            "Houses Pending": pending_houses
+        })
+
+    stage_kpi_df = pd.DataFrame(stage_kpi_rows)
+    stage_kpi_df.index = stage_kpi_df.index + 1
+
+    st.dataframe(stage_kpi_df, use_container_width=True, height=320)
+
+    # ================= HOUSE LEVEL PRODUCT DETAIL ONLY WHEN HOUSE SELECTED =================
+    if selected_houses:
+
+        for house in selected_houses:
+            st.subheader(f"🏠 {house} Detailed Pending Product Status")
+
+            house_df = temp3[
+                (temp3["House"].astype(str) == str(house)) &
                 (temp3["Product"] != "NO PRODUCT") &
-                (temp3["Current Stage"] == stage)
-            ]
+                (temp3["Current Stage"] != "Dispatch")
+            ].copy()
 
-            if len(house_df) > 0:
-                count_houses += 1
+            if house_df.empty:
+                st.success("All products dispatched in this house.")
+                continue
 
-        stage_summary_rows.append({
-            "Pending Stage": stage,
-            "Houses Having Pending In This Stage": count_houses
-        })
+            house_pending_df = house_df[["Product", "Current Stage"]].copy()
+            house_pending_df.columns = ["Product", "Pending In Stage"]
 
-    stage_summary = pd.DataFrame(stage_summary_rows)
-    stage_summary.index = stage_summary.index + 1
+            house_pending_df = house_pending_df.sort_values(
+                "Pending In Stage",
+                key=lambda x: x.map(stage_rank)
+            )
 
-    st.subheader("🚦 Stage Wise House Pending Summary")
-    st.dataframe(stage_summary, use_container_width=True, height=320)
+            house_pending_df = house_pending_df.reset_index(drop=True)
+            house_pending_df.index = house_pending_df.index + 1
 
-    # ================= HOUSE WISE DETAILED PENDING STATUS =================
-    st.subheader("🏠 House Wise Detailed Pending Product Status")
-
-    pending_house_rows = []
-
-    filtered_master_houses = sorted(temp3["House"].astype(str).dropna().unique().tolist())
-
-    for house in filtered_master_houses:
-        house_df = temp3[
-            (temp3["House"].astype(str) == str(house)) &
-            (temp3["Product"] != "NO PRODUCT") &
-            (temp3["Current Stage"] != "Dispatch")
-        ].copy()
-
-        pending_count = len(house_df)
-
-        if pending_count == 0:
-            pending_details = "No Pending Products"
-        else:
-            detail_list = []
-
-            for _, row in house_df.iterrows():
-                detail_list.append(f"{row['Product']} → {row['Current Stage']}")
-
-            pending_details = " | ".join(detail_list)
-
-        pending_house_rows.append({
-            "House": house,
-            "Total Pending Products": pending_count,
-            "Pending Product Details": pending_details
-        })
-
-    house_pending_detail_df = pd.DataFrame(pending_house_rows)
-
-    house_pending_detail_df = house_pending_detail_df.sort_values(
-        ["Total Pending Products", "House"],
-        ascending=[False, True]
-    )
-
-    house_pending_detail_df = house_pending_detail_df.reset_index(drop=True)
-    house_pending_detail_df.index = house_pending_detail_df.index + 1
-
-    st.dataframe(house_pending_detail_df, use_container_width=True, height=380)
+            st.dataframe(house_pending_df, use_container_width=True, height=350)
