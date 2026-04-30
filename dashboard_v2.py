@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -35,38 +34,33 @@ def show_dashboard_v2(conn, cur):
         "Dispatch": 7
     }
 
-    # ========================= LIVE SNAPSHOT QUERY (CORRECTED) =========================
+    # ========================= LIVE SNAPSHOT QUERY (FINAL CORRECTED) =========================
     live_query = """
     WITH latest_tracking AS (
-        SELECT
-            t.house_id,
-            t.product_id,
+        SELECT DISTINCT ON (t.product_instance_id)
+            t.product_instance_id,
             t.stage_id,
-            t.timestamp,
-            ROW_NUMBER() OVER (
-                PARTITION BY t.house_id, t.product_id
-                ORDER BY t.timestamp DESC
-            ) AS rn
+            t.timestamp
         FROM tracking_log t
+        ORDER BY t.product_instance_id, t.timestamp DESC
     )
 
     SELECT
-        pr.project_name,
-        u.unit_name,
+        h.project_name,
+        h.unit_name,
         h.house_no,
         pm.product_code,
         COALESCE(s.stage_name, 'Not Started') AS current_stage,
-        lt.timestamp
+        lt.timestamp,
+        p.product_instance_id,
+        h.house_id
     FROM products p
     JOIN houses h ON p.house_id = h.house_id
-    JOIN units u ON h.unit_id = u.unit_id
-    JOIN projects pr ON u.project_id = pr.project_id
     JOIN products_master pm ON p.product_id = pm.product_id
     LEFT JOIN latest_tracking lt
-        ON p.house_id = lt.house_id
-        AND p.product_id = lt.product_id
-        AND lt.rn = 1
-    LEFT JOIN stages s ON lt.stage_id = s.stage_id
+        ON p.product_instance_id = lt.product_instance_id
+    LEFT JOIN stages s
+        ON lt.stage_id = s.stage_id
     """
 
     live_df = pd.read_sql(live_query, conn)
@@ -108,7 +102,12 @@ def show_dashboard_v2(conn, cur):
     dispatch_products = len(live_df[live_df["current_stage"] == "Dispatch"])
     overall_completion = round((dispatch_products / total_products) * 100, 2) if total_products > 0 else 0
 
-    backlog_counts = live_df["current_stage"].value_counts().to_dict()
+    backlog_counts = {}
+    for stg in stage_order:
+        if stg == "Measurement":
+            backlog_counts[stg] = len(live_df[live_df["current_stage"].isin(["Not Started", "Measurement"])])
+        else:
+            backlog_counts[stg] = len(live_df[live_df["current_stage"] == stg])
 
     bottleneck_stage = max(backlog_counts, key=backlog_counts.get)
     bottleneck_pending = backlog_counts[bottleneck_stage]
@@ -137,34 +136,23 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ========================= ROW 2 THREE BOXES =========================
+    # ========================= ROW 2 =========================
     r2c1, r2c2, r2c3 = st.columns([1.15, 1.15, 1])
 
-    # -------- BOX 1 STAGE BACKLOG PRODUCT CHART --------
+    # BOX 1
     with r2c1:
         st.subheader("📦 Stage Backlog Products")
 
-        stage_product_counts = []
-        for stg in stage_order:
-            if stg == "Measurement":
-                cnt = len(live_df[live_df["current_stage"].isin(["Not Started", "Measurement"])])
-            else:
-                cnt = len(live_df[live_df["current_stage"] == stg])
-            stage_product_counts.append([stg, cnt])
+        stage_prod_df = pd.DataFrame({
+            "Stage": list(backlog_counts.keys()),
+            "Pending Products": list(backlog_counts.values())
+        })
 
-        stage_prod_df = pd.DataFrame(stage_product_counts, columns=["Stage", "Pending Products"])
-
-        fig1 = px.bar(
-            stage_prod_df,
-            x="Stage",
-            y="Pending Products",
-            text="Pending Products",
-            height=330
-        )
+        fig1 = px.bar(stage_prod_df, x="Stage", y="Pending Products", text="Pending Products", height=330)
         fig1.update_layout(margin=dict(l=5, r=5, t=10, b=5))
         st.plotly_chart(fig1, use_container_width=True)
 
-    # -------- BOX 2 HOUSE IMPACTED CHART --------
+    # BOX 2
     with r2c2:
         st.subheader("🏠 House Impact by Stage")
 
@@ -178,39 +166,32 @@ def show_dashboard_v2(conn, cur):
 
         house_stage_df = pd.DataFrame(house_stage_counts, columns=["Stage", "Impacted Houses"])
 
-        fig2 = px.pie(
-            house_stage_df,
-            names="Stage",
-            values="Impacted Houses",
-            hole=0.45,
-            height=330
-        )
+        fig2 = px.bar(house_stage_df, x="Stage", y="Impacted Houses", text="Impacted Houses", height=330)
         fig2.update_layout(margin=dict(l=5, r=5, t=10, b=5))
         st.plotly_chart(fig2, use_container_width=True)
 
-    # -------- BOX 3 SMART INSIGHTS --------
+    # BOX 3
     with r2c3:
         st.subheader("🧠 Smart Manager Insights")
 
         top_unit = live_df.groupby("unit_name").size().sort_values(ascending=False).index[0]
         top_project = live_df.groupby("project_name").size().sort_values(ascending=False).index[0]
 
-        measurement_backlog = stage_prod_df.iloc[0]["Pending Products"]
-        dispatch_backlog = stage_prod_df[stage_prod_df["Stage"] == "Dispatch"]["Pending Products"].iloc[0]
+        measurement_backlog = backlog_counts["Measurement"]
+        dispatch_backlog = backlog_counts["Dispatch"]
 
-        st.info(f"🔴 Highest factory congestion at {bottleneck_stage} with {bottleneck_pending} products.")
-        st.info(f"🟠 Measurement side still carries {measurement_backlog} pending workflow.")
-        st.info(f"🟡 Dispatch still awaiting closure for {dispatch_backlog} products.")
-        st.info(f"🏗️ Highest operational load concentrated in Unit: {top_unit}")
-        st.info(f"📍 Highest running product volume under Project: {top_project}")
-        st.info(f"⚠️ {critical_houses} houses still need production attention.")
+        st.info(f"🔴 Highest congestion at {bottleneck_stage} with {bottleneck_pending} products")
+        st.info(f"🟠 Measurement pending workflow : {measurement_backlog}")
+        st.info(f"🟡 Dispatch pending closure : {dispatch_backlog}")
+        st.info(f"🏗️ Highest operational load in Unit : {top_unit}")
+        st.info(f"📍 Highest running volume in Project : {top_project}")
+        st.info(f"⚠️ {critical_houses} houses still under production")
 
     st.markdown("---")
 
-    # ========================= ROW 3 TWO BOXES =========================
+    # ========================= ROW 3 =========================
     r3c1, r3c2 = st.columns([1.55, 1])
 
-    # -------- BOTTOM LEFT TREND GRAPH --------
     with r3c1:
         st.subheader("📈 Daily Workflow Movement Trend")
 
@@ -220,29 +201,21 @@ def show_dashboard_v2(conn, cur):
             trend_df["Date"] = trend_df["timestamp"].dt.date
             daily = trend_df.groupby(["Date", "current_stage"]).size().reset_index(name="Count")
 
-            fig3 = px.line(
-                daily,
-                x="Date",
-                y="Count",
-                color="current_stage",
-                markers=True,
-                height=360
-            )
+            fig3 = px.line(daily, x="Date", y="Count", color="current_stage", markers=True, height=360)
             fig3.update_layout(margin=dict(l=5, r=5, t=10, b=5))
             st.plotly_chart(fig3, use_container_width=True)
         else:
-            st.warning("No historical timestamps available for trend.")
+            st.warning("No historical timestamps available.")
 
-    # -------- BOTTOM RIGHT SLA PANEL --------
     with r3c2:
         st.subheader("🚨 SLA Breach Audit")
 
         measurement_pct = round((measurement_backlog / total_products) * 100, 2)
-        production_pct = round((len(live_df[live_df["current_stage"] == "Production"]) / total_products) * 100, 2)
+        production_pct = round((backlog_counts["Production"] / total_products) * 100, 2)
         dispatch_pct = round((dispatch_backlog / total_products) * 100, 2)
 
         if measurement_pct > 40:
-            st.error(f"Measurement SLA Breach : {measurement_pct}% backlog")
+            st.error(f"Measurement SLA Breach : {measurement_pct}%")
         else:
             st.success(f"Measurement SLA Healthy : {measurement_pct}%")
 
@@ -252,7 +225,7 @@ def show_dashboard_v2(conn, cur):
             st.success(f"Production Queue Stable : {production_pct}%")
 
         if dispatch_pct > 5:
-            st.error(f"Dispatch Closure Weak : {dispatch_pct}% pending")
+            st.error(f"Dispatch Closure Weak : {dispatch_pct}%")
         else:
             st.success(f"Dispatch Closure Healthy : {dispatch_pct}%")
 
