@@ -184,10 +184,19 @@ def show_dashboard(conn, cur):
     # ================= BULK HOUSE AUDIT ANALYZER =================
     st.subheader("🔍 Automatic House Wise Audit Analyzer")
 
-    audit_stage = st.selectbox(
-        "Audit Which Stage?",
-        ["Measurement", "Cutting List", "Production", "Pre Assembly", "Polishing", "Final Assembly", "Dispatch"]
-    )
+    audit_stage_options = ["Measurement", "Cutting List", "Production", "Pre Assembly", "Polishing", "Final Assembly", "Dispatch"]
+
+    if "selected_audit_stage" not in st.session_state:
+        st.session_state.selected_audit_stage = "Measurement"
+
+    stage_cols = st.columns(len(audit_stage_options))
+
+    for i, stg in enumerate(audit_stage_options):
+        with stage_cols[i]:
+            if st.button(stg, use_container_width=True):
+                st.session_state.selected_audit_stage = stg
+
+    audit_stage = st.session_state.selected_audit_stage
 
     audit_rank_map = {
         "Measurement": 0,
