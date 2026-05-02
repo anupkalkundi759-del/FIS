@@ -38,8 +38,7 @@ def remove_white_bg(image_path):
 defaults = {
     "logged_in": False,
     "role": None,
-    "page": "Tracking",
-    "conn": None
+    "page": "Tracking"
 }
 
 for k, v in defaults.items():
@@ -148,7 +147,7 @@ if not st.session_state.logged_in:
     login()
     st.stop()
 
-# ================= DB =================
+# ================= DB (FIXED) =================
 def create_connection():
     try:
         return psycopg2.connect(
@@ -162,31 +161,11 @@ def create_connection():
         st.error(f"DB connection failed: {e}")
         return None
 
-def get_db():
-    try:
-        if st.session_state.conn is None or st.session_state.conn.closed:
-            st.session_state.conn = create_connection()
-
-        if st.session_state.conn is None:
-            return None, None
-
-        cur = st.session_state.conn.cursor()
-        return st.session_state.conn, cur
-
-    except Exception:
-        try:
-            st.session_state.conn.rollback()
-        except:
-            pass
-        st.session_state.conn = create_connection()
-        if st.session_state.conn:
-            return st.session_state.conn, st.session_state.conn.cursor()
-        return None, None
-
-conn, cur = get_db()
-
+conn = create_connection()
 if conn is None:
     st.stop()
+
+cur = conn.cursor()
 
 # ================= SIDEBAR =================
 with st.sidebar:
@@ -217,13 +196,9 @@ with st.sidebar:
     st.markdown("---")
 
     if st.button("🚪 Logout", use_container_width=True):
-        try:
-            if st.session_state.conn:
-                st.session_state.conn.close()
-        except:
-            pass
-
-        st.session_state.clear()
+        st.session_state.logged_in = False
+        st.session_state.role = None
+        st.session_state.page = "Tracking"
         st.rerun()
 
 # ================= MAIN =================
@@ -276,7 +251,7 @@ except Exception as e:
 
 finally:
     try:
-        if cur:
-            cur.close()
+        cur.close()
+        conn.close()
     except:
         pass
