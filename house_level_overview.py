@@ -14,7 +14,7 @@ def show_dashboard(conn, cur):
         "Dispatch"
     ]
 
-    # ================= CURRENT LATEST STATUS QUERY =================
+    # ================= CURRENT LIVE STATUS QUERY =================
     latest_query = """
     SELECT
         p.project_name,
@@ -115,7 +115,7 @@ def show_dashboard(conn, cur):
         "Dispatch": 6
     }
 
-    product_df["StageRank"] = product_df["Current Stage"].map(stage_rank)
+    product_df["StageRank"] = product_df["Current Stage"].map(stage_rank).fillna(0)
 
     kpi_rows = []
 
@@ -123,7 +123,15 @@ def show_dashboard(conn, cur):
 
         current_rank = stage_rank[stage]
 
-        pending_df = product_df[product_df["StageRank"] < current_rank]
+        # ===== INDUSTRIAL KPI LOGIC =====
+        if stage == "Not Started":
+            pending_df = product_df[product_df["StageRank"] == 0]
+
+        elif stage == "Dispatch":
+            pending_df = product_df[product_df["StageRank"] < current_rank]
+
+        else:
+            pending_df = product_df[product_df["StageRank"] <= current_rank]
 
         pending_products = len(pending_df)
         houses_impacted = pending_df["House"].astype(str).nunique()
