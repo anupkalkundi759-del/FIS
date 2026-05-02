@@ -50,10 +50,24 @@ def login():
 
     st.markdown("""
         <style>
-        .stApp { background: #f5f2eb; font-family: 'Segoe UI', sans-serif; }
-        .block-container { padding-top: 2rem; padding-left: 2rem; padding-right: 2rem; }
+        .stApp {
+            background: #f5f2eb;
+            font-family: 'Segoe UI', sans-serif;
+        }
 
-        .left-box { text-align: center; margin-top: 15px; }
+        .block-container {
+            padding-top: 0rem !important;
+            padding-left: 2rem;
+            padding-right: 2rem;
+            padding-bottom: 0rem;
+        }
+
+        .left-box {
+            text-align: center;
+            margin-top: 120px;
+            padding-left: 80px;
+        }
+
         .title {
             font-size: 42px;
             margin-top: 3px;
@@ -61,19 +75,30 @@ def login():
             color: #333;
             font-weight: 700;
         }
-        .highlight { color: #f57c00; }
 
-        .right-box {
-            max-width: 430px;
-            margin: auto;
-            background: white;
-            padding: 30px;
-            border-radius: 14px;
-            box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+        .highlight {
+            color: #f57c00;
         }
 
-        .heading { font-size: 28px; font-weight: 700; }
-        .subtext { color: #666; margin-bottom: 25px; }
+        .right-box {
+            max-width: 460px;
+            margin-top: 120px;
+            margin-left: auto;
+            margin-right: auto;
+            background: transparent;
+            padding: 10px;
+            border-radius: 14px;
+        }
+
+        .heading {
+            font-size: 28px;
+            font-weight: 700;
+        }
+
+        .subtext {
+            color: #666;
+            margin-bottom: 25px;
+        }
 
         .stTextInput>div>div>input {
             border-radius: 10px;
@@ -93,15 +118,19 @@ def login():
         section[data-testid="stSidebar"] {
             background: #ffffff;
         }
+
+        div[data-testid="column"]:nth-of-type(2) {
+            padding-top: 0rem !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns([1.2, 1])
+    col1, col2 = st.columns([1.25, 1])
 
     with col1:
         st.markdown('<div class="left-box">', unsafe_allow_html=True)
         logo = remove_white_bg("logo.png")
-        st.image(logo, width=240)
+        st.image(logo, width=250)
 
         st.markdown("""
             <div class="title">
