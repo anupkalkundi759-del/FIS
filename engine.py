@@ -61,9 +61,6 @@ def run_engine(conn, cur):
     st.markdown("---")
     st.subheader("💰 Project EVM Baseline / Actual Cost / SLA Monitor")
 
-    # =========================================================
-    # COMPACT EXECUTIVE INPUT PANEL
-    # =========================================================
     r1c1, r1c2, r1c3, r1c4 = st.columns(4)
 
     with r1c1:
@@ -78,12 +75,7 @@ def run_engine(conn, cur):
         else:
             existing_bac = 0.0
 
-        bac_input = st.number_input(
-            "Total Planned Project Cost (BAC)",
-            min_value=0.0,
-            value=existing_bac,
-            step=1000.0
-        )
+        bac_input = st.number_input("Total Planned Project Cost (BAC)", min_value=0.0, value=existing_bac, step=1000.0)
 
     with r1c2:
         if st.button("Save BAC"):
@@ -150,9 +142,6 @@ def run_engine(conn, cur):
 
     st.markdown("---")
 
-    # =========================================================
-    # ACTIVITY MASTER / STANDARD DURATION WEIGHTS
-    # =========================================================
     cur.execute("""
         SELECT activity_name, sequence_order, duration_days
         FROM activity_master
@@ -193,9 +182,6 @@ def run_engine(conn, cur):
         cur.execute("SELECT COUNT(*) FROM products")
     total_products_project = cur.fetchone()[0]
 
-    # =========================================================
-    # LATEST PRODUCT STAGE SNAPSHOT
-    # =========================================================
     live_sql = """
         WITH latest_log AS (
             SELECT
@@ -203,10 +189,7 @@ def run_engine(conn, cur):
                 s.stage_name,
                 t.status,
                 t.timestamp,
-                ROW_NUMBER() OVER(
-                    PARTITION BY t.product_instance_id
-                    ORDER BY t.timestamp DESC
-                ) rn
+                ROW_NUMBER() OVER(PARTITION BY t.product_instance_id ORDER BY t.timestamp DESC) rn
             FROM tracking_log t
             JOIN stages s ON t.stage_id = s.stage_id
         )
@@ -242,25 +225,16 @@ def run_engine(conn, cur):
             params = (selected_house,)
 
     live_sql += " ORDER BY h.house_no"
-
     cur.execute(live_sql, params)
 
-    live_df = pd.DataFrame(
-        cur.fetchall(),
-        columns=["house", "house_id", "product_instance_id", "stage", "status", "timestamp"]
-    )
+    live_df = pd.DataFrame(cur.fetchall(), columns=["house", "house_id", "product_instance_id", "stage", "status", "timestamp"])
 
     if live_df.empty:
         st.warning("No product data")
         return
 
-    live_df["timestamp"] = pd.to_datetime(
-        live_df["timestamp"], utc=True, errors="coerce"
-    ).dt.tz_convert(tz)
+    live_df["timestamp"] = pd.to_datetime(live_df["timestamp"], utc=True, errors="coerce").dt.tz_convert(tz)
 
-    # =========================================================
-    # HOUSE START DATES
-    # =========================================================
     start_sql = """
         SELECT
             h.house_no,
@@ -289,14 +263,9 @@ def run_engine(conn, cur):
     cur.execute(start_sql, params)
 
     start_df = pd.DataFrame(cur.fetchall(), columns=["house", "measure_start"])
-    start_df["measure_start"] = pd.to_datetime(
-        start_df["measure_start"], utc=True, errors="coerce"
-    ).dt.tz_convert(tz)
+    start_df["measure_start"] = pd.to_datetime(start_df["measure_start"], utc=True, errors="coerce").dt.tz_convert(tz)
     start_map = dict(zip(start_df["house"], start_df["measure_start"]))
 
-    # =========================================================
-    # FINISH MAP
-    # =========================================================
     finish_sql = """
         WITH latest_dispatch AS (
             SELECT
@@ -304,10 +273,7 @@ def run_engine(conn, cur):
                 p.product_instance_id,
                 s.stage_name,
                 t.timestamp,
-                ROW_NUMBER() OVER(
-                    PARTITION BY p.product_instance_id
-                    ORDER BY t.timestamp DESC
-                ) rn
+                ROW_NUMBER() OVER(PARTITION BY p.product_instance_id ORDER BY t.timestamp DESC) rn
             FROM houses h
             JOIN products p ON h.house_id = p.house_id
             LEFT JOIN tracking_log t ON p.product_instance_id = t.product_instance_id
@@ -344,20 +310,10 @@ def run_engine(conn, cur):
     """
 
     cur.execute(finish_sql, params)
-
-    finish_df = pd.DataFrame(
-        cur.fetchall(),
-        columns=["house", "total_products", "dispatched_products", "actual_finish"]
-    )
-
-    finish_df["actual_finish"] = pd.to_datetime(
-        finish_df["actual_finish"], utc=True, errors="coerce"
-    ).dt.tz_convert(tz)
+    finish_df = pd.DataFrame(cur.fetchall(), columns=["house", "total_products", "dispatched_products", "actual_finish"])
+    finish_df["actual_finish"] = pd.to_datetime(finish_df["actual_finish"], utc=True, errors="coerce").dt.tz_convert(tz)
     finish_map = finish_df.set_index("house").to_dict("index")
 
-    # =========================================================
-    # PROJECT PROGRESS
-    # =========================================================
     live_df["earned_pct"] = live_df["stage"].map(lambda x: earned_map.get(x, 0.0))
     project_actual_progress = round(live_df["earned_pct"].mean(), 2)
 
@@ -369,44 +325,22 @@ def run_engine(conn, cur):
         pprog = min(100, round((elapsed / total_duration) * 100, 2))
         planned_progress_list.append(pprog)
 
-    project_planned_progress = round(
-        sum(planned_progress_list) / len(planned_progress_list), 2
-    ) if planned_progress_list else 0
+    project_planned_progress = round(sum(planned_progress_list) / len(planned_progress_list), 2) if planned_progress_list else 0
 
-    # =========================================================
-    # EVM
-    # =========================================================
     if project_id is not None and unit_id is not None:
-        cur.execute(
-            "SELECT bac_amount FROM project_evm_baseline WHERE project_id=%s AND unit_id=%s",
-            (project_id, unit_id)
-        )
+        cur.execute("SELECT bac_amount FROM project_evm_baseline WHERE project_id=%s AND unit_id=%s", (project_id, unit_id))
         bb = cur.fetchone()
         BAC = float(bb[0]) if bb else 0.0
-
-        cur.execute(
-            "SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log WHERE project_id=%s AND unit_id=%s",
-            (project_id, unit_id)
-        )
+        cur.execute("SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log WHERE project_id=%s AND unit_id=%s", (project_id, unit_id))
         AC = float(cur.fetchone()[0])
-
     elif project_id is not None:
-        cur.execute(
-            "SELECT COALESCE(SUM(bac_amount),0) FROM project_evm_baseline WHERE project_id=%s",
-            (project_id,)
-        )
+        cur.execute("SELECT COALESCE(SUM(bac_amount),0) FROM project_evm_baseline WHERE project_id=%s", (project_id,))
         BAC = float(cur.fetchone()[0])
-
-        cur.execute(
-            "SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log WHERE project_id=%s",
-            (project_id,)
-        )
+        cur.execute("SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log WHERE project_id=%s", (project_id,))
         AC = float(cur.fetchone()[0])
-
     else:
         cur.execute("SELECT COALESCE(SUM(bac_amount),0) FROM project_evm_baseline")
         BAC = float(cur.fetchone()[0])
-
         cur.execute("SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log")
         AC = float(cur.fetchone()[0])
 
@@ -419,9 +353,6 @@ def run_engine(conn, cur):
     EAC = round(BAC / CPI, 2) if CPI > 0 else 0
     ETC_COST = round(EAC - AC, 2) if EAC > 0 else 0
 
-    # =========================================================
-    # BOTTLENECK
-    # =========================================================
     cur.execute("SELECT stage_name, capacity_per_day FROM stage_capacity")
     cap_rows = cur.fetchall()
     cap_map = {x[0]: x[1] for x in cap_rows}
@@ -465,9 +396,6 @@ def run_engine(conn, cur):
 
     bottleneck_df = pd.DataFrame(bottleneck_rows)
 
-    # =========================================================
-    # HOUSE ETTC (ALL MASTER HOUSES)
-    # =========================================================
     house_rows = []
     delayed_houses = 0
     completed_houses = 0
@@ -532,9 +460,7 @@ def run_engine(conn, cur):
 
             q_penalty = 0
             if dominant_stage in bottleneck_df["Stage"].values:
-                q_penalty = float(
-                    bottleneck_df[bottleneck_df["Stage"] == dominant_stage]["Queue Load Days"].iloc[0]
-                )
+                q_penalty = float(bottleneck_df[bottleneck_df["Stage"] == dominant_stage]["Queue Load Days"].iloc[0])
 
             spi_penalty = (1 / SPI) if SPI > 0 and SPI < 1 else 1
             ettc_days = int(round((base_remaining_days * spi_penalty) + q_penalty))
@@ -567,8 +493,6 @@ def run_engine(conn, cur):
             "House": house,
             "Total Products": total_products,
             "Actual Progress %": actual_prog,
-            "Planned Progress %": planned_prog,
-            "Planned Finish": planned_finish,
             "Predicted Finish": predicted_finish,
             "Actual Finish": actual_finish,
             "ETTC Days": ettc_days,
@@ -579,9 +503,6 @@ def run_engine(conn, cur):
 
     house_df = pd.DataFrame(house_rows)
 
-    # =========================================================
-    # SLA TABLE
-    # =========================================================
     cur.execute("""
         SELECT sm.house_id, h.house_no, sm.sla_date, sm.priority_level
         FROM sla_monitor sm
@@ -624,9 +545,6 @@ def run_engine(conn, cur):
 
     sla_df = pd.DataFrame(sla_priority_rows)
 
-    # =========================================================
-    # WARNING PANEL
-    # =========================================================
     warning_rows = []
 
     if SPI < 1:
@@ -646,9 +564,6 @@ def run_engine(conn, cur):
 
     warn_df = pd.DataFrame(warning_rows)
 
-    # =========================================================
-    # FLOW THROUGHPUT UPDATED
-    # =========================================================
     cur.execute("""
         SELECT
             s.stage_name,
@@ -687,9 +602,6 @@ def run_engine(conn, cur):
 
     flow_df = pd.DataFrame(flow_rows)
 
-    # =========================================================
-    # OUTPUT UI
-    # =========================================================
     st.subheader("📈 EVM Executive Control Panel")
     e1, e2, e3, e4, e5 = st.columns(5)
     e6, e7, e8, e9, e10 = st.columns(5)
