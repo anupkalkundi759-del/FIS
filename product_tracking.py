@@ -85,7 +85,6 @@ def show_product_tracking(conn, cur):
             query += " AND h.house_no = %s"
             params.append(selected_house)
 
-        # ===== SPECIAL MEASUREMENT LOGIC =====
         if selected_stage != "All":
 
             if selected_stage == "Measurement":
@@ -121,6 +120,15 @@ def show_product_tracking(conn, cur):
         "Project", "Unit", "House",
         "Stage", "Status", "Timestamp"
     ])
+
+    # ===== DISPLAY OVERRIDE FOR MEASUREMENT REPORT =====
+    if selected_stage == "Measurement":
+        df["Stage"] = "Measurement"
+
+        if selected_status == "Completed":
+            df["Status"] = "Completed"
+        elif selected_status == "Not Started":
+            df["Status"] = "Not Started"
 
     df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
     df["Date & Time"] = df["Date & Time"].dt.tz_convert("Asia/Kolkata")
