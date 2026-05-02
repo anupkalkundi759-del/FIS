@@ -492,7 +492,7 @@ def run_engine(conn, cur):
         house_rows.append({
             "House": house,
             "Total Products": total_products,
-            "Actual Progress %": actual_prog,
+            "Earned Progress %": actual_prog,
             "Predicted Finish": predicted_finish,
             "Actual Finish": actual_finish,
             "ETTC Days": ettc_days,
