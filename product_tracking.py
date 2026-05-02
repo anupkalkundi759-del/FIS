@@ -4,6 +4,17 @@ def show_product_tracking(conn, cur):
 
     st.title("🔎 Product Tracking")
 
+    stage_rank = {
+        "Measurement": 0,
+        "Cutting List": 1,
+        "Production": 2,
+        "Pre Assembly": 3,
+        "Polishing": 4,
+        "Final Assembly": 5,
+        "Dispatch": 6,
+        "Not Started": 0
+    }
+
     # ================= DATA FUNCTIONS =================
     def get_projects():
         cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
@@ -48,7 +59,7 @@ def show_product_tracking(conn, cur):
     selected_status = col5.selectbox("Status", ["All", "Not Started", "In Progress", "Completed"])
     search = col6.text_input("Search")
 
-    # ================= MAIN QUERY =================
+    # ================= MAIN BASE QUERY =================
     with st.spinner("Loading data..."):
 
         query = """
@@ -85,22 +96,6 @@ def show_product_tracking(conn, cur):
             query += " AND h.house_no = %s"
             params.append(selected_house)
 
-        if selected_stage != "All":
-
-            if selected_stage == "Measurement":
-                if selected_status == "Completed":
-                    query += " AND COALESCE(pcs.stage_name, 'Not Started') <> 'Not Started'"
-                else:
-                    query += " AND COALESCE(pcs.stage_name, 'Not Started') = 'Not Started'"
-
-            else:
-                query += " AND COALESCE(pcs.stage_name, 'Not Started') = %s"
-                params.append(selected_stage)
-
-        if selected_status != "All" and selected_stage != "Measurement":
-            query += " AND COALESCE(pcs.status, 'Not Started') = %s"
-            params.append(selected_status)
-
         if search:
             query += " AND pm.product_code ILIKE %s"
             params.append(f"%{search}%")
@@ -121,19 +116,46 @@ def show_product_tracking(conn, cur):
         "Stage", "Status", "Timestamp"
     ])
 
-    # ===== DISPLAY OVERRIDE FOR MEASUREMENT REPORT =====
-    if selected_stage == "Measurement":
-        df["Stage"] = "Measurement"
+    df["LiveRank"] = df["Stage"].map(stage_rank).fillna(0)
 
-        if selected_status == "Completed":
-            df["Status"] = "Completed"
-        elif selected_status == "Not Started":
+    # ================= UNIVERSAL BUSINESS FILTER =================
+    if selected_stage != "All":
+        target_rank = stage_rank[selected_stage]
+
+        if selected_status == "Not Started":
+            if selected_stage == "Measurement":
+                df = df[df["LiveRank"] == 0]
+            else:
+                df = df[df["LiveRank"] < target_rank]
+
+            df["Stage"] = selected_stage
             df["Status"] = "Not Started"
+
+        elif selected_status == "In Progress":
+            df = df[(df["Stage"] == selected_stage) & (df["Status"] == "In Progress")]
+            df["Stage"] = selected_stage
+            df["Status"] = "In Progress"
+
+        elif selected_status == "Completed":
+            df = df[df["LiveRank"] > target_rank]
+
+            df["Stage"] = selected_stage
+            df["Status"] = "Completed"
+
+        else:
+            pass
+
+    elif selected_status != "All":
+        df = df[df["Status"] == selected_status]
+
+    if df.empty:
+        st.warning("No data found")
+        return
 
     df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
     df["Date & Time"] = df["Date & Time"].dt.tz_convert("Asia/Kolkata")
     df["Date & Time"] = df["Date & Time"].dt.strftime("%d-%m-%Y %H:%M")
-    df = df.drop(columns=["Timestamp"])
+    df = df.drop(columns=["Timestamp", "LiveRank"])
 
     # ================= KPI =================
     k1, k2, k3, k4 = st.columns(4)
