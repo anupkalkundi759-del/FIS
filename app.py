@@ -65,7 +65,7 @@ def login():
         .left-box {
             text-align: center;
             margin-top: 120px;
-            padding-left: 80px;
+            margin-left: 180px;
         }
 
         .title {
@@ -125,12 +125,12 @@ def login():
         </style>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns([1.25, 1])
+    col1, col2 = st.columns([1, 1])
 
     with col1:
         st.markdown('<div class="left-box">', unsafe_allow_html=True)
         logo = remove_white_bg("logo.png")
-        st.image(logo, width=250)
+        st.image(logo, width=220)
 
         st.markdown("""
             <div class="title">
