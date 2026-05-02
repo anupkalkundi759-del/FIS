@@ -102,7 +102,7 @@ def show_tracking(conn, cur):
     select_all = st.checkbox("Select All Visible Products", value=False)
     df["Select"] = select_all
 
-    with st.expander("📦 Product Selection Table", expanded=True):
+    with st.expander("📦 Product Selection Table", expanded=False):
         edited_df = st.data_editor(
             df[["Select", "display"]],
             use_container_width=True,
@@ -173,7 +173,6 @@ def show_tracking(conn, cur):
             available_stages.append(stg)
             stage_counts[stg] = cnt
 
-    clicked_stage = None
     stage_cols = st.columns(len(available_stages))
 
     for i, stg in enumerate(available_stages):
@@ -234,29 +233,77 @@ def show_tracking(conn, cur):
 
     col5.success(f"Next Allowed Stage: {next_stage}")
 
-    selected_stage = st.selectbox("Move Selected Products To Stage", stage_sequence)
+    # ================= NEW MOVEMENT TYPE =================
+    movement_type = st.radio(
+        "Movement Type",
+        ["Normal Forward Move", "Rework / Send Back"],
+        horizontal=True
+    )
+
+    if movement_type == "Normal Forward Move":
+        allowed_stage_options = stage_sequence
+    else:
+        if current_stage == "Not Started":
+            allowed_stage_options = ["Not Started"]
+        else:
+            try:
+                idx = stage_sequence.index(current_stage)
+                allowed_stage_options = stage_sequence[:idx]
+            except:
+                allowed_stage_options = stage_sequence
+
+        if not allowed_stage_options:
+            st.warning("No previous stages available for rework")
+            return
+
+    selected_stage = st.selectbox("Move Selected Products To Stage", allowed_stage_options)
     status = st.selectbox("Update Status", ["In Progress", "Completed"])
+
+    rework_reason = None
+    rework_note = None
+
+    if movement_type == "Rework / Send Back":
+        rework_reason = st.selectbox(
+            "Rework Reason",
+            [
+                "Dimension Issue",
+                "Weld Defect",
+                "Hole Misalignment",
+                "Surface Damage",
+                "Assembly Mismatch",
+                "Polish Rejection",
+                "QC Failed",
+                "Other"
+            ]
+        )
+        rework_note = st.text_input("Remarks (Optional)")
 
     if st.button("Update Selected", use_container_width=True):
 
-        allowed_stages = []
+        if movement_type == "Normal Forward Move":
+            allowed_stages = []
 
-        if current_status == "In Progress":
-            allowed_stages = [current_stage]
-        else:
-            if next_stage != "Completed":
-                allowed_stages = [next_stage]
-
-        if selected_stage not in allowed_stages:
             if current_status == "In Progress":
-                st.error(f"Complete current stage '{current_stage}' before moving forward")
+                allowed_stages = [current_stage]
             else:
-                st.error(f"You must follow stage order. Next allowed: {next_stage}")
-            return
+                if next_stage != "Completed":
+                    allowed_stages = [next_stage]
 
-        if selected_stage == current_stage and current_status == "Completed":
-            st.warning("Stage already completed")
-            return
+            if selected_stage not in allowed_stages:
+                if current_status == "In Progress":
+                    st.error(f"Complete current stage '{current_stage}' before moving forward")
+                else:
+                    st.error(f"You must follow stage order. Next allowed: {next_stage}")
+                return
+
+            if selected_stage == current_stage and current_status == "Completed":
+                st.warning("Stage already completed")
+                return
+
+        else:
+            if selected_stage == current_stage:
+                st.warning("Rework stage cannot be same as current stage")
+                return
 
         with st.spinner("Updating selected products..."):
 
@@ -276,5 +323,10 @@ def show_tracking(conn, cur):
             )
 
             conn.commit()
-            st.success(f"{len(selected_ids)} products updated successfully")
+
+            if movement_type == "Rework / Send Back":
+                st.success(f"{len(selected_ids)} products sent back to {selected_stage} for rework : {rework_reason}")
+            else:
+                st.success(f"{len(selected_ids)} products updated successfully")
+
             st.rerun()
