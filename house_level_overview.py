@@ -123,7 +123,6 @@ def show_dashboard(conn, cur):
 
         current_rank = stage_rank[stage]
 
-        # ===== INDUSTRIAL KPI LOGIC =====
         if stage == "Not Started":
             pending_df = product_df[product_df["StageRank"] == 0]
 
@@ -182,23 +181,100 @@ def show_dashboard(conn, cur):
     kpi_df.index = kpi_df.index + 1
     st.dataframe(kpi_df, use_container_width=True, height=370)
 
-    # ================= HOUSE DETAILED PENDING =================
-    if selected_houses:
-        for house in selected_houses:
-            st.subheader(f"🏠 {house} Detailed Pending Product Status")
+    # ================= BULK HOUSE AUDIT ANALYZER =================
+    st.subheader("🔍 Automatic House Wise Audit Analyzer")
 
-            house_df = product_df[
-                (product_df["House"].astype(str) == str(house)) &
-                (product_df["Current Stage"] != "Dispatch")
-            ].copy()
+    audit_stage = st.selectbox(
+        "Audit Which Stage?",
+        ["Measurement", "Cutting List", "Production", "Pre Assembly", "Polishing", "Final Assembly", "Dispatch"]
+    )
 
-            if house_df.empty:
-                st.success("All products dispatched in this house.")
-                continue
+    audit_rank_map = {
+        "Measurement": 0,
+        "Cutting List": 1,
+        "Production": 2,
+        "Pre Assembly": 3,
+        "Polishing": 4,
+        "Final Assembly": 5,
+        "Dispatch": 6
+    }
 
-            detail = house_df[["Product", "Current Stage"]].copy()
-            detail.columns = ["Product", "Pending In Stage"]
-            detail = detail.reset_index(drop=True)
-            detail.index = detail.index + 1
+    audit_rank = audit_rank_map[audit_stage]
 
-            st.dataframe(detail, use_container_width=True, height=320)
+    audit_rows = []
+    pending_exception_rows = []
+
+    for house_no in sorted(master_house_df["House"].astype(str).unique()):
+
+        house_products = product_df[product_df["House"].astype(str) == str(house_no)].copy()
+
+        if house_products.empty:
+            continue
+
+        total_house_products = len(house_products)
+
+        if audit_stage == "Measurement":
+            completed_df = house_products[house_products["StageRank"] > 0]
+            pending_df = house_products[house_products["StageRank"] == 0]
+        else:
+            completed_df = house_products[house_products["StageRank"] > audit_rank]
+            pending_df = house_products[house_products["StageRank"] <= audit_rank]
+
+        completed_count = len(completed_df)
+        pending_count = len(pending_df)
+
+        if completed_count == total_house_products:
+            house_status = "✅ Fully Completed"
+        elif completed_count == 0:
+            house_status = "🔴 Not Started"
+        else:
+            house_status = "🟡 Partial"
+
+        audit_rows.append([
+            house_no,
+            total_house_products,
+            completed_count,
+            pending_count,
+            house_status
+        ])
+
+        for _, prow in pending_df.iterrows():
+            pending_exception_rows.append([
+                house_no,
+                prow["Product"],
+                f"{audit_stage} Pending"
+            ])
+
+    audit_df = pd.DataFrame(
+        audit_rows,
+        columns=[
+            "House",
+            "Total Products",
+            f"Completed at {audit_stage}",
+            f"Pending at {audit_stage}",
+            "House Status"
+        ]
+    )
+
+    st.subheader(f"🏠 {audit_stage} House Audit Summary")
+    st.dataframe(audit_df, use_container_width=True, height=420)
+
+    fully_completed_houses = len(audit_df[audit_df["House Status"] == "✅ Fully Completed"])
+    partial_houses = len(audit_df[audit_df["House Status"] == "🟡 Partial"])
+    not_started_houses = len(audit_df[audit_df["House Status"] == "🔴 Not Started"])
+
+    a1, a2, a3 = st.columns(3)
+    a1.metric("✅ Fully Completed Houses", fully_completed_houses)
+    a2.metric("🟡 Partial Houses", partial_houses)
+    a3.metric("🔴 Not Started Houses", not_started_houses)
+
+    st.subheader(f"📌 Pending Product Exception List - {audit_stage}")
+
+    if pending_exception_rows:
+        pending_df2 = pd.DataFrame(
+            pending_exception_rows,
+            columns=["House", "Pending Product", "Why Pending"]
+        )
+        st.dataframe(pending_df2, use_container_width=True, height=420)
+    else:
+        st.success(f"All houses fully completed at {audit_stage}.")
