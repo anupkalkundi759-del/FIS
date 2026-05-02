@@ -16,34 +16,21 @@ def show_dashboard(conn, cur):
 
     # ================= CURRENT LATEST STATUS QUERY =================
     latest_query = """
-    WITH latest_tracking AS (
-        SELECT
-            t.product_instance_id,
-            s.stage_name,
-            ROW_NUMBER() OVER (
-                PARTITION BY t.product_instance_id
-                ORDER BY t.timestamp DESC
-            ) AS rn
-        FROM tracking_log t
-        JOIN stages s ON t.stage_id = s.stage_id
-    )
-
     SELECT
         p.project_name,
         u.unit_name,
         h.house_no,
         pr.product_instance_id,
         COALESCE(pm.product_code,'NO PRODUCT') AS product_code,
-        COALESCE(lt.stage_name,'Not Started') AS current_stage
+        COALESCE(pcs.stage_name,'Not Started') AS current_stage
 
     FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
     JOIN projects p ON u.project_id = p.project_id
     LEFT JOIN products pr ON h.house_id = pr.house_id
     LEFT JOIN products_master pm ON pr.product_id = pm.product_id
-    LEFT JOIN latest_tracking lt
-        ON pr.product_instance_id = lt.product_instance_id
-        AND lt.rn = 1
+    LEFT JOIN product_current_stage pcs
+        ON pr.product_instance_id = pcs.product_instance_id
     """
 
     cur.execute(latest_query)
@@ -136,8 +123,7 @@ def show_dashboard(conn, cur):
 
         current_rank = stage_rank[stage]
 
-        # cumulative products not yet crossed this stage
-        pending_df = product_df[product_df["StageRank"] <= current_rank]
+        pending_df = product_df[product_df["StageRank"] < current_rank]
 
         pending_products = len(pending_df)
         houses_impacted = pending_df["House"].astype(str).nunique()
