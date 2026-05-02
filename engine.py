@@ -10,7 +10,7 @@ def run_engine(conn, cur):
     today = datetime.now(tz)
 
     # =========================================================
-    # PROJECT / UNIT SELECTION
+    # PROJECT / UNIT SELECTION WITH ALL OPTION
     # =========================================================
     top1, top2 = st.columns(2)
 
@@ -18,37 +18,48 @@ def run_engine(conn, cur):
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
         projects = cur.fetchall()
         project_dict = {p[1]: p[0] for p in projects}
-        selected_project = st.selectbox("Select Project", list(project_dict.keys()), key="eng_proj")
+        project_options = ["ALL"] + list(project_dict.keys())
+        selected_project = st.selectbox("Select Project", project_options, key="eng_proj")
 
     with top2:
-        cur.execute(
-            "SELECT unit_id, unit_name FROM units WHERE project_id=%s ORDER BY unit_name",
-            (project_dict[selected_project],)
-        )
-        units = cur.fetchall()
-        unit_dict = {u[1]: u[0] for u in units}
-        selected_unit = st.selectbox("Select Unit", list(unit_dict.keys()), key="eng_unit")
+        if selected_project == "ALL":
+            unit_options = ["ALL"]
+            selected_unit = st.selectbox("Select Unit", unit_options, key="eng_unit")
+            project_id = None
+            unit_id = None
+        else:
+            project_id = project_dict[selected_project]
 
-    project_id = project_dict[selected_project]
-    unit_id = unit_dict[selected_unit]
+            cur.execute(
+                "SELECT unit_id, unit_name FROM units WHERE project_id=%s ORDER BY unit_name",
+                (project_id,)
+            )
+            units = cur.fetchall()
+            unit_dict = {u[1]: u[0] for u in units}
 
-    # =========================================================
-    # EVM BASELINE + ACTUAL COST + SLA CONFIG PANELS
-    # =========================================================
+            unit_options = ["ALL"] + list(unit_dict.keys())
+            selected_unit = st.selectbox("Select Unit", unit_options, key="eng_unit")
+            unit_id = None if selected_unit == "ALL" else unit_dict[selected_unit]
+
     st.markdown("---")
     st.subheader("💰 Project EVM Baseline / Actual Cost / SLA Monitor")
 
-    c1, c2, c3 = st.columns(3)
+    # =========================================================
+    # COMPACT EXECUTIVE INPUT PANEL
+    # =========================================================
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
 
-    # ---------- BAC INPUT ----------
-    with c1:
-        cur.execute("""
-            SELECT bac_amount
-            FROM project_evm_baseline
-            WHERE project_id=%s AND unit_id=%s
-        """, (project_id, unit_id))
-        b = cur.fetchone()
-        existing_bac = float(b[0]) if b else 0.0
+    with r1c1:
+        if project_id is not None and unit_id is not None:
+            cur.execute("""
+                SELECT bac_amount
+                FROM project_evm_baseline
+                WHERE project_id=%s AND unit_id=%s
+            """, (project_id, unit_id))
+            b = cur.fetchone()
+            existing_bac = float(b[0]) if b else 0.0
+        else:
+            existing_bac = 0.0
 
         bac_input = st.number_input(
             "Total Planned Project Cost (BAC)",
@@ -57,40 +68,70 @@ def run_engine(conn, cur):
             step=1000.0
         )
 
+    with r1c2:
         if st.button("Save BAC"):
-            cur.execute("""
-                INSERT INTO project_evm_baseline(project_id, unit_id, bac_amount)
-                VALUES(%s, %s, %s)
-                ON CONFLICT(project_id, unit_id)
-                DO UPDATE SET bac_amount = EXCLUDED.bac_amount
-            """, (project_id, unit_id, bac_input))
-            conn.commit()
-            st.success("BAC Saved")
+            if project_id is not None and unit_id is not None:
+                cur.execute("""
+                    INSERT INTO project_evm_baseline(project_id, unit_id, bac_amount)
+                    VALUES(%s, %s, %s)
+                    ON CONFLICT(project_id, unit_id)
+                    DO UPDATE SET bac_amount = EXCLUDED.bac_amount
+                """, (project_id, unit_id, bac_input))
+                conn.commit()
+                st.success("BAC Saved")
+            else:
+                st.warning("BAC can be saved only for specific project + unit")
 
-    # ---------- ACTUAL COST INPUT ----------
-    with c2:
+    with r1c3:
         ac_date = st.date_input("Actual Cost Period Date", key="ac_date")
+
+    with r1c4:
         ac_amt = st.number_input("Actual Cost This Period", min_value=0.0, step=1000.0, key="ac_amt")
+
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+
+    with r2c1:
         ac_remark = st.text_input("Remarks", key="ac_rem")
 
+    with r2c2:
         if st.button("Save Actual Cost"):
-            cur.execute("""
-                INSERT INTO evm_cost_log(project_id, unit_id, period_date, actual_cost, remarks)
-                VALUES(%s, %s, %s, %s, %s)
-            """, (project_id, unit_id, ac_date, ac_amt, ac_remark))
-            conn.commit()
-            st.success("Actual Cost Logged")
+            if project_id is not None and unit_id is not None:
+                cur.execute("""
+                    INSERT INTO evm_cost_log(project_id, unit_id, period_date, actual_cost, remarks)
+                    VALUES(%s, %s, %s, %s, %s)
+                """, (project_id, unit_id, ac_date, ac_amt, ac_remark))
+                conn.commit()
+                st.success("Actual Cost Logged")
+            else:
+                st.warning("Actual cost can be saved only for specific project + unit")
 
-    # ---------- SLA MONITOR ----------
-    with c3:
-        cur.execute("SELECT house_id, house_no FROM houses WHERE unit_id=%s ORDER BY house_no", (unit_id,))
+    with r2c3:
+        if unit_id is not None:
+            cur.execute("SELECT house_id, house_no FROM houses WHERE unit_id=%s ORDER BY house_no", (unit_id,))
+        elif project_id is not None:
+            cur.execute("""
+                SELECT h.house_id, h.house_no
+                FROM houses h
+                JOIN units u ON h.unit_id = u.unit_id
+                WHERE u.project_id=%s
+                ORDER BY h.house_no
+            """, (project_id,))
+        else:
+            cur.execute("SELECT house_id, house_no FROM houses ORDER BY house_no")
+
         hh = cur.fetchall()
         house_dict = {x[1]: x[0] for x in hh}
-
         sla_house = st.selectbox("SLA Monitor House", list(house_dict.keys()), key="sla_house")
+
+    with r2c4:
         sla_date = st.date_input("SLA Date", key="sla_dt")
+
+    r3c1, r3c2 = st.columns(2)
+
+    with r3c1:
         sla_priority = st.selectbox("Priority", ["Normal", "High", "Critical"], key="sla_pri")
 
+    with r3c2:
         if st.button("Save SLA House"):
             cur.execute("""
                 INSERT INTO sla_monitor(house_id, sla_date, priority_level)
@@ -121,32 +162,51 @@ def run_engine(conn, cur):
         return
 
     total_duration = int(activity_df["days"].sum())
-
     activity_df["cum_days"] = activity_df["days"].cumsum()
     activity_df["earned_pct"] = round((activity_df["cum_days"] / total_duration) * 100, 2)
 
     seq_map = dict(zip(activity_df["stage"], activity_df["seq"]))
     earned_map = dict(zip(activity_df["stage"], activity_df["earned_pct"]))
-    duration_map = dict(zip(activity_df["stage"], activity_df["days"]))
 
     # =========================================================
     # TOTAL HOUSES / TOTAL PRODUCTS
     # =========================================================
-    cur.execute("SELECT COUNT(*) FROM houses WHERE unit_id=%s", (unit_id,))
+    if unit_id is not None:
+        cur.execute("SELECT COUNT(*) FROM houses WHERE unit_id=%s", (unit_id,))
+    elif project_id is not None:
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM houses h
+            JOIN units u ON h.unit_id = u.unit_id
+            WHERE u.project_id=%s
+        """, (project_id,))
+    else:
+        cur.execute("SELECT COUNT(*) FROM houses")
     total_houses = cur.fetchone()[0]
 
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM products p
-        JOIN houses h ON p.house_id = h.house_id
-        WHERE h.unit_id=%s
-    """, (unit_id,))
+    if unit_id is not None:
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM products p
+            JOIN houses h ON p.house_id = h.house_id
+            WHERE h.unit_id=%s
+        """, (unit_id,))
+    elif project_id is not None:
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM products p
+            JOIN houses h ON p.house_id = h.house_id
+            JOIN units u ON h.unit_id = u.unit_id
+            WHERE u.project_id=%s
+        """, (project_id,))
+    else:
+        cur.execute("SELECT COUNT(*) FROM products")
     total_products_project = cur.fetchone()[0]
 
     # =========================================================
     # LATEST PRODUCT STAGE SNAPSHOT
     # =========================================================
-    cur.execute("""
+    live_sql = """
         WITH latest_log AS (
             SELECT
                 t.product_instance_id,
@@ -172,9 +232,20 @@ def run_engine(conn, cur):
         LEFT JOIN latest_log ll
             ON p.product_instance_id = ll.product_instance_id
             AND ll.rn = 1
-        WHERE h.unit_id=%s
-        ORDER BY h.house_no
-    """, (unit_id,))
+    """
+
+    params = ()
+
+    if unit_id is not None:
+        live_sql += " WHERE h.unit_id=%s"
+        params = (unit_id,)
+    elif project_id is not None:
+        live_sql += " WHERE h.unit_id IN (SELECT unit_id FROM units WHERE project_id=%s)"
+        params = (project_id,)
+
+    live_sql += " ORDER BY h.house_no"
+
+    cur.execute(live_sql, params)
 
     live_df = pd.DataFrame(
         cur.fetchall(),
@@ -185,14 +256,12 @@ def run_engine(conn, cur):
         st.warning("No product data")
         return
 
-    live_df["timestamp"] = pd.to_datetime(
-        live_df["timestamp"], utc=True, errors="coerce"
-    ).dt.tz_convert(tz)
+    live_df["timestamp"] = pd.to_datetime(live_df["timestamp"], utc=True, errors="coerce").dt.tz_convert(tz)
 
     # =========================================================
-    # HOUSE START DATES (FIRST MEASUREMENT)
+    # HOUSE START DATES
     # =========================================================
-    cur.execute("""
+    start_sql = """
         SELECT
             h.house_no,
             MIN(t.timestamp) AS measure_start
@@ -200,22 +269,29 @@ def run_engine(conn, cur):
         JOIN products p ON h.house_id = p.house_id
         JOIN tracking_log t ON p.product_instance_id = t.product_instance_id
         JOIN stages s ON t.stage_id = s.stage_id
-        WHERE h.unit_id=%s
-          AND s.stage_name='Measurement'
-        GROUP BY h.house_no
-    """, (unit_id,))
+        WHERE s.stage_name='Measurement'
+    """
+
+    params = ()
+
+    if unit_id is not None:
+        start_sql += " AND h.unit_id=%s"
+        params = (unit_id,)
+    elif project_id is not None:
+        start_sql += " AND h.unit_id IN (SELECT unit_id FROM units WHERE project_id=%s)"
+        params = (project_id,)
+
+    start_sql += " GROUP BY h.house_no"
+    cur.execute(start_sql, params)
 
     start_df = pd.DataFrame(cur.fetchall(), columns=["house", "measure_start"])
-    start_df["measure_start"] = pd.to_datetime(
-        start_df["measure_start"], utc=True, errors="coerce"
-    ).dt.tz_convert(tz)
-
+    start_df["measure_start"] = pd.to_datetime(start_df["measure_start"], utc=True, errors="coerce").dt.tz_convert(tz)
     start_map = dict(zip(start_df["house"], start_df["measure_start"]))
 
     # =========================================================
-    # ACTUAL FINISH DATES (ALL PRODUCTS DISPATCHED)
+    # FINISH MAP
     # =========================================================
-    cur.execute("""
+    finish_sql = """
         WITH latest_dispatch AS (
             SELECT
                 h.house_no,
@@ -230,7 +306,18 @@ def run_engine(conn, cur):
             JOIN products p ON h.house_id = p.house_id
             LEFT JOIN tracking_log t ON p.product_instance_id = t.product_instance_id
             LEFT JOIN stages s ON t.stage_id = s.stage_id
-            WHERE h.unit_id=%s
+    """
+
+    params = ()
+
+    if unit_id is not None:
+        finish_sql += " WHERE h.unit_id=%s"
+        params = (unit_id,)
+    elif project_id is not None:
+        finish_sql += " WHERE h.unit_id IN (SELECT unit_id FROM units WHERE project_id=%s)"
+        params = (project_id,)
+
+    finish_sql += """
         )
         SELECT
             house_no,
@@ -240,93 +327,72 @@ def run_engine(conn, cur):
         FROM latest_dispatch
         WHERE rn=1
         GROUP BY house_no
-    """, (unit_id,))
+    """
+
+    cur.execute(finish_sql, params)
 
     finish_df = pd.DataFrame(
         cur.fetchall(),
         columns=["house", "total_products", "dispatched_products", "actual_finish"]
     )
 
-    finish_df["actual_finish"] = pd.to_datetime(
-        finish_df["actual_finish"], utc=True, errors="coerce"
-    ).dt.tz_convert(tz)
-
+    finish_df["actual_finish"] = pd.to_datetime(finish_df["actual_finish"], utc=True, errors="coerce").dt.tz_convert(tz)
     finish_map = finish_df.set_index("house").to_dict("index")
 
     # =========================================================
-    # PROJECT ACTUAL PROGRESS / HOUSE PROGRESS CALCULATION
+    # PROJECT PROGRESS
     # =========================================================
     live_df["earned_pct"] = live_df["stage"].map(lambda x: earned_map.get(x, 0.0))
-
-    house_progress = (
-        live_df.groupby("house")
-        .agg(
-            total_products=("product_instance_id", "count"),
-            actual_progress=("earned_pct", "mean")
-        )
-        .reset_index()
-    )
-
-    house_progress["actual_progress"] = house_progress["actual_progress"].round(2)
-    house_progress_map = house_progress.set_index("house").to_dict("index")
-
     project_actual_progress = round(live_df["earned_pct"].mean(), 2)
 
-    # =========================================================
-    # PROJECT PLANNED PROGRESS
-    # =========================================================
     planned_progress_list = []
-
     for house, start_dt in start_map.items():
         if pd.isna(start_dt):
             continue
-
         elapsed = max(0, (today - start_dt).days)
         pprog = min(100, round((elapsed / total_duration) * 100, 2))
         planned_progress_list.append(pprog)
 
-    project_planned_progress = (
-        round(sum(planned_progress_list) / len(planned_progress_list), 2)
-        if planned_progress_list else 0
-    )
+    project_planned_progress = round(sum(planned_progress_list) / len(planned_progress_list), 2) if planned_progress_list else 0
 
     # =========================================================
-    # BAC / AC / PV / EV / EVM FORMULAS
+    # EVM
     # =========================================================
-    cur.execute("""
-        SELECT bac_amount
-        FROM project_evm_baseline
-        WHERE project_id=%s AND unit_id=%s
-    """, (project_id, unit_id))
-    bb = cur.fetchone()
-    BAC = float(bb[0]) if bb else 0.0
+    if project_id is not None and unit_id is not None:
+        cur.execute("SELECT bac_amount FROM project_evm_baseline WHERE project_id=%s AND unit_id=%s", (project_id, unit_id))
+        bb = cur.fetchone()
+        BAC = float(bb[0]) if bb else 0.0
 
-    cur.execute("""
-        SELECT COALESCE(SUM(actual_cost), 0)
-        FROM evm_cost_log
-        WHERE project_id=%s AND unit_id=%s
-    """, (project_id, unit_id))
-    AC = float(cur.fetchone()[0])
+        cur.execute("SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log WHERE project_id=%s AND unit_id=%s", (project_id, unit_id))
+        AC = float(cur.fetchone()[0])
+
+    elif project_id is not None:
+        cur.execute("SELECT COALESCE(SUM(bac_amount),0) FROM project_evm_baseline WHERE project_id=%s", (project_id,))
+        BAC = float(cur.fetchone()[0])
+
+        cur.execute("SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log WHERE project_id=%s", (project_id,))
+        AC = float(cur.fetchone()[0])
+
+    else:
+        cur.execute("SELECT COALESCE(SUM(bac_amount),0) FROM project_evm_baseline")
+        BAC = float(cur.fetchone()[0])
+
+        cur.execute("SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log")
+        AC = float(cur.fetchone()[0])
 
     PV = round((project_planned_progress / 100) * BAC, 2)
     EV = round((project_actual_progress / 100) * BAC, 2)
-
     SV = round(EV - PV, 2)
     CV = round(EV - AC, 2)
-
-    SPI = round((EV / PV), 2) if PV > 0 else 0
-    CPI = round((EV / AC), 2) if AC > 0 else 0
-
-    EAC = round((BAC / CPI), 2) if CPI > 0 else 0
-    ETC_COST = round((EAC - AC), 2) if EAC > 0 else 0
+    SPI = round(EV / PV, 2) if PV > 0 else 0
+    CPI = round(EV / AC, 2) if AC > 0 else 0
+    EAC = round(BAC / CPI, 2) if CPI > 0 else 0
+    ETC_COST = round(EAC - AC, 2) if EAC > 0 else 0
 
     # =========================================================
-    # STAGE THROUGHPUT / BOTTLENECK PRESSURE
+    # BOTTLENECK
     # =========================================================
-    cur.execute("""
-        SELECT stage_name, capacity_per_day
-        FROM stage_capacity
-    """)
+    cur.execute("SELECT stage_name, capacity_per_day FROM stage_capacity")
     cap_rows = cur.fetchall()
     cap_map = {x[0]: x[1] for x in cap_rows}
 
@@ -358,27 +424,19 @@ def run_engine(conn, cur):
             highest_pressure = pressure
             bottleneck_stage = stage
 
-        if pressure >= 200:
-            health = "Critical"
-        elif pressure >= 120:
-            health = "High"
-        else:
-            health = "Normal"
-
         bottleneck_rows.append({
             "Stage": stage,
             "Current WIP": current_wip,
             "Avg Daily Exit": avg_exit,
             "Capacity/Day": cap_day,
             "Queue Load Days": qdays,
-            "Pressure %": pressure,
-            "Status": health
+            "Pressure %": pressure
         })
 
     bottleneck_df = pd.DataFrame(bottleneck_rows)
 
     # =========================================================
-    # HOUSE PREDICTIVE ETTC TABLE
+    # HOUSE ETTC
     # =========================================================
     house_rows = []
     delayed_houses = 0
@@ -434,18 +492,14 @@ def run_engine(conn, cur):
 
             q_penalty = 0
             if dominant_stage in bottleneck_df["Stage"].values:
-                q_penalty = float(
-                    bottleneck_df[bottleneck_df["Stage"] == dominant_stage]["Queue Load Days"].iloc[0]
-                )
+                q_penalty = float(bottleneck_df[bottleneck_df["Stage"] == dominant_stage]["Queue Load Days"].iloc[0])
 
             spi_penalty = (1 / SPI) if SPI > 0 and SPI < 1 else 1
-
             ettc_days = int(round((base_remaining_days * spi_penalty) + q_penalty))
 
             predicted_finish_dt = today + timedelta(days=ettc_days)
             predicted_finish = predicted_finish_dt.date()
             actual_finish = "Not Finished"
-
             delay_days = max(0, (predicted_finish - planned_finish).days)
 
             if delay_days > 0:
@@ -453,7 +507,6 @@ def run_engine(conn, cur):
 
             stagnant_days = 0
             last_move = sub["timestamp"].max()
-
             if pd.notna(last_move):
                 stagnant_days = (today - last_move).days
 
@@ -485,19 +538,18 @@ def run_engine(conn, cur):
     house_df = pd.DataFrame(house_rows)
 
     # =========================================================
-    # SLA PRIORITY TABLE
+    # SLA TABLE
     # =========================================================
     cur.execute("""
         SELECT sm.house_id, h.house_no, sm.sla_date, sm.priority_level
         FROM sla_monitor sm
         JOIN houses h ON sm.house_id = h.house_id
-        WHERE h.unit_id=%s
-    """, (unit_id,))
-    sla_rows = cur.fetchall()
+    """)
+    all_sla = cur.fetchall()
 
-    sla_priority = []
+    sla_priority_rows = []
 
-    for r in sla_rows:
+    for r in all_sla:
         house_no = r[1]
         sla_dt = r[2]
         pri = r[3]
@@ -518,7 +570,7 @@ def run_engine(conn, cur):
         else:
             risk = "Safe"
 
-        sla_priority.append({
+        sla_priority_rows.append({
             "House": house_no,
             "SLA Date": sla_dt,
             "Predicted Finish": pred_finish,
@@ -528,19 +580,17 @@ def run_engine(conn, cur):
             "Risk": risk
         })
 
-    sla_df = pd.DataFrame(sla_priority)
+    sla_df = pd.DataFrame(sla_priority_rows)
 
     # =========================================================
-    # EARLY WARNING PANEL
+    # WARNING PANEL
     # =========================================================
     warning_rows = []
 
     if SPI < 1:
         warning_rows.append({"Alert": f"Project SPI below 1 ({SPI}) - Schedule Slipping"})
-
     if CPI > 0 and CPI < 1:
         warning_rows.append({"Alert": f"Project CPI below 1 ({CPI}) - Cost Burn Higher Than Earned"})
-
     if bottleneck_stage:
         warning_rows.append({"Alert": f"Critical Bottleneck Detected at {bottleneck_stage}"})
 
@@ -555,7 +605,7 @@ def run_engine(conn, cur):
     warn_df = pd.DataFrame(warning_rows)
 
     # =========================================================
-    # FLOW THROUGHPUT MONITOR
+    # FLOW THROUGHPUT
     # =========================================================
     cur.execute("""
         SELECT
@@ -625,16 +675,9 @@ def run_engine(conn, cur):
     st.subheader("🏠 House Predictive Intelligence")
     st.dataframe(house_df, use_container_width=True, height=420)
 
-    st.subheader("🏭 Stage Bottleneck Pressure Analyzer")
-    st.dataframe(bottleneck_df, use_container_width=True, height=280)
-
     st.subheader("🎯 SLA Priority Monitor")
     if not sla_df.empty:
-        st.dataframe(
-            sla_df.sort_values("Expected Miss Days", ascending=False),
-            use_container_width=True,
-            height=220
-        )
+        st.dataframe(sla_df.sort_values("Expected Miss Days", ascending=False), use_container_width=True, height=220)
     else:
         st.info("No SLA monitored houses")
 
