@@ -189,11 +189,43 @@ def show_dashboard(conn, cur):
     if "selected_audit_stage" not in st.session_state:
         st.session_state.selected_audit_stage = "Measurement"
 
+    audit_preview_counts = {}
+
+    for stg in audit_stage_options:
+
+        temp_rank = {
+            "Measurement": 0,
+            "Cutting List": 1,
+            "Production": 2,
+            "Pre Assembly": 3,
+            "Polishing": 4,
+            "Final Assembly": 5,
+            "Dispatch": 6
+        }[stg]
+
+        impacted_houses = 0
+
+        for house_no in sorted(master_house_df["House"].astype(str).unique()):
+            house_products = product_df[product_df["House"].astype(str) == str(house_no)].copy()
+
+            if house_products.empty:
+                continue
+
+            if stg == "Measurement":
+                pending_df_temp = house_products[house_products["StageRank"] == 0]
+            else:
+                pending_df_temp = house_products[house_products["StageRank"] <= temp_rank]
+
+            if len(pending_df_temp) > 0:
+                impacted_houses += 1
+
+        audit_preview_counts[stg] = impacted_houses
+
     stage_cols = st.columns(len(audit_stage_options))
 
     for i, stg in enumerate(audit_stage_options):
         with stage_cols[i]:
-            if st.button(stg, use_container_width=True):
+            if st.button(f"{stg} ({audit_preview_counts[stg]})", use_container_width=True):
                 st.session_state.selected_audit_stage = stg
 
     audit_stage = st.session_state.selected_audit_stage
