@@ -186,6 +186,14 @@ def show_tracking(conn, cur):
         matrix_df = matrix_df.merge(latest_df, left_on="product_instance_id", right_on="pid", how="left")
         matrix_df["stage"] = matrix_df["stage"].fillna("Not Started")
 
+        if len(stage_sequence) > 0:
+            last_stage_name = stage_sequence[-1]
+            matrix_df.loc[
+                (matrix_df["stage"] == last_stage_name) &
+                (matrix_df["status"] == "Completed"),
+                "stage"
+            ] = "Completed"
+
         st.session_state.matrix_df = matrix_df
         st.session_state.last_selection_signature = selection_signature
 
@@ -196,7 +204,7 @@ def show_tracking(conn, cur):
     available_stages = []
     stage_counts = {}
 
-    for stg in ["Not Started"] + stage_sequence:
+    for stg in ["Not Started"] + stage_sequence + ["Completed"]:
         cnt = len(matrix_df[matrix_df["stage"] == stg])
         if cnt > 0:
             available_stages.append(stg)
