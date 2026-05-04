@@ -12,6 +12,7 @@ def show_product_tracking(conn, cur):
         "Polishing": 4,
         "Final Assembly": 5,
         "Dispatch": 6,
+        "Completed": 7,
         "Not Started": 0
     }
 
@@ -63,6 +64,20 @@ def show_product_tracking(conn, cur):
     with st.spinner("Loading data..."):
 
         query = """
+        WITH latest_tracking AS (
+            SELECT
+                t.product_instance_id,
+                s.stage_name,
+                t.status,
+                t.timestamp,
+                ROW_NUMBER() OVER (
+                    PARTITION BY t.product_instance_id
+                    ORDER BY t.timestamp DESC
+                ) AS rn
+            FROM tracking_log t
+            JOIN stages s ON t.stage_id = s.stage_id
+        )
+
         SELECT 
             pm.product_code,
             pm.product_category,
@@ -70,15 +85,28 @@ def show_product_tracking(conn, cur):
             pr.project_name,
             u.unit_name,
             h.house_no,
-            COALESCE(pcs.stage_name, 'Not Started') AS stage,
-            COALESCE(pcs.status, 'Not Started') AS status,
-            pcs.updated_at
+
+            CASE
+                WHEN lt.stage_name = 'Dispatch' AND lt.status = 'Completed' THEN 'Completed'
+                WHEN lt.stage_name IS NULL THEN 'Not Started'
+                ELSE lt.stage_name
+            END AS stage,
+
+            CASE
+                WHEN lt.stage_name IS NULL THEN 'Not Started'
+                ELSE lt.status
+            END AS status,
+
+            lt.timestamp
+
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
         JOIN houses h ON p.house_id = h.house_id
         JOIN units u ON h.unit_id = u.unit_id
         JOIN projects pr ON u.project_id = pr.project_id
-        LEFT JOIN product_current_stage pcs ON pcs.product_instance_id = p.product_instance_id
+        LEFT JOIN latest_tracking lt
+            ON lt.product_instance_id = p.product_instance_id
+            AND lt.rn = 1
         WHERE 1=1
         """
 
@@ -181,30 +209,45 @@ def show_product_tracking(conn, cur):
     with st.spinner("Calculating breakdown..."):
 
         query2 = """
+        WITH latest_tracking AS (
+            SELECT
+                t.product_instance_id,
+                s.stage_name,
+                t.status,
+                ROW_NUMBER() OVER (
+                    PARTITION BY t.product_instance_id
+                    ORDER BY t.timestamp DESC
+                ) AS rn
+            FROM tracking_log t
+            JOIN stages s ON t.stage_id = s.stage_id
+        )
+
         SELECT 
             pr.project_name,
             u.unit_name,
             pm.product_code,
             COUNT(*) AS total,
 
-            COUNT(CASE WHEN COALESCE(pcs.stage_name,'Not Started') = 'Dispatch' THEN 1 END) AS completed,
+            COUNT(CASE WHEN (lt.stage_name = 'Dispatch' AND lt.status = 'Completed') THEN 1 END) AS completed,
 
-            COUNT(*) - COUNT(CASE WHEN COALESCE(pcs.stage_name,'Not Started') = 'Dispatch' THEN 1 END) AS remaining,
+            COUNT(*) - COUNT(CASE WHEN (lt.stage_name = 'Dispatch' AND lt.status = 'Completed') THEN 1 END) AS remaining,
 
-            COUNT(CASE WHEN COALESCE(pcs.stage_name,'Not Started') = 'Not Started' THEN 1 END) AS "Measurement",
-            COUNT(CASE WHEN COALESCE(pcs.stage_name,'Not Started') = 'Cutting List' THEN 1 END) AS "Cutting List",
-            COUNT(CASE WHEN COALESCE(pcs.stage_name,'Not Started') = 'Production' THEN 1 END) AS "Production",
-            COUNT(CASE WHEN COALESCE(pcs.stage_name,'Not Started') = 'Pre Assembly' THEN 1 END) AS "Pre Assembly",
-            COUNT(CASE WHEN COALESCE(pcs.stage_name,'Not Started') = 'Polishing' THEN 1 END) AS "Polishing",
-            COUNT(CASE WHEN COALESCE(pcs.stage_name,'Not Started') = 'Final Assembly' THEN 1 END) AS "Final Assembly",
-            COUNT(CASE WHEN COALESCE(pcs.stage_name,'Not Started') = 'Dispatch' THEN 1 END) AS "Dispatch"
+            COUNT(CASE WHEN lt.stage_name IS NULL THEN 1 END) AS "Measurement",
+            COUNT(CASE WHEN lt.stage_name = 'Cutting List' THEN 1 END) AS "Cutting List",
+            COUNT(CASE WHEN lt.stage_name = 'Production' THEN 1 END) AS "Production",
+            COUNT(CASE WHEN lt.stage_name = 'Pre Assembly' THEN 1 END) AS "Pre Assembly",
+            COUNT(CASE WHEN lt.stage_name = 'Polishing' THEN 1 END) AS "Polishing",
+            COUNT(CASE WHEN lt.stage_name = 'Final Assembly' THEN 1 END) AS "Final Assembly",
+            COUNT(CASE WHEN lt.stage_name = 'Dispatch' AND COALESCE(lt.status,'') != 'Completed' THEN 1 END) AS "Dispatch"
 
         FROM products p
         JOIN products_master pm ON p.product_id = pm.product_id
         JOIN houses h ON p.house_id = h.house_id
         JOIN units u ON h.unit_id = u.unit_id
         JOIN projects pr ON u.project_id = pr.project_id
-        LEFT JOIN product_current_stage pcs ON pcs.product_instance_id = p.product_instance_id
+        LEFT JOIN latest_tracking lt
+            ON lt.product_instance_id = p.product_instance_id
+            AND lt.rn = 1
         WHERE 1=1
         """
 
