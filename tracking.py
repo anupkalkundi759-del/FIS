@@ -5,7 +5,6 @@ def show_tracking(conn, cur):
 
     st.title("🏭 Production Tracker")
 
-    # ================= SAFE CONNECTION CHECK =================
     try:
         if conn.closed != 0:
             st.error("Database connection lost. Please refresh once.")
@@ -14,7 +13,6 @@ def show_tracking(conn, cur):
         st.error("Database connection issue. Please refresh.")
         return
 
-    # ================= FAST CACHED DATA FUNCTIONS =================
     @st.cache_data(ttl=300)
     def get_projects():
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
@@ -81,7 +79,6 @@ def show_tracking(conn, cur):
             """)
         return cur.fetchall()
 
-    # ================= FILTER AREA =================
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -138,7 +135,6 @@ def show_tracking(conn, cur):
 
     stage_sequence = get_stages()
 
-    # ================= FAST LIVE MATRIX =================
     cur.execute("""
         WITH latest_stage AS (
             SELECT
@@ -246,11 +242,14 @@ def show_tracking(conn, cur):
     col4.info(f"Current Stage: {current_stage} ({current_status})")
     col5.success(f"Next Allowed Stage: {next_stage}")
 
-    with st.form("tracking_update_form"):
-        movement_type = st.radio("Movement Type", ["Normal Forward Move", "Rework / Send Back"], horizontal=True)
+    movement_type = st.radio("Movement Type", ["Normal Forward Move", "Rework / Send Back"], horizontal=True, key="movement_selector")
+
+    with st.form(f"tracking_update_form_{movement_type}"):
 
         if movement_type == "Normal Forward Move":
             allowed_stage_options = stage_sequence
+            selected_stage = st.selectbox("Move Selected Products To Stage", allowed_stage_options)
+            status = st.selectbox("Update Status", ["In Progress", "Completed"])
         else:
             if current_stage == "Not Started":
                 allowed_stage_options = ["Not Started"]
@@ -261,10 +260,8 @@ def show_tracking(conn, cur):
                 except:
                     allowed_stage_options = ["Not Started"]
 
-        selected_stage = st.selectbox("Move Selected Products To Stage", allowed_stage_options)
-        status = st.selectbox("Update Status", ["In Progress", "Completed"])
-
-        if movement_type == "Rework / Send Back":
+            selected_stage = st.selectbox("Move Selected Products To Stage", allowed_stage_options)
+            status = st.selectbox("Update Status", ["In Progress"])
             rework_reason = st.selectbox("Rework Reason", [
                 "Dimension Issue", "Weld Defect", "Hole Misalignment",
                 "Surface Damage", "Assembly Mismatch", "Polish Rejection",
