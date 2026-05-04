@@ -16,21 +16,40 @@ def show_dashboard(conn, cur):
 
     # ================= CURRENT LIVE STATUS QUERY =================
     latest_query = """
+    WITH latest_tracking AS (
+        SELECT
+            t.product_instance_id,
+            s.stage_name,
+            t.status,
+            ROW_NUMBER() OVER (
+                PARTITION BY t.product_instance_id
+                ORDER BY t.timestamp DESC
+            ) AS rn
+        FROM tracking_log t
+        JOIN stages s ON t.stage_id = s.stage_id
+    )
+
     SELECT
         p.project_name,
         u.unit_name,
         h.house_no,
         pr.product_instance_id,
         COALESCE(pm.product_code,'NO PRODUCT') AS product_code,
-        COALESCE(pcs.stage_name,'Not Started') AS current_stage
+
+        CASE
+            WHEN lt.stage_name = 'Dispatch' AND lt.status = 'Completed' THEN 'Completed'
+            WHEN lt.stage_name IS NULL THEN 'Not Started'
+            ELSE lt.stage_name
+        END AS current_stage
 
     FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
     JOIN projects p ON u.project_id = p.project_id
     LEFT JOIN products pr ON h.house_id = pr.house_id
     LEFT JOIN products_master pm ON pr.product_id = pm.product_id
-    LEFT JOIN product_current_stage pcs
-        ON pr.product_instance_id = pcs.product_instance_id
+    LEFT JOIN latest_tracking lt
+        ON pr.product_instance_id = lt.product_instance_id
+        AND lt.rn = 1
     """
 
     cur.execute(latest_query)
@@ -112,7 +131,8 @@ def show_dashboard(conn, cur):
         "Pre Assembly": 3,
         "Polishing": 4,
         "Final Assembly": 5,
-        "Dispatch": 6
+        "Dispatch": 6,
+        "Completed": 7
     }
 
     product_df["StageRank"] = product_df["Current Stage"].map(stage_rank).fillna(0)
@@ -127,7 +147,7 @@ def show_dashboard(conn, cur):
             pending_df = product_df[product_df["StageRank"] == 0]
 
         elif stage == "Dispatch":
-            pending_df = product_df[product_df["StageRank"] < current_rank]
+            pending_df = product_df[product_df["StageRank"] < 7]
 
         else:
             pending_df = product_df[product_df["StageRank"] <= current_rank]
@@ -154,12 +174,12 @@ def show_dashboard(conn, cur):
 
     fully_dispatch_houses = 0
     for house, stages in house_group.items():
-        if all(str(x) == "Dispatch" for x in stages):
+        if all(str(x) == "Completed" for x in stages):
             fully_dispatch_houses += 1
 
     overall_houses_impacted = total_houses - fully_dispatch_houses
 
-    dispatch_completed_products = len(product_df[product_df["Current Stage"] == "Dispatch"])
+    dispatch_completed_products = len(product_df[product_df["Current Stage"] == "Completed"])
     overall_pending = total_products_scope - dispatch_completed_products
     overall_completion = round(
         (dispatch_completed_products / total_products_scope) * 100, 2
@@ -213,6 +233,8 @@ def show_dashboard(conn, cur):
 
             if stg == "Measurement":
                 pending_df_temp = house_products[house_products["StageRank"] == 0]
+            elif stg == "Dispatch":
+                pending_df_temp = house_products[house_products["StageRank"] < 7]
             else:
                 pending_df_temp = house_products[house_products["StageRank"] <= temp_rank]
 
@@ -257,6 +279,9 @@ def show_dashboard(conn, cur):
         if audit_stage == "Measurement":
             completed_df = house_products[house_products["StageRank"] > 0]
             pending_df = house_products[house_products["StageRank"] == 0]
+        elif audit_stage == "Dispatch":
+            completed_df = house_products[house_products["StageRank"] == 7]
+            pending_df = house_products[house_products["StageRank"] < 7]
         else:
             completed_df = house_products[house_products["StageRank"] > audit_rank]
             pending_df = house_products[house_products["StageRank"] <= audit_rank]
