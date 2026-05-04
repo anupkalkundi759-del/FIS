@@ -14,13 +14,13 @@ def show_tracking(conn, cur):
         st.error("Database connection issue. Please refresh.")
         return
 
-    # ================= CACHED DATA FUNCTIONS =================
-    @st.cache_data(ttl=120)
+    # ================= FAST CACHED DATA FUNCTIONS =================
+    @st.cache_data(ttl=300)
     def get_projects():
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
         return cur.fetchall()
 
-    @st.cache_data(ttl=120)
+    @st.cache_data(ttl=300)
     def get_units(project_id):
         if project_id:
             cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s ORDER BY unit_name", (project_id,))
@@ -28,7 +28,7 @@ def show_tracking(conn, cur):
             cur.execute("SELECT unit_id, unit_name FROM units ORDER BY unit_name")
         return cur.fetchall()
 
-    @st.cache_data(ttl=120)
+    @st.cache_data(ttl=300)
     def get_houses(project_id, unit_id):
         if unit_id:
             cur.execute("SELECT house_id, house_no FROM houses WHERE unit_id=%s ORDER BY house_no", (unit_id,))
@@ -44,12 +44,15 @@ def show_tracking(conn, cur):
             cur.execute("SELECT house_id, house_no FROM houses ORDER BY house_no")
         return cur.fetchall()
 
-    @st.cache_data(ttl=300)
+    @st.cache_data(ttl=600)
     def get_stages():
         cur.execute("SELECT stage_name FROM stages ORDER BY sequence")
         return [s[0] for s in cur.fetchall()]
 
-    def get_products(house_ids, unit_id):
+    @st.cache_data(ttl=300)
+    def get_products_cached(house_ids_tuple, unit_id):
+        house_ids = list(house_ids_tuple) if house_ids_tuple else None
+
         if house_ids:
             cur.execute("""
                 SELECT p.product_instance_id, pm.product_code, h.house_no
@@ -99,16 +102,8 @@ def show_tracking(conn, cur):
         selected_houses = st.multiselect("Select House", options=list(house_dict.keys()))
         house_ids = [house_dict[h] for h in selected_houses] if selected_houses else None
 
-    # ================= LOAD PRODUCTS ONLY WHEN FILTER CHANGES =================
-    filter_signature = (project_id, unit_id, tuple(house_ids) if house_ids else None)
-
-    if "last_filter_signature" not in st.session_state or st.session_state.last_filter_signature != filter_signature:
-        products = get_products(house_ids, unit_id)
-        st.session_state.product_df = pd.DataFrame(products, columns=["product_instance_id", "product_code", "house_no"]) if products else pd.DataFrame()
-        st.session_state.last_filter_signature = filter_signature
-        st.session_state.pop("matrix_df", None)
-
-    df = st.session_state.product_df.copy()
+    products = get_products_cached(tuple(house_ids) if house_ids else tuple(), unit_id)
+    df = pd.DataFrame(products, columns=["product_instance_id", "product_code", "house_no"]) if products else pd.DataFrame()
 
     if df.empty:
         st.warning("No products found")
@@ -143,61 +138,54 @@ def show_tracking(conn, cur):
 
     stage_sequence = get_stages()
 
-    # ================= LOAD LIVE MATRIX ONLY ON PRODUCT SELECTION CHANGE =================
-    selection_signature = tuple(sorted(selected_ids))
+    # ================= FAST LIVE MATRIX =================
+    cur.execute("""
+        WITH latest_stage AS (
+            SELECT
+                t.product_instance_id,
+                s.stage_name,
+                t.status,
+                ROW_NUMBER() OVER (
+                    PARTITION BY t.product_instance_id
+                    ORDER BY t.timestamp DESC
+                ) AS rn
+            FROM tracking_log t
+            JOIN stages s ON t.stage_id = s.stage_id
+            WHERE t.product_instance_id = ANY(%s)
+        )
+        SELECT product_instance_id, stage_name, status
+        FROM latest_stage
+        WHERE rn = 1
+    """, (selected_ids,))
 
-    if "last_selection_signature" not in st.session_state or st.session_state.last_selection_signature != selection_signature:
-        cur.execute("""
-            WITH latest_stage AS (
-                SELECT
-                    t.product_instance_id,
-                    s.stage_name,
-                    t.status,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY t.product_instance_id
-                        ORDER BY t.timestamp DESC
-                    ) AS rn
-                FROM tracking_log t
-                JOIN stages s ON t.stage_id = s.stage_id
-                WHERE t.product_instance_id = ANY(%s)
-            )
-            SELECT product_instance_id, stage_name, status
-            FROM latest_stage
-            WHERE rn = 1
-        """, (selected_ids,))
+    latest_data = cur.fetchall()
 
-        latest_data = cur.fetchall()
+    if latest_data:
+        latest_df = pd.DataFrame(latest_data, columns=["pid", "stage", "status"])
+    else:
+        latest_df = pd.DataFrame(columns=["pid", "stage", "status"])
 
-        if latest_data:
-            latest_df = pd.DataFrame(latest_data, columns=["pid", "stage", "status"])
-        else:
-            latest_df = pd.DataFrame(columns=["pid", "stage", "status"])
+    missing_ids = set(selected_ids) - set(latest_df["pid"].tolist())
+    if missing_ids:
+        extra = pd.DataFrame({
+            "pid": list(missing_ids),
+            "stage": ["Not Started"] * len(missing_ids),
+            "status": [None] * len(missing_ids)
+        })
+        latest_df = pd.concat([latest_df, extra], ignore_index=True)
 
-        missing_ids = set(selected_ids) - set(latest_df["pid"].tolist())
-        if missing_ids:
-            extra = pd.DataFrame({
-                "pid": list(missing_ids),
-                "stage": ["Not Started"] * len(missing_ids),
-                "status": [None] * len(missing_ids)
-            })
-            latest_df = pd.concat([latest_df, extra], ignore_index=True)
+    matrix_df = df[df["product_instance_id"].isin(selected_ids)][["product_instance_id", "display"]].copy()
+    matrix_df = matrix_df.merge(latest_df, left_on="product_instance_id", right_on="pid", how="left")
+    matrix_df["stage"] = matrix_df["stage"].fillna("Not Started")
+    matrix_df["status"] = matrix_df["status"].fillna("Not Started")
 
-        matrix_df = df[df["product_instance_id"].isin(selected_ids)][["product_instance_id", "display"]].copy()
-        matrix_df = matrix_df.merge(latest_df, left_on="product_instance_id", right_on="pid", how="left")
-        matrix_df["stage"] = matrix_df["stage"].fillna("Not Started")
-
-        if len(stage_sequence) > 0:
-            last_stage_name = stage_sequence[-1]
-            matrix_df.loc[
-                (matrix_df["stage"] == last_stage_name) &
-                (matrix_df["status"] == "Completed"),
-                "stage"
-            ] = "Completed"
-
-        st.session_state.matrix_df = matrix_df
-        st.session_state.last_selection_signature = selection_signature
-
-    matrix_df = st.session_state.matrix_df.copy()
+    if len(stage_sequence) > 0:
+        last_stage_name = stage_sequence[-1]
+        matrix_df.loc[
+            (matrix_df["stage"] == last_stage_name) &
+            (matrix_df["status"] == "Completed"),
+            "stage"
+        ] = "Completed"
 
     st.markdown("### 📍 Current Live Stages Found")
 
@@ -255,7 +243,7 @@ def show_tracking(conn, cur):
             next_stage = "Completed"
 
     col4, col5 = st.columns(2)
-    col4.info(f"Current Stage: {current_stage}")
+    col4.info(f"Current Stage: {current_stage} ({current_status})")
     col5.success(f"Next Allowed Stage: {next_stage}")
 
     with st.form("tracking_update_form"):
@@ -269,9 +257,9 @@ def show_tracking(conn, cur):
             else:
                 try:
                     idx = stage_sequence.index(current_stage)
-                    allowed_stage_options = stage_sequence[:idx]
+                    allowed_stage_options = ["Not Started"] + stage_sequence[:idx]
                 except:
-                    allowed_stage_options = stage_sequence
+                    allowed_stage_options = ["Not Started"]
 
         selected_stage = st.selectbox("Move Selected Products To Stage", allowed_stage_options)
         status = st.selectbox("Update Status", ["In Progress", "Completed"])
@@ -282,6 +270,7 @@ def show_tracking(conn, cur):
                 "Surface Damage", "Assembly Mismatch", "Polish Rejection",
                 "QC Failed", "Other"
             ])
+            rework_note = st.text_input("Type Reason (Optional)")
 
         submitted = st.form_submit_button("Update Selected")
 
@@ -289,23 +278,15 @@ def show_tracking(conn, cur):
 
         if movement_type == "Normal Forward Move":
 
-            valid_move = False
+            if current_status == "In Progress":
+                if not (selected_stage == current_stage and status == "Completed"):
+                    st.error("Complete current stage first before moving ahead")
+                    return
 
-            # same stage status update allowed
-            if selected_stage == current_stage:
-                valid_move = True
-
-            # move to immediate next stage allowed
-            elif selected_stage == next_stage:
-                valid_move = True
-
-            # final completed bucket handled through dispatch completed same stage
-            elif current_stage == "Completed":
-                valid_move = False
-
-            if not valid_move:
-                st.error("Invalid stage movement")
-                return
+            elif current_status == "Completed":
+                if selected_stage != next_stage and not (current_stage == stage_sequence[-1] and selected_stage == current_stage):
+                    st.error("Invalid stage movement")
+                    return
 
         else:
             if selected_stage == current_stage:
@@ -330,10 +311,6 @@ def show_tracking(conn, cur):
                 )
 
                 conn.commit()
-
-                st.session_state.pop("matrix_df", None)
-                st.session_state.pop("last_selection_signature", None)
-
                 st.success(f"{len(move_ids)} products updated successfully")
                 st.rerun()
 
