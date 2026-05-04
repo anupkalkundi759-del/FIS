@@ -493,12 +493,12 @@ def run_engine(conn, cur):
             "House": house,
             "Total Products": total_products,
             "Earned Progress %": actual_prog,
+            "Planned Finish": planned_finish,
             "Predicted Finish": predicted_finish,
             "Actual Finish": actual_finish,
             "ETTC Days": ettc_days,
             "Delay Days": delay_days,
             "Critical Stage": critical_stage,
-            "Health": health
         })
 
     house_df = pd.DataFrame(house_rows)
