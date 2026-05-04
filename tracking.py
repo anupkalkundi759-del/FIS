@@ -283,7 +283,10 @@ def show_tracking(conn, cur):
             if current_status == "In Progress":
                 allowed_stages = [current_stage]
             else:
-                allowed_stages = [next_stage] if next_stage != "Completed" else []
+                if next_stage != "Completed":
+                    allowed_stages = [next_stage]
+                else:
+                    allowed_stages = [current_stage]
 
             if selected_stage not in allowed_stages:
                 st.error("Invalid stage movement")
