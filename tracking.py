@@ -288,17 +288,25 @@ def show_tracking(conn, cur):
     if submitted:
 
         if movement_type == "Normal Forward Move":
-            if current_status == "In Progress":
-                allowed_stages = [current_stage]
-            else:
-                if next_stage != "Completed":
-                    allowed_stages = [next_stage]
-                else:
-                    allowed_stages = [current_stage]
 
-            if selected_stage not in allowed_stages:
+            valid_move = False
+
+            # same stage status update allowed
+            if selected_stage == current_stage:
+                valid_move = True
+
+            # move to immediate next stage allowed
+            elif selected_stage == next_stage:
+                valid_move = True
+
+            # final completed bucket handled through dispatch completed same stage
+            elif current_stage == "Completed":
+                valid_move = False
+
+            if not valid_move:
                 st.error("Invalid stage movement")
                 return
+
         else:
             if selected_stage == current_stage:
                 st.error("Rework stage cannot be same as current")
