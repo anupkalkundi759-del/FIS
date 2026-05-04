@@ -223,7 +223,7 @@ def show_dashboard(conn, cur):
             "Dispatch": 6
         }[stg]
 
-        impacted_houses = 0
+        pending_products_total = 0
 
         for house_no in sorted(master_house_df["House"].astype(str).unique()):
             house_products = product_df[product_df["House"].astype(str) == str(house_no)].copy()
@@ -236,13 +236,11 @@ def show_dashboard(conn, cur):
             elif stg == "Dispatch":
                 pending_df_temp = house_products[house_products["StageRank"] < 7]
             else:
-                # FIX ONLY: use exact current live stage pending, not historical duplicate carry
                 pending_df_temp = house_products[house_products["StageRank"] == temp_rank]
 
-            if len(pending_df_temp) > 0:
-                impacted_houses += 1
+            pending_products_total += len(pending_df_temp)
 
-        audit_preview_counts[stg] = impacted_houses
+        audit_preview_counts[stg] = pending_products_total
 
     stage_cols = st.columns(len(audit_stage_options))
 
@@ -284,7 +282,6 @@ def show_dashboard(conn, cur):
             completed_df = house_products[house_products["StageRank"] == 7]
             pending_df = house_products[house_products["StageRank"] < 7]
         else:
-            # FIX ONLY: current live stage exact pending, rest considered completed for this audit snapshot
             pending_df = house_products[house_products["StageRank"] == audit_rank]
             completed_df = house_products[house_products["StageRank"] != audit_rank]
 
