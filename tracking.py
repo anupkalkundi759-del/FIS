@@ -5,6 +5,7 @@ def show_tracking(conn, cur):
 
     st.title("🏭 Production Tracker")
 
+    # ================= SAFE CONNECTION CHECK =================
     try:
         if conn.closed != 0:
             st.error("Database connection lost. Please refresh once.")
@@ -13,6 +14,7 @@ def show_tracking(conn, cur):
         st.error("Database connection issue. Please refresh.")
         return
 
+    # ================= CACHED DATA FUNCTIONS =================
     @st.cache_data(ttl=120)
     def get_projects():
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
@@ -76,6 +78,7 @@ def show_tracking(conn, cur):
             """)
         return cur.fetchall()
 
+    # ================= FILTER AREA =================
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -96,6 +99,7 @@ def show_tracking(conn, cur):
         selected_houses = st.multiselect("Select House", options=list(house_dict.keys()))
         house_ids = [house_dict[h] for h in selected_houses] if selected_houses else None
 
+    # ================= LOAD PRODUCTS ONLY WHEN FILTER CHANGES =================
     filter_signature = (project_id, unit_id, tuple(house_ids) if house_ids else None)
 
     if "last_filter_signature" not in st.session_state or st.session_state.last_filter_signature != filter_signature:
@@ -119,9 +123,7 @@ def show_tracking(conn, cur):
     select_all = st.checkbox("Select All Visible Products")
     df["Select"] = select_all
 
-    show_main_table = st.checkbox("Show Product Selection Table")
-
-    if show_main_table:
+    with st.expander("📦 Product Selection Table", expanded=False):
         edited_df = st.data_editor(
             df[["Select", "display"]],
             use_container_width=True,
@@ -129,8 +131,6 @@ def show_tracking(conn, cur):
             height=300,
             key="main_product_editor"
         )
-    else:
-        edited_df = df[["Select", "display"]].copy()
 
     selected_rows = edited_df[edited_df["Select"] == True]
 
@@ -142,6 +142,8 @@ def show_tracking(conn, cur):
     st.success(f"{len(selected_ids)} products selected")
 
     stage_sequence = get_stages()
+
+    # ================= LOAD LIVE MATRIX ONLY ON PRODUCT SELECTION CHANGE =================
     selection_signature = tuple(sorted(selected_ids))
 
     if "last_selection_signature" not in st.session_state or st.session_state.last_selection_signature != selection_signature:
@@ -252,12 +254,7 @@ def show_tracking(conn, cur):
         movement_type = st.radio("Movement Type", ["Normal Forward Move", "Rework / Send Back"], horizontal=True)
 
         if movement_type == "Normal Forward Move":
-            if current_stage == "Dispatch":
-                allowed_stage_options = ["Dispatch"]
-            elif current_status == "In Progress":
-                allowed_stage_options = [current_stage]
-            else:
-                allowed_stage_options = [next_stage]
+            allowed_stage_options = stage_sequence
         else:
             if current_stage == "Not Started":
                 allowed_stage_options = ["Not Started"]
@@ -283,20 +280,14 @@ def show_tracking(conn, cur):
     if submitted:
 
         if movement_type == "Normal Forward Move":
-
-            if current_stage == "Dispatch" and status == "Completed":
-                pass
-
-            elif current_status == "In Progress":
-                if selected_stage != current_stage:
-                    st.error("Complete current stage before moving forward")
-                    return
-
+            if current_status == "In Progress":
+                allowed_stages = [current_stage]
             else:
-                if selected_stage != next_stage:
-                    st.error("Invalid stage movement")
-                    return
+                allowed_stages = [next_stage] if next_stage != "Completed" else []
 
+            if selected_stage not in allowed_stages:
+                st.error("Invalid stage movement")
+                return
         else:
             if selected_stage == current_stage:
                 st.error("Rework stage cannot be same as current")
