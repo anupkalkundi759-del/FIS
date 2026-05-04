@@ -499,6 +499,7 @@ def run_engine(conn, cur):
             "ETTC Days": ettc_days,
             "Delay Days": delay_days,
             "Critical Stage": critical_stage,
+            "Health": health
         })
 
     house_df = pd.DataFrame(house_rows)
