@@ -236,7 +236,8 @@ def show_dashboard(conn, cur):
             elif stg == "Dispatch":
                 pending_df_temp = house_products[house_products["StageRank"] < 7]
             else:
-                pending_df_temp = house_products[house_products["StageRank"] <= temp_rank]
+                # FIX ONLY: use exact current live stage pending, not historical duplicate carry
+                pending_df_temp = house_products[house_products["StageRank"] == temp_rank]
 
             if len(pending_df_temp) > 0:
                 impacted_houses += 1
@@ -283,8 +284,9 @@ def show_dashboard(conn, cur):
             completed_df = house_products[house_products["StageRank"] == 7]
             pending_df = house_products[house_products["StageRank"] < 7]
         else:
-            completed_df = house_products[house_products["StageRank"] > audit_rank]
-            pending_df = house_products[house_products["StageRank"] <= audit_rank]
+            # FIX ONLY: current live stage exact pending, rest considered completed for this audit snapshot
+            pending_df = house_products[house_products["StageRank"] == audit_rank]
+            completed_df = house_products[house_products["StageRank"] != audit_rank]
 
         completed_count = len(completed_df)
         pending_count = len(pending_df)
