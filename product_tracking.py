@@ -94,6 +94,7 @@ def show_product_tracking(conn, cur):
 
             CASE
                 WHEN lt.stage_name IS NULL THEN 'Not Started'
+                WHEN lt.stage_name = 'Dispatch' AND lt.status = 'Completed' THEN 'Completed'
                 ELSE lt.status
             END AS status,
 
@@ -160,7 +161,10 @@ def show_product_tracking(conn, cur):
             df["Status"] = "Not Started"
 
         elif selected_status == "In Progress":
-            df = df[(df["Stage"] == selected_stage) & (df["Status"] == "In Progress")]
+            df = df[
+                (df["Stage"] == selected_stage) &
+                (~df["Stage"].isin(["Not Started", "Completed"]))
+            ]
             df["Stage"] = selected_stage
             df["Status"] = "In Progress"
 
@@ -180,6 +184,10 @@ def show_product_tracking(conn, cur):
         st.warning("No data found")
         return
 
+    # ================= KPI BEFORE FORMAT =================
+    running_count = len(df[~df["Stage"].isin(["Not Started", "Completed"])])
+
+    # ================= DATE FORMAT =================
     df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
     df["Date & Time"] = df["Date & Time"].dt.tz_convert("Asia/Kolkata")
     df["Date & Time"] = df["Date & Time"].dt.strftime("%d-%m-%Y %H:%M")
@@ -188,7 +196,7 @@ def show_product_tracking(conn, cur):
     # ================= KPI =================
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Visible Products", len(df))
-    k2.metric("In Progress", len(df[df["Status"] == "In Progress"]))
+    k2.metric("In Progress", running_count)
     k3.metric("Completed", len(df[df["Status"] == "Completed"]))
     k4.metric("Not Started", len(df[df["Status"] == "Not Started"]))
 
@@ -232,7 +240,8 @@ def show_product_tracking(conn, cur):
 
             COUNT(*) - COUNT(CASE WHEN (lt.stage_name = 'Dispatch' AND lt.status = 'Completed') THEN 1 END) AS remaining,
 
-            COUNT(CASE WHEN lt.stage_name IS NULL THEN 1 END) AS "Measurement",
+            COUNT(CASE WHEN lt.stage_name IS NULL THEN 1 END) AS "Yet To Start",
+            COUNT(CASE WHEN lt.stage_name = 'Measurement' THEN 1 END) AS "Measurement",
             COUNT(CASE WHEN lt.stage_name = 'Cutting List' THEN 1 END) AS "Cutting List",
             COUNT(CASE WHEN lt.stage_name = 'Production' THEN 1 END) AS "Production",
             COUNT(CASE WHEN lt.stage_name = 'Pre Assembly' THEN 1 END) AS "Pre Assembly",
@@ -273,7 +282,7 @@ def show_product_tracking(conn, cur):
         status_df = pd.DataFrame(status_data, columns=[
             "Project", "Unit", "Product",
             "Total", "Completed", "Remaining",
-            "Measurement", "Cutting List", "Production",
+            "Yet To Start", "Measurement", "Cutting List", "Production",
             "Pre Assembly", "Polishing", "Final Assembly", "Dispatch"
         ])
         st.dataframe(status_df, use_container_width=True, height=420)
