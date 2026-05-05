@@ -161,7 +161,7 @@ def show_dashboard(conn, cur):
     kpi_df.index = kpi_df.index + 1
     st.dataframe(kpi_df, use_container_width=True, height=400)
 
-    st.subheader("🔍 Automatic House Wise Audit Analyzer")
+    st.subheader("🔍 Automatic Unit Wise Audit Analyzer")
 
     audit_stage_options = workflow_stages
 
@@ -243,10 +243,10 @@ def show_dashboard(conn, cur):
         "Total Products",
         f"Completed at {audit_stage}",
         f"Pending at {audit_stage}",
-        "Unit Status"
+        "House Status"
     ])
 
-    st.subheader(f"🏠 {audit_stage} House Audit Summary")
+    st.subheader(f"🏠 {audit_stage} Unit Audit Summary")
     st.dataframe(audit_df, use_container_width=True, height=420)
 
     fully_completed_houses = len(audit_df[audit_df["House Status"] == "✅ Fully Completed"])
