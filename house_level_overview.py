@@ -261,7 +261,7 @@ def show_dashboard(conn, cur):
     st.subheader(f"📌 Pending Product Exception List - {audit_stage}")
 
     if pending_exception_rows:
-        pending_df2 = pd.DataFrame(pending_exception_rows, columns=["Unit", "Pending Product", "Why Pending"])
+        pending_df2 = pd.DataFrame(pending_exception_rows, columns=["House", "Pending Product", "Why Pending"])
         st.dataframe(pending_df2, use_container_width=True, height=420)
     else:
         st.success(f"All houses fully completed at {audit_stage}.")
