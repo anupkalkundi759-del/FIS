@@ -88,7 +88,6 @@ def show_dashboard_v2(conn, cur):
     # ================= HOUSE KPI CLASSIFICATION =================
     completed_houses = 0
     wip_houses = 0
-    pending_houses = 0
     yet_start_houses = 0
 
     for house, grp in df.groupby("House"):
@@ -102,10 +101,6 @@ def show_dashboard_v2(conn, cur):
 
         completed_products = len(actual_grp[actual_grp["Stage"] == "Completed"])
         not_started_products = len(actual_grp[actual_grp["Stage"] == "Not Started"])
-        active_products = len(actual_grp[
-            (actual_grp["Stage"] != "Completed") &
-            (actual_grp["Stage"] != "Not Started")
-        ])
 
         if completed_products == total_house_products:
             completed_houses += 1
@@ -113,19 +108,15 @@ def show_dashboard_v2(conn, cur):
         elif not_started_products == total_house_products:
             yet_start_houses += 1
 
-        elif not_started_products > 0 and (completed_products > 0 or active_products > 0):
-            pending_houses += 1
-
         else:
             wip_houses += 1
 
     # ================= KPI ROW 1 HOUSE STATUS =================
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("🏠 Total Houses", total_houses)
     c2.metric("✅ Completed", completed_houses)
     c3.metric("🟡 WIP", wip_houses)
-    c4.metric("🟠 Pending", pending_houses)
-    c5.metric("🔴 Yet Start", yet_start_houses)
+    c4.metric("🔴 Yet Start", yet_start_houses)
 
     st.markdown("---")
 
@@ -192,8 +183,8 @@ def show_dashboard_v2(conn, cur):
 
     # ================= UNIT STATUS KPI =================
     total_units = house_master_df["Unit"].nunique()
-    started_units = 0
-    pending_units = 0
+    active_units = 0
+    yetstart_units = 0
     completed_units = 0
 
     for unit, grp in df.groupby("Unit"):
@@ -217,14 +208,14 @@ def show_dashboard_v2(conn, cur):
         if completed_in_unit == houses_in_unit:
             completed_units += 1
         elif yetstart_in_unit == houses_in_unit:
-            pending_units += 1
+            yetstart_units += 1
         else:
-            started_units += 1
+            active_units += 1
 
     u1, u2, u3, u4 = st.columns(4)
     u1.metric("🏗 Total Units", total_units)
-    u2.metric("▶ Started Units", started_units)
-    u3.metric("⌛ Pending Units", pending_units)
+    u2.metric("▶ Active Units", active_units)
+    u3.metric("⌛ Yet Start Units", yetstart_units)
     u4.metric("✅ Completed Units", completed_units)
 
     st.markdown("---")
@@ -260,9 +251,9 @@ def show_dashboard_v2(conn, cur):
 
         proj_pending_products = proj_total_products - proj_completed_products
 
-        proj_progress_pct = round(
-            (proj_completed_products / proj_total_products) * 100, 2
-        ) if proj_total_products > 0 else 0
+        house_component = ((proj_total_houses - proj_yetstart_houses) / proj_total_houses) * 50 if proj_total_houses > 0 else 0
+        product_component = (proj_completed_products / proj_total_products) * 50 if proj_total_products > 0 else 0
+        proj_overall_completion = round(house_component + product_component, 2)
 
         project_rows.append([
             project,
@@ -270,11 +261,11 @@ def show_dashboard_v2(conn, cur):
             proj_started_houses,
             proj_yetstart_houses,
             proj_pending_products,
-            f"{proj_progress_pct}%"
+            f"{proj_overall_completion}%"
         ])
 
     proj_df = pd.DataFrame(project_rows, columns=[
-        "Project", "Total Houses", "Started Houses", "Yet Start Houses", "Pending Products", "Progress %"
+        "Project", "Total Houses", "Started Houses", "Yet Start Houses", "Pending Products", "Overall Completion %"
     ])
 
     st.dataframe(proj_df, use_container_width=True, height=250)
