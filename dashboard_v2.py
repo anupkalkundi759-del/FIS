@@ -19,8 +19,6 @@ def show_dashboard_v2(conn, cur):
         "Project", "Unit", "House", "HouseID"
     ])
 
-    house_master_df["UnitKey"] = house_master_df["Project"].astype(str) + "_" + house_master_df["Unit"].astype(str)
-
     total_houses = len(house_master_df)
 
     # ================= MASTER LIVE PRODUCT QUERY =================
@@ -86,8 +84,6 @@ def show_dashboard_v2(conn, cur):
     ])
 
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
-    df["UnitKey"] = df["Project"].astype(str) + "_" + df["Unit"].astype(str)
-
     real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
 
     # ================= HOUSE KPI CLASSIFICATION =================
@@ -109,11 +105,14 @@ def show_dashboard_v2(conn, cur):
 
         if completed_products == total_house_products:
             completed_houses += 1
+
         elif not_started_products == total_house_products:
             yet_start_houses += 1
+
         else:
             wip_houses += 1
 
+    # ================= KPI ROW 1 HOUSE STATUS =================
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🏠 Total Houses", total_houses)
     c2.metric("✅ Completed", completed_houses)
@@ -184,26 +183,27 @@ def show_dashboard_v2(conn, cur):
     st.markdown("---")
 
     # ================= UNIT STATUS KPI =================
-    operational_unit_df = df[df["Product"] != "NO PRODUCT"].copy()
-
-    st.write(operational_unit_df[["Project","Unit","UnitKey"]].drop_duplicates().sort_values(["Project","Unit"]))
-
-    total_units = operational_unit_df["UnitKey"].nunique()
+    total_units = house_master_df["Unit"].nunique()
     active_units = 0
     yetstart_units = 0
     completed_units = 0
 
-    for unitkey, grp in operational_unit_df.groupby("UnitKey"):
+    for unit, grp in df.groupby("Unit"):
 
         houses_in_unit = grp["HouseID"].nunique()
         completed_in_unit = 0
         yetstart_in_unit = 0
 
         for house_id, hgrp in grp.groupby("HouseID"):
+            actual_h = hgrp[hgrp["Product"] != "NO PRODUCT"]
 
-            if all(hgrp["Stage"] == "Completed"):
+            if len(actual_h) == 0:
+                yetstart_in_unit += 1
+                continue
+
+            if all(actual_h["Stage"] == "Completed"):
                 completed_in_unit += 1
-            elif all(hgrp["Stage"] == "Not Started"):
+            elif all(actual_h["Stage"] == "Not Started"):
                 yetstart_in_unit += 1
 
         if completed_in_unit == houses_in_unit:
