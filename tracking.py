@@ -143,7 +143,7 @@ def show_tracking(conn, cur):
                 t.status,
                 ROW_NUMBER() OVER (
                     PARTITION BY t.product_instance_id
-                    ORDER BY t.timestamp DESC
+                    ORDER BY t.timestamp DESC, t.ctid DESC
                 ) AS rn
             FROM tracking_log t
             JOIN stages s ON t.stage_id = s.stage_id
@@ -308,6 +308,10 @@ def show_tracking(conn, cur):
                 )
 
                 conn.commit()
+
+                if "inspect_stage" in st.session_state:
+                    del st.session_state["inspect_stage"]
+
                 st.success(f"{len(move_ids)} products updated successfully")
                 st.rerun()
 
