@@ -239,7 +239,7 @@ def show_dashboard(conn, cur):
             pending_exception_rows.append([house_no, prow["Product"], f"{audit_stage} Pending"])
 
     audit_df = pd.DataFrame(audit_rows, columns=[
-        "House",
+        "Unit",
         "Total Products",
         f"Completed at {audit_stage}",
         f"Pending at {audit_stage}",
