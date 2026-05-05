@@ -53,15 +53,18 @@ def run_engine(conn, cur):
     st.markdown("---")
     st.subheader("💰 Project EVM Baseline / Actual Cost / SLA Monitor")
 
-    st.markdown("**Budget at completion**")
-    bc1, bc2 = st.columns([2,4])
-    with bc1:
+    left_col, right_col = st.columns(2)
+
+    with left_col:
+        st.markdown("**Budget at completion**")
+
         if project_id is not None and unit_id is not None:
             cur.execute("SELECT bac_amount FROM project_evm_baseline WHERE project_id=%s AND unit_id=%s", (project_id, unit_id))
             b = cur.fetchone()
             existing_bac = float(b[0]) if b else 0.0
         else:
             existing_bac = 0.0
+
         bac_input = st.number_input("Total Planned Project Cost (BAC)", min_value=0.0, value=existing_bac, step=1000.0)
 
         if st.button("Save BAC"):
@@ -77,9 +80,8 @@ def run_engine(conn, cur):
             else:
                 st.warning("BAC can be saved only for specific project + unit")
 
-    st.markdown("**Actual Cost Updater**")
-    ac1, ac2 = st.columns([2,4])
-    with ac1:
+        st.markdown("**Actual Cost Updater**")
+
         ac_date = st.date_input("Actual Cost Period Date", key="ac_date")
         ac_amt = st.number_input("Actual Cost This Period", min_value=0.0, step=1000.0, key="ac_amt")
         ac_remark = st.text_input("Remarks", key="ac_rem")
@@ -95,12 +97,12 @@ def run_engine(conn, cur):
             else:
                 st.warning("Actual cost can be saved only for specific project + unit")
 
-    st.markdown("**Service Level Agreement**")
-    hh = [(master_house_dict[h], h) for h in master_house_list]
-    house_dict = {x[1]: x[0] for x in hh}
+    with right_col:
+        st.markdown("**Service Level Agreement**")
 
-    sl1, sl2 = st.columns([2,4])
-    with sl1:
+        hh = [(master_house_dict[h], h) for h in master_house_list]
+        house_dict = {x[1]: x[0] for x in hh}
+
         sla_house = st.selectbox("SLA Monitor House", list(house_dict.keys()), key="sla_house")
         sla_date = st.date_input("SLA Date", key="sla_dt")
         sla_priority = st.selectbox("Priority", ["Normal", "High", "Critical"], key="sla_pri")
@@ -435,7 +437,6 @@ def run_engine(conn, cur):
         pred_finish = rr.iloc[0]["Predicted Finish"]
         crit_stage = rr.iloc[0]["Critical Stage"]
         miss = 0 if isinstance(pred_finish,str) else (pred_finish-sla_dt).days
-
         risk = "Miss Risk" if miss>0 else ("Tight" if miss==0 else "Safe")
 
         sla_priority_rows.append({
