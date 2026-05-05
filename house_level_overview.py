@@ -254,14 +254,14 @@ def show_dashboard(conn, cur):
     not_started_houses = len(audit_df[audit_df["House Status"] == "🔴 Not Started"])
 
     a1, a2, a3 = st.columns(3)
-    a1.metric("✅ Fully Completed Houses", fully_completed_houses)
-    a2.metric("🟡 Partial Houses", partial_houses)
-    a3.metric("🔴 Not Started Houses", not_started_houses)
+    a1.metric("✅ Fully Completed Unit", fully_completed_houses)
+    a2.metric("🟡 Partial Units", partial_houses)
+    a3.metric("🔴 Not Started Units", not_started_houses)
 
     st.subheader(f"📌 Pending Product Exception List - {audit_stage}")
 
     if pending_exception_rows:
-        pending_df2 = pd.DataFrame(pending_exception_rows, columns=["House", "Pending Product", "Why Pending"])
+        pending_df2 = pd.DataFrame(pending_exception_rows, columns=["Unit", "Pending Product", "Why Pending"])
         st.dataframe(pending_df2, use_container_width=True, height=420)
     else:
         st.success(f"All houses fully completed at {audit_stage}.")
