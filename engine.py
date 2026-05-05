@@ -55,9 +55,10 @@ def run_engine(conn, cur):
     st.markdown("---")
     st.subheader("💰 Project EVM Baseline / Actual Cost / SLA Monitor")
 
-    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+    st.markdown("**Budget at completion**")
+    c1, c2 = st.columns([4,1])
 
-    with r1c1:
+    with c1:
         if project_id is not None and unit_id is not None:
             cur.execute("SELECT bac_amount FROM project_evm_baseline WHERE project_id=%s AND unit_id=%s", (project_id, unit_id))
             b = cur.fetchone()
@@ -66,7 +67,9 @@ def run_engine(conn, cur):
             existing_bac = 0.0
         bac_input = st.number_input("Total Planned Project Cost (BAC)", min_value=0.0, value=existing_bac, step=1000.0)
 
-    with r1c2:
+    with c2:
+        st.write("")
+        st.write("")
         if st.button("Save BAC"):
             if project_id is not None and unit_id is not None:
                 cur.execute("""
@@ -80,18 +83,18 @@ def run_engine(conn, cur):
             else:
                 st.warning("BAC can be saved only for specific project + unit")
 
-    with r1c3:
+    st.markdown("**Actual Cost Updater**")
+    a1, a2 = st.columns(2)
+
+    with a1:
         ac_date = st.date_input("Actual Cost Period Date", key="ac_date")
-
-    with r1c4:
         ac_amt = st.number_input("Actual Cost This Period", min_value=0.0, step=1000.0, key="ac_amt")
-
-    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-
-    with r2c1:
         ac_remark = st.text_input("Remarks", key="ac_rem")
 
-    with r2c2:
+    with a2:
+        st.write("")
+        st.write("")
+        st.write("")
         if st.button("Save Actual Cost"):
             if project_id is not None and unit_id is not None:
                 cur.execute("""
@@ -103,20 +106,21 @@ def run_engine(conn, cur):
             else:
                 st.warning("Actual cost can be saved only for specific project + unit")
 
-    with r2c3:
-        hh = [(master_house_dict[h], h) for h in master_house_list]
-        house_dict = {x[1]: x[0] for x in hh}
+    st.markdown("**Service Level Agreement**")
+    s1, s2 = st.columns(2)
+
+    hh = [(master_house_dict[h], h) for h in master_house_list]
+    house_dict = {x[1]: x[0] for x in hh}
+
+    with s1:
         sla_house = st.selectbox("SLA Monitor House", list(house_dict.keys()), key="sla_house")
-
-    with r2c4:
         sla_date = st.date_input("SLA Date", key="sla_dt")
-
-    r3c1, r3c2 = st.columns(2)
-
-    with r3c1:
         sla_priority = st.selectbox("Priority", ["Normal", "High", "Critical"], key="sla_pri")
 
-    with r3c2:
+    with s2:
+        st.write("")
+        st.write("")
+        st.write("")
         if st.button("Save SLA House"):
             cur.execute("""
                 INSERT INTO sla_monitor(house_id, sla_date, priority_level)
@@ -214,8 +218,6 @@ def run_engine(conn, cur):
         return
 
     live_df["timestamp"] = pd.to_datetime(live_df["timestamp"], utc=True, errors="coerce").dt.tz_convert(tz)
-
-    started_houses = live_df["house"].nunique()
 
     start_sql = """
         SELECT
@@ -552,16 +554,6 @@ def run_engine(conn, cur):
     e8.metric("CPI", CPI)
     e9.metric("EAC", f"₹{EAC:,.0f}")
     e10.metric("ETC", f"₹{ETC_COST:,.0f}")
-
-    st.subheader("🏭 Live Factory Health Snapshot")
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-
-    k1.metric("Total Houses", total_houses)
-    k2.metric("Started Houses", started_houses)
-    k3.metric("Completed Houses", completed_houses)
-    k4.metric("Delayed Houses", delayed_houses)
-    k5.metric("Active Products", total_products_project)
-    k6.metric("Bottleneck", bottleneck_stage if bottleneck_stage else "-")
 
     st.subheader("🏠 House Predictive Intelligence")
     st.dataframe(house_df, use_container_width=True, height=420)
