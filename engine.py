@@ -490,7 +490,7 @@ def run_engine(conn, cur):
                 health = "On Track"
 
         house_rows.append({
-            "House": house,
+            "Unit": house,
             "Total Products": total_products,
             "Earned Progress %": actual_prog,
             "Planned Finish": planned_finish,
@@ -535,7 +535,7 @@ def run_engine(conn, cur):
             risk = "Safe"
 
         sla_priority_rows.append({
-            "House": house_no,
+            "Unit": house_no,
             "SLA Date": sla_dt,
             "Predicted Finish": pred_finish,
             "Expected Miss Days": miss,
@@ -621,14 +621,14 @@ def run_engine(conn, cur):
     st.subheader("🏭 Live Factory Health Snapshot")
     k1, k2, k3, k4, k5, k6 = st.columns(6)
 
-    k1.metric("Total Houses", total_houses)
-    k2.metric("Started Houses", started_houses)
-    k3.metric("Completed Houses", completed_houses)
-    k4.metric("Delayed Houses", delayed_houses)
+    k1.metric("Total Units", total_houses)
+    k2.metric("Started Units", started_houses)
+    k3.metric("Completed Units", completed_houses)
+    k4.metric("Delayed Units", delayed_houses)
     k5.metric("Active Products", total_products_project)
     k6.metric("Bottleneck", bottleneck_stage if bottleneck_stage else "-")
 
-    st.subheader("🏠 House Predictive Intelligence")
+    st.subheader("🏠 Unit Predictive Intelligence")
     st.dataframe(house_df, use_container_width=True, height=420)
 
     st.subheader("🎯 SLA Priority Monitor")
