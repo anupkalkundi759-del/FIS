@@ -1,12 +1,10 @@
 def show_dashboard_v2(conn, cur):
     import streamlit as st
     import pandas as pd
-    from datetime import datetime
     import plotly.express as px
 
     st.title("📌 Executive Factory Dashboard")
 
-    # ================= MASTER HOUSE DATA =================
     cur.execute("""
         SELECT pr.project_name, u.unit_name, h.house_no, h.house_id
         FROM houses h
@@ -22,15 +20,12 @@ def show_dashboard_v2(conn, cur):
 
     total_houses = len(house_master_df)
 
-    # ================= MASTER LIVE PRODUCT QUERY =================
     query = """
     WITH latest_tracking AS (
         SELECT
             t.product_instance_id,
             s.stage_name,
             t.status,
-            t.timestamp,
-            DATE(t.timestamp) as track_date,
             ROW_NUMBER() OVER (
                 PARTITION BY t.product_instance_id
                 ORDER BY t.timestamp DESC
@@ -51,15 +46,7 @@ def show_dashboard_v2(conn, cur):
             WHEN lt.stage_name = 'Dispatch' AND lt.status = 'Completed' THEN 'Completed'
             WHEN lt.stage_name IS NULL THEN 'Not Started'
             ELSE lt.stage_name
-        END AS current_stage,
-
-        CASE
-            WHEN lt.stage_name IS NULL THEN 'Not Started'
-            ELSE lt.status
-        END AS current_status,
-
-        lt.timestamp,
-        lt.track_date
+        END AS current_stage
 
     FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
@@ -80,8 +67,7 @@ def show_dashboard_v2(conn, cur):
         return
 
     df = pd.DataFrame(rows, columns=[
-        "Project", "Unit", "House", "HouseID", "ProductInstance",
-        "Product", "Stage", "Status", "Timestamp", "TrackDate"
+        "Project", "Unit", "House", "HouseID", "ProductInstance", "Product", "Stage"
     ])
 
     real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
@@ -99,7 +85,6 @@ def show_dashboard_v2(conn, cur):
 
     real_product_df["StageRank"] = real_product_df["Stage"].map(stage_rank).fillna(0)
 
-    # ================= HOUSE SUMMARY =================
     completed_houses = 0
     wip_houses = 0
     yet_start_houses = 0
@@ -122,13 +107,12 @@ def show_dashboard_v2(conn, cur):
         else:
             wip_houses += 1
 
-    # ================= PRODUCT SUMMARY =================
     total_products = len(real_product_df)
     active_products_total = len(real_product_df[(real_product_df["Stage"] != "Completed") & (real_product_df["Stage"] != "Not Started")])
     pending_products_total = len(real_product_df[real_product_df["Stage"] == "Not Started"])
-    near_dispatch_products = len(real_product_df[real_product_df["Stage"] == "Dispatch"])
+    ready_for_dispatch = len(real_product_df[real_product_df["Stage"] == "Dispatch"])
+    total_dispatched_products = len(real_product_df[real_product_df["Stage"] == "Completed"])
 
-    # ================= SUMMARY OF TOTAL UNITS =================
     st.markdown("### Summary Of Total Units")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🏠 Total Houses", total_houses)
@@ -137,43 +121,64 @@ def show_dashboard_v2(conn, cur):
     c4.metric("🔴 Yet Start", yet_start_houses)
 
     st.markdown("")
-
-    # ================= SUMMARY OF TOTAL PRODUCTS =================
     st.markdown("### Summary Of Total Products")
-    p1, p2, p3, p4 = st.columns(4)
+    p1, p2, p3, p4, p5 = st.columns(5)
     p1.metric("📦 Total Products", total_products)
     p2.metric("🏭 Active Products", active_products_total)
     p3.metric("⌛ Pending Products", pending_products_total)
-    p4.metric("🚚 Near Dispatch", near_dispatch_products)
+    p4.metric("🚚 Ready For Dispatch", ready_for_dispatch)
+    p5.metric("✅ Total Dispatched", total_dispatched_products)
 
     st.markdown("---")
 
-    # ================= STAGE WISE BOTTLENECK =================
     st.markdown("### Stage wise bottleneck")
 
-    stage_order = [
-        "Not Started",
-        "Cutting List",
-        "Production",
-        "Pre Assembly",
-        "Polishing",
-        "Final Assembly",
-        "Dispatch",
-        "Completed"
-    ]
-
-    stage_counts = real_product_df["Stage"].value_counts().reindex(stage_order, fill_value=0)
+    yet_to_start_count = len(real_product_df[real_product_df["StageRank"] == 0])
+    measurement_count = total_products
+    cutting_count = len(real_product_df[real_product_df["StageRank"] <= 1])
+    production_count = len(real_product_df[real_product_df["StageRank"] <= 2])
+    preassembly_count = len(real_product_df[real_product_df["StageRank"] <= 3])
+    polishing_count = len(real_product_df[real_product_df["StageRank"] <= 4])
+    finalassembly_count = len(real_product_df[real_product_df["StageRank"] <= 5])
+    dispatch_count = len(real_product_df[real_product_df["StageRank"] <= 6])
+    completed_count = len(real_product_df[real_product_df["StageRank"] == 7])
 
     chart_df = pd.DataFrame({
-        "Stage": stage_counts.index,
-        "Products": stage_counts.values
+        "Stage": [
+            "Yet To Start",
+            "Measurement",
+            "Cutting List",
+            "Production",
+            "Pre Assembly",
+            "Polishing",
+            "Final Assembly",
+            "Dispatch",
+            "Completed"
+        ],
+        "Products": [
+            yet_to_start_count,
+            measurement_count,
+            cutting_count,
+            production_count,
+            preassembly_count,
+            polishing_count,
+            finalassembly_count,
+            dispatch_count,
+            completed_count
+        ]
     })
 
-    fig = px.bar(chart_df, x="Stage", y="Products", text="Products", height=280)
-    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10))
+    fig = px.bar(chart_df, x="Stage", y="Products", text="Products", height=360)
+    fig.update_traces(textposition='outside')
+    fig.update_layout(
+        margin=dict(l=10, r=10, t=20, b=20),
+        xaxis_title="",
+        yaxis_title="Products",
+        uniformtext_minsize=10,
+        uniformtext_mode='hide'
+    )
     st.plotly_chart(fig, use_container_width=True)
 
-    # ================= ACTIVE PROJECT SUMMARY =================
     st.markdown("### 📋 Active Project Summary")
 
     project_rows = []
@@ -223,15 +228,12 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ================= CRITICAL ALERTS =================
     st.markdown("### ⚠ Critical Alerts")
 
-    highest_pending_stage = stage_counts.drop("Completed").idxmax()
-    highest_pending_count = stage_counts.drop("Completed").max()
     max_pending_project = proj_df.sort_values("Pending Products", ascending=False).iloc[0]["Project"]
 
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Highest Pressure Stage", f"{highest_pending_stage} ({highest_pending_count})")
+    a1.metric("Highest Pressure Stage", f"Yet To Start ({yet_to_start_count})")
     a2.metric("Yet To Start Houses", yet_start_houses)
     a3.metric("Max Pending Project", max_pending_project)
-    a4.metric("Near Dispatch Products", near_dispatch_products)
+    a4.metric("Ready For Dispatch", ready_for_dispatch)
