@@ -86,6 +86,17 @@ def show_dashboard_v2(conn, cur):
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
     real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
 
+    stage_rank = {
+        "Not Started": 0,
+        "Cutting List": 1,
+        "Production": 2,
+        "Pre Assembly": 3,
+        "Polishing": 4,
+        "Final Assembly": 5,
+        "Dispatch": 6,
+        "Completed": 7
+    }
+
     # ================= HOUSE KPI CLASSIFICATION =================
     completed_houses = 0
     wip_houses = 0
@@ -112,7 +123,6 @@ def show_dashboard_v2(conn, cur):
         else:
             wip_houses += 1
 
-    # ================= KPI ROW 1 HOUSE STATUS =================
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🏠 Total Houses", total_houses)
     c2.metric("✅ Completed", completed_houses)
@@ -121,7 +131,6 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ================= KPI ROW 2 DISPATCH =================
     today_date = datetime.now().date()
 
     dispatch_completed_df = real_product_df[real_product_df["Stage"] == "Completed"].copy()
@@ -138,7 +147,6 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ================= KPI ROW 3 PRODUCT STATUS =================
     total_products = len(real_product_df)
 
     active_products_total = len(real_product_df[
@@ -157,7 +165,6 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ================= STAGE WISE BOTTLENECK =================
     st.subheader("🏭 Stage Wise Bottleneck")
 
     stage_order = [
@@ -182,7 +189,6 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ================= UNIT STATUS KPI =================
     total_units = house_master_df["Unit"].nunique()
     active_units = 0
     yetstart_units = 0
@@ -221,7 +227,6 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ================= ACTIVE PROJECT SUMMARY =================
     st.subheader("📋 Active Project Summary")
 
     project_rows = []
@@ -245,14 +250,14 @@ def show_dashboard_v2(conn, cur):
                 proj_started_houses += 1
 
         proj_total_products = len(grp[grp["Product"] != "NO PRODUCT"])
-        proj_completed_products = len(grp[
-            (grp["Product"] != "NO PRODUCT") &
-            (grp["Stage"] == "Completed")
-        ])
+        proj_pending_products = len(grp[(grp["Product"] != "NO PRODUCT") & (grp["Stage"] != "Completed")])
 
-        proj_pending_products = proj_total_products - proj_completed_products
+        project_total_possible_progress = proj_total_products * 7
+        project_achieved_progress = grp[grp["Product"] != "NO PRODUCT"]["Stage"].map(stage_rank).fillna(0).sum()
 
-        proj_overall_completion = round((proj_completed_products / proj_total_products) * 100, 2) if proj_total_products > 0 else 0
+        proj_overall_completion = round(
+            (project_achieved_progress / project_total_possible_progress) * 100, 2
+        ) if project_total_possible_progress > 0 else 0
 
         project_rows.append([
             project,
@@ -271,7 +276,6 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ================= CRITICAL ALERTS =================
     st.subheader("⚠ Critical Alerts")
 
     highest_pending_stage = stage_counts.drop("Completed").idxmax()
