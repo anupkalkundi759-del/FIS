@@ -118,6 +118,43 @@ def run_engine(conn, cur):
             conn.commit()
             st.success("SLA Saved")
 
+        st.markdown("---")
+        st.markdown("**Quarter Baseline Planning**")
+
+        if project_id is not None and unit_id is not None:
+            cur.execute("""
+                SELECT baseline_start_date, target_days, buffer_days
+                FROM evm_quarter_plan
+                WHERE project_id=%s AND unit_id=%s
+            """, (project_id, unit_id))
+            qp = cur.fetchone()
+            ex_qdate = qp[0] if qp and qp[0] else today.date()
+            ex_tdays = qp[1] if qp and qp[1] else 0
+            ex_bdays = qp[2] if qp and qp[2] else 0
+        else:
+            ex_qdate = today.date()
+            ex_tdays = 0
+            ex_bdays = 0
+
+        quarter_base_date = st.date_input("Quarter Baseline Start Date", value=ex_qdate, key="q_base")
+        target_days_input = st.number_input("Core Production Days", min_value=0, value=ex_tdays, step=1, key="q_target")
+        buffer_days_input = st.number_input("Buffer / Float Days", min_value=0, value=ex_bdays, step=1, key="q_buffer")
+
+        if st.button("Save Quarter Plan"):
+            if project_id is not None and unit_id is not None:
+                cur.execute("""
+                    INSERT INTO evm_quarter_plan(project_id, unit_id, baseline_start_date, target_days, buffer_days)
+                    VALUES(%s,%s,%s,%s,%s)
+                    ON CONFLICT(project_id, unit_id)
+                    DO UPDATE SET baseline_start_date=EXCLUDED.baseline_start_date,
+                                  target_days=EXCLUDED.target_days,
+                                  buffer_days=EXCLUDED.buffer_days
+                """, (project_id, unit_id, quarter_base_date, target_days_input, buffer_days_input))
+                conn.commit()
+                st.success("Quarter Plan Saved")
+            else:
+                st.warning("Quarter plan can be saved only for specific project + unit")
+
     st.markdown("---")
 
     cur.execute("""
@@ -250,10 +287,21 @@ def run_engine(conn, cur):
     live_df["earned_pct"] = live_df["stage"].map(lambda x: earned_map.get(x,0.0))
     project_actual_progress = round(live_df["earned_pct"].mean(),2)
 
-    if len(start_map) > 0:
-        earliest_start = min(start_map.values())
-        elapsed_batch = max(0,(today-earliest_start).days)
-        project_planned_progress = min(100, round((elapsed_batch/total_duration)*100,2))
+    if project_id is not None and unit_id is not None:
+        cur.execute("""
+            SELECT baseline_start_date, target_days, buffer_days
+            FROM evm_quarter_plan
+            WHERE project_id=%s AND unit_id=%s
+        """, (project_id, unit_id))
+        pvrow = cur.fetchone()
+
+        if pvrow and pvrow[0] and pvrow[1] is not None and pvrow[2] is not None:
+            base_start = datetime.combine(pvrow[0], datetime.min.time()).replace(tzinfo=tz)
+            planned_horizon = pvrow[1] + pvrow[2]
+            elapsed_batch = max(0,(today-base_start).days)
+            project_planned_progress = min(100, round((elapsed_batch/planned_horizon)*100,2)) if planned_horizon > 0 else 0
+        else:
+            project_planned_progress = 0
     else:
         project_planned_progress = 0
 
