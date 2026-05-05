@@ -118,9 +118,9 @@ def show_dashboard_v2(conn, cur):
     st.markdown("### Summary Of Total Units")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🏠 Total Houses", total_houses)
-    c2.metric("✅ Completed", completed_houses)
-    c3.metric("🟡 WIP", wip_houses)
-    c4.metric("🔴 Yet Start", yet_start_houses)
+    c2.metric("✅ Fully Completed Units", completed_houses)
+    c3.metric("🟡 Units At WIP", wip_houses)
+    c4.metric("🔴 Units Yet to Start", yet_start_houses)
 
     st.markdown("")
 
@@ -198,14 +198,18 @@ def show_dashboard_v2(conn, cur):
             else:
                 proj_started_houses += 1
 
-        proj_pending_products = len(grp[(grp["Product"] != "NO PRODUCT") & (grp["Stage"] == "Yet To Start")])
-
+        proj_pending_products = len(grp[(grp["Product"] != "NO PRODUCT") & (grp["Stage"] != "Completed")])
         proj_dispatched_products = len(grp[(grp["Product"] != "NO PRODUCT") & (grp["Stage"] == "Completed")])
 
         proj_real = grp[grp["Product"] != "NO PRODUCT"]
         achieved = proj_real["Stage"].map(stage_score).fillna(0).sum()
         total_possible = len(proj_real) * 8
         proj_overall_completion = round((achieved / total_possible) * 100, 2) if total_possible > 0 else 0
+
+        running_proj = len(proj_real[
+            (proj_real["Status"] == "In Progress") &
+            (~proj_real["Stage"].isin(["Yet To Start", "Completed"]))
+        ])
 
         project_rows.append([
             project,
@@ -214,6 +218,7 @@ def show_dashboard_v2(conn, cur):
             proj_yetstart_houses,
             proj_pending_products,
             proj_dispatched_products,
+            running_proj,
             f"{proj_overall_completion}%"
         ])
 
@@ -224,6 +229,7 @@ def show_dashboard_v2(conn, cur):
         "Yet Start Houses",
         "Pending Products",
         "Total Dispatched Products",
+        "Running Products",
         "Overall Completion %"
     ])
 
@@ -234,12 +240,16 @@ def show_dashboard_v2(conn, cur):
     # ================= CRITICAL ALERTS =================
     st.markdown("### ⚠ Critical Alerts")
 
-    highest_pending_stage = max(stage_counts, key=stage_counts.get)
-    highest_pending_count = stage_counts[highest_pending_stage]
-    max_pending_project = proj_df.sort_values("Pending Products", ascending=False).iloc[0]["Project"]
+    highest_pressure_stage = max(stage_counts, key=stage_counts.get)
+    highest_pressure_count = stage_counts[highest_pressure_stage]
+
+    max_backlog_project = proj_df.sort_values("Pending Products", ascending=False).iloc[0]["Project"]
+    max_running_project = proj_df.sort_values("Running Products", ascending=False).iloc[0]["Project"]
+
+    overall_factory_completion = round((sum(proj_df["Overall Completion %"].str.replace('%','').astype(float)) / len(proj_df)), 2)
 
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Highest Pressure Stage", f"{highest_pending_stage} ({highest_pending_count})")
-    a2.metric("Yet To Start Houses", yet_start_houses)
-    a3.metric("Max Pending Project", max_pending_project)
-    a4.metric("Ready For Dispatch", ready_for_dispatch)
+    a1.metric("Highest Pressure Stage", f"{highest_pressure_stage} ({highest_pressure_count})")
+    a2.metric("Max Backlog Project", max_backlog_project)
+    a3.metric("Max Running Project", max_running_project)
+    a4.metric("Overall Factory Completion", f"{overall_factory_completion}%")
