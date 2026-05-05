@@ -19,6 +19,8 @@ def show_dashboard_v2(conn, cur):
         "Project", "Unit", "House", "HouseID"
     ])
 
+    house_master_df["UnitKey"] = house_master_df["Project"].astype(str) + "_" + house_master_df["Unit"].astype(str)
+
     total_houses = len(house_master_df)
 
     # ================= MASTER LIVE PRODUCT QUERY =================
@@ -84,6 +86,8 @@ def show_dashboard_v2(conn, cur):
     ])
 
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+    df["UnitKey"] = df["Project"].astype(str) + "_" + df["Unit"].astype(str)
+
     real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
 
     # ================= HOUSE KPI CLASSIFICATION =================
@@ -183,12 +187,12 @@ def show_dashboard_v2(conn, cur):
     st.markdown("---")
 
     # ================= UNIT STATUS KPI =================
-    total_units = house_master_df["Unit"].nunique()
+    total_units = house_master_df["UnitKey"].nunique()
     active_units = 0
     yetstart_units = 0
     completed_units = 0
 
-    for unit, grp in df.groupby("Unit"):
+    for unitkey, grp in df.groupby("UnitKey"):
 
         houses_in_unit = grp["HouseID"].nunique()
         completed_in_unit = 0
