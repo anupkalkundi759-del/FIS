@@ -104,7 +104,7 @@ def show_dashboard(conn, cur):
     st.subheader("📈 Live Workflow Summary")
     k1, k2, k3 = st.columns(3)
     k1.metric("Projects", master_house_df["Project"].nunique())
-    k2.metric("Houses", total_houses)
+    k2.metric("Total Units", total_houses)
     k3.metric("Total Products", total_products_scope)
 
     st.subheader("🚦 Stage Completion Performance Matrix")
@@ -157,7 +157,7 @@ def show_dashboard(conn, cur):
 
     kpi_rows.append(["OVERALL COMPLETION", total_products_scope, overall_pending, overall_houses_impacted, f"{overall_completion}%"])
 
-    kpi_df = pd.DataFrame(kpi_rows, columns=["Stage", "Total Products", "Pending Products", "Houses Impacted", "Completion %"])
+    kpi_df = pd.DataFrame(kpi_rows, columns=["Stage", "Total Products", "Pending Products", "Units Impacted", "Completion %"])
     kpi_df.index = kpi_df.index + 1
     st.dataframe(kpi_df, use_container_width=True, height=400)
 
@@ -243,7 +243,7 @@ def show_dashboard(conn, cur):
         "Total Products",
         f"Completed at {audit_stage}",
         f"Pending at {audit_stage}",
-        "House Status"
+        "Unit Status"
     ])
 
     st.subheader(f"🏠 {audit_stage} House Audit Summary")
@@ -261,7 +261,7 @@ def show_dashboard(conn, cur):
     st.subheader(f"📌 Pending Product Exception List - {audit_stage}")
 
     if pending_exception_rows:
-        pending_df2 = pd.DataFrame(pending_exception_rows, columns=["House", "Pending Product", "Why Pending"])
+        pending_df2 = pd.DataFrame(pending_exception_rows, columns=["Unit", "Pending Product", "Why Pending"])
         st.dataframe(pending_df2, use_container_width=True, height=420)
     else:
         st.success(f"All houses fully completed at {audit_stage}.")
