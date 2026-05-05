@@ -81,6 +81,7 @@ def show_dashboard_v2(conn, cur):
     ])
 
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+    df["Timestamp"] = df["Timestamp"].dt.tz_localize(None)
 
     real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
 
@@ -93,7 +94,6 @@ def show_dashboard_v2(conn, cur):
     for house, grp in df.groupby("House"):
 
         actual_grp = grp[grp["Product"] != "NO PRODUCT"]
-
         total_house_products = len(actual_grp)
 
         if total_house_products == 0:
@@ -130,7 +130,7 @@ def show_dashboard_v2(conn, cur):
     st.markdown("---")
 
     # ================= KPI ROW 2 DISPATCH =================
-    now = pd.Timestamp.now()
+    now = pd.Timestamp.now().tz_localize(None)
 
     dispatch_completed_df = real_product_df[real_product_df["Stage"] == "Completed"].copy()
 
@@ -200,23 +200,23 @@ def show_dashboard_v2(conn, cur):
 
         houses_in_unit = grp["House"].nunique()
         completed_in_unit = 0
-        notstart_in_unit = 0
+        yetstart_in_unit = 0
 
         for house, hgrp in grp.groupby("House"):
             actual_h = hgrp[hgrp["Product"] != "NO PRODUCT"]
 
             if len(actual_h) == 0:
-                notstart_in_unit += 1
+                yetstart_in_unit += 1
                 continue
 
             if all(actual_h["Stage"] == "Completed"):
                 completed_in_unit += 1
             elif all(actual_h["Stage"] == "Not Started"):
-                notstart_in_unit += 1
+                yetstart_in_unit += 1
 
         if completed_in_unit == houses_in_unit:
             completed_units += 1
-        elif notstart_in_unit == houses_in_unit:
+        elif yetstart_in_unit == houses_in_unit:
             pending_units += 1
         else:
             started_units += 1
@@ -237,27 +237,44 @@ def show_dashboard_v2(conn, cur):
     for project, grp in df.groupby("Project"):
 
         proj_total_houses = grp["House"].nunique()
-        proj_completed_houses = 0
-        proj_pending_products = len(grp[(grp["Product"] != "NO PRODUCT") & (grp["Stage"] == "Not Started")])
+        proj_started_houses = 0
+        proj_yetstart_houses = 0
 
         for house, hgrp in grp.groupby("House"):
             actual_h = hgrp[hgrp["Product"] != "NO PRODUCT"]
-            if len(actual_h) > 0 and all(actual_h["Stage"] == "Completed"):
-                proj_completed_houses += 1
 
-        proj_wip = proj_total_houses - proj_completed_houses
-        proj_dispatch_pct = round((proj_completed_houses / proj_total_houses) * 100, 2) if proj_total_houses > 0 else 0
+            if len(actual_h) == 0:
+                proj_yetstart_houses += 1
+                continue
+
+            if all(actual_h["Stage"] == "Not Started"):
+                proj_yetstart_houses += 1
+            else:
+                proj_started_houses += 1
+
+        proj_total_products = len(grp[grp["Product"] != "NO PRODUCT"])
+        proj_completed_products = len(grp[
+            (grp["Product"] != "NO PRODUCT") &
+            (grp["Stage"] == "Completed")
+        ])
+
+        proj_pending_products = proj_total_products - proj_completed_products
+
+        proj_progress_pct = round(
+            (proj_completed_products / proj_total_products) * 100, 2
+        ) if proj_total_products > 0 else 0
 
         project_rows.append([
             project,
             proj_total_houses,
-            proj_wip,
+            proj_started_houses,
+            proj_yetstart_houses,
             proj_pending_products,
-            f"{proj_dispatch_pct}%"
+            f"{proj_progress_pct}%"
         ])
 
     proj_df = pd.DataFrame(project_rows, columns=[
-        "Project", "Total Houses", "WIP Houses", "Pending Products", "Dispatch %"
+        "Project", "Total Houses", "Started Houses", "Yet Start Houses", "Pending Products", "Progress %"
     ])
 
     st.dataframe(proj_df, use_container_width=True, height=250)
