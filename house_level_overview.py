@@ -5,7 +5,8 @@ def show_dashboard(conn, cur):
     st.title("📊 Workflow Intelligence Monitor")
 
     workflow_stages = [
-        "Not Started",
+        "Yet To Start",
+        "Measurement",
         "Cutting List",
         "Production",
         "Pre Assembly",
@@ -38,8 +39,8 @@ def show_dashboard(conn, cur):
         COALESCE(pm.product_code,'NO PRODUCT') AS product_code,
 
         CASE
+            WHEN lt.stage_name IS NULL THEN 'Yet To Start'
             WHEN lt.stage_name = 'Dispatch' AND lt.status = 'Completed' THEN 'Completed'
-            WHEN lt.stage_name IS NULL THEN 'Not Started'
             ELSE lt.stage_name
         END AS current_stage
 
@@ -127,14 +128,15 @@ def show_dashboard(conn, cur):
     st.subheader("🚦 Stage Completion Performance Matrix")
 
     stage_rank = {
-        "Not Started": 0,
-        "Cutting List": 1,
-        "Production": 2,
-        "Pre Assembly": 3,
-        "Polishing": 4,
-        "Final Assembly": 5,
-        "Dispatch": 6,
-        "Completed": 7
+        "Yet To Start": 0,
+        "Measurement": 1,
+        "Cutting List": 2,
+        "Production": 3,
+        "Pre Assembly": 4,
+        "Polishing": 5,
+        "Final Assembly": 6,
+        "Dispatch": 7,
+        "Completed": 8
     }
 
     product_df["StageRank"] = product_df["Current Stage"].map(stage_rank).fillna(0)
@@ -145,10 +147,10 @@ def show_dashboard(conn, cur):
 
         current_rank = stage_rank[stage]
 
-        if stage == "Not Started":
+        if stage == "Yet To Start":
             pending_df = product_df[product_df["StageRank"] == 0]
         elif stage == "Dispatch":
-            pending_df = product_df[product_df["StageRank"] < 7]
+            pending_df = product_df[product_df["StageRank"] < 8]
         else:
             pending_df = product_df[product_df["StageRank"] <= current_rank]
 
@@ -159,10 +161,8 @@ def show_dashboard(conn, cur):
             ((total_products_scope - pending_products) / total_products_scope) * 100, 2
         ) if total_products_scope > 0 else 0
 
-        stage_label = "Measurement" if stage == "Not Started" else stage
-
         kpi_rows.append([
-            stage_label,
+            stage,
             total_products_scope,
             pending_products,
             houses_impacted,
@@ -179,10 +179,10 @@ def show_dashboard(conn, cur):
 
     overall_houses_impacted = total_houses - fully_dispatch_houses
 
-    total_possible_progress = total_products_scope * 7
+    total_possible_progress = total_products_scope * 8
     achieved_progress = product_df["StageRank"].sum()
 
-    overall_pending = len(product_df[product_df["StageRank"] < 7])
+    overall_pending = len(product_df[product_df["StageRank"] < 8])
 
     overall_completion = round(
         (achieved_progress / total_possible_progress) * 100, 2
@@ -202,28 +202,38 @@ def show_dashboard(conn, cur):
     )
 
     kpi_df.index = kpi_df.index + 1
-    st.dataframe(kpi_df, use_container_width=True, height=370)
+    st.dataframe(kpi_df, use_container_width=True, height=400)
 
     # ================= BULK HOUSE AUDIT ANALYZER =================
     st.subheader("🔍 Automatic House Wise Audit Analyzer")
 
-    audit_stage_options = ["Measurement", "Cutting List", "Production", "Pre Assembly", "Polishing", "Final Assembly", "Dispatch"]
+    audit_stage_options = [
+        "Yet To Start",
+        "Measurement",
+        "Cutting List",
+        "Production",
+        "Pre Assembly",
+        "Polishing",
+        "Final Assembly",
+        "Dispatch"
+    ]
 
     if "selected_audit_stage" not in st.session_state:
-        st.session_state.selected_audit_stage = "Measurement"
+        st.session_state.selected_audit_stage = "Yet To Start"
 
     audit_preview_counts = {}
 
     for stg in audit_stage_options:
 
         temp_rank = {
-            "Measurement": 0,
-            "Cutting List": 1,
-            "Production": 2,
-            "Pre Assembly": 3,
-            "Polishing": 4,
-            "Final Assembly": 5,
-            "Dispatch": 6
+            "Yet To Start": 0,
+            "Measurement": 1,
+            "Cutting List": 2,
+            "Production": 3,
+            "Pre Assembly": 4,
+            "Polishing": 5,
+            "Final Assembly": 6,
+            "Dispatch": 7
         }[stg]
 
         pending_products_total = 0
@@ -234,10 +244,10 @@ def show_dashboard(conn, cur):
             if house_products.empty:
                 continue
 
-            if stg == "Measurement":
+            if stg == "Yet To Start":
                 pending_df_temp = house_products[house_products["StageRank"] == 0]
             elif stg == "Dispatch":
-                pending_df_temp = house_products[house_products["StageRank"] < 7]
+                pending_df_temp = house_products[house_products["StageRank"] < 8]
             else:
                 pending_df_temp = house_products[house_products["StageRank"] == temp_rank]
 
@@ -255,13 +265,14 @@ def show_dashboard(conn, cur):
     audit_stage = st.session_state.selected_audit_stage
 
     audit_rank_map = {
-        "Measurement": 0,
-        "Cutting List": 1,
-        "Production": 2,
-        "Pre Assembly": 3,
-        "Polishing": 4,
-        "Final Assembly": 5,
-        "Dispatch": 6
+        "Yet To Start": 0,
+        "Measurement": 1,
+        "Cutting List": 2,
+        "Production": 3,
+        "Pre Assembly": 4,
+        "Polishing": 5,
+        "Final Assembly": 6,
+        "Dispatch": 7
     }
 
     audit_rank = audit_rank_map[audit_stage]
@@ -280,12 +291,12 @@ def show_dashboard(conn, cur):
 
         total_house_products = len(house_products)
 
-        if audit_stage == "Measurement":
+        if audit_stage == "Yet To Start":
             completed_df = house_products[house_products["StageRank"] > 0]
             pending_df = house_products[house_products["StageRank"] == 0]
         elif audit_stage == "Dispatch":
-            completed_df = house_products[house_products["StageRank"] == 7]
-            pending_df = house_products[house_products["StageRank"] < 7]
+            completed_df = house_products[house_products["StageRank"] == 8]
+            pending_df = house_products[house_products["StageRank"] < 8]
         else:
             pending_df = house_products[house_products["StageRank"] == audit_rank]
             completed_df = house_products[house_products["StageRank"] != audit_rank]
