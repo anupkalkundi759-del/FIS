@@ -252,9 +252,7 @@ def show_dashboard_v2(conn, cur):
 
         proj_pending_products = proj_total_products - proj_completed_products
 
-        house_component = ((proj_total_houses - proj_yetstart_houses) / proj_total_houses) * 50 if proj_total_houses > 0 else 0
-        product_component = (proj_completed_products / proj_total_products) * 50 if proj_total_products > 0 else 0
-        proj_overall_completion = round(house_component + product_component, 2)
+        proj_overall_completion = round((proj_completed_products / proj_total_products) * 100, 2) if proj_total_products > 0 else 0
 
         project_rows.append([
             project,
