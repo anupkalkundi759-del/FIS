@@ -33,6 +33,7 @@ def show_dashboard(conn, cur):
         p.project_name,
         u.unit_name,
         h.house_no,
+        h.house_id,
         pr.product_instance_id,
         COALESCE(pm.product_code,'NO PRODUCT') AS product_code,
 
@@ -56,7 +57,7 @@ def show_dashboard(conn, cur):
     latest_rows = cur.fetchall()
 
     latest_df = pd.DataFrame(latest_rows, columns=[
-        "Project", "Unit", "House", "ProductInstance", "Product", "Current Stage"
+        "Project", "Unit", "House", "HouseID", "ProductInstance", "Product", "Current Stage"
     ])
 
     # ================= MASTER HOUSE QUERY =================
@@ -64,7 +65,8 @@ def show_dashboard(conn, cur):
     SELECT
         p.project_name,
         u.unit_name,
-        h.house_no
+        h.house_no,
+        h.house_id
     FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
     JOIN projects p ON u.project_id = p.project_id
@@ -73,7 +75,7 @@ def show_dashboard(conn, cur):
     cur.execute(house_query)
     house_rows = cur.fetchall()
 
-    master_house_df = pd.DataFrame(house_rows, columns=["Project", "Unit", "House"])
+    master_house_df = pd.DataFrame(house_rows, columns=["Project", "Unit", "House", "HouseID"])
 
     # ================= FILTERS =================
     st.subheader("📌 Drilldown Filters")
@@ -108,7 +110,7 @@ def show_dashboard(conn, cur):
         latest_df = latest_df[latest_df["House"].astype(str).isin(selected_houses)]
         master_house_df = master_house_df[master_house_df["House"].astype(str).isin(selected_houses)]
 
-    total_houses = len(master_house_df)
+    total_houses = master_house_df["HouseID"].nunique()
     product_df = latest_df[latest_df["Product"] != "NO PRODUCT"].copy()
     total_products_scope = len(product_df)
 
@@ -145,15 +147,13 @@ def show_dashboard(conn, cur):
 
         if stage == "Not Started":
             pending_df = product_df[product_df["StageRank"] == 0]
-
         elif stage == "Dispatch":
             pending_df = product_df[product_df["StageRank"] < 7]
-
         else:
             pending_df = product_df[product_df["StageRank"] <= current_rank]
 
         pending_products = len(pending_df)
-        houses_impacted = pending_df["House"].astype(str).nunique()
+        houses_impacted = pending_df["HouseID"].nunique()
 
         completion_pct = round(
             ((total_products_scope - pending_products) / total_products_scope) * 100, 2
@@ -170,7 +170,7 @@ def show_dashboard(conn, cur):
         ])
 
     # ================= OVERALL COMPLETION =================
-    house_group = product_df.groupby("House")["Current Stage"].apply(list)
+    house_group = product_df.groupby("HouseID")["Current Stage"].apply(list)
 
     fully_dispatch_houses = 0
     for house, stages in house_group.items():
@@ -225,8 +225,8 @@ def show_dashboard(conn, cur):
 
         pending_products_total = 0
 
-        for house_no in sorted(master_house_df["House"].astype(str).unique()):
-            house_products = product_df[product_df["House"].astype(str) == str(house_no)].copy()
+        for house_id in sorted(master_house_df["HouseID"].unique()):
+            house_products = product_df[product_df["HouseID"] == house_id].copy()
 
             if house_products.empty:
                 continue
@@ -266,11 +266,13 @@ def show_dashboard(conn, cur):
     audit_rows = []
     pending_exception_rows = []
 
-    for house_no in sorted(master_house_df["House"].astype(str).unique()):
+    for house_id in sorted(master_house_df["HouseID"].unique()):
 
-        house_products = product_df[product_df["House"].astype(str) == str(house_no)].copy()
+        house_products = product_df[product_df["HouseID"] == house_id].copy()
+        house_no = master_house_df[master_house_df["HouseID"] == house_id]["House"].iloc[0]
 
         if house_products.empty:
+            audit_rows.append([house_no, 0, 0, 0, "🔴 Not Started"])
             continue
 
         total_house_products = len(house_products)
