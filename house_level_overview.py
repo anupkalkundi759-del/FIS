@@ -92,7 +92,7 @@ def show_dashboard(conn, cur):
 
     with c3:
         house_options = sorted(master_house_df["House"].astype(str).dropna().unique().tolist())
-        selected_houses = st.multiselect("Select Houses (Optional)", house_options)
+        selected_houses = st.multiselect("Select Unit Number", house_options)
     if selected_houses:
         latest_df = latest_df[latest_df["House"].astype(str).isin(selected_houses)]
         master_house_df = master_house_df[master_house_df["House"].astype(str).isin(selected_houses)]
@@ -102,11 +102,10 @@ def show_dashboard(conn, cur):
     total_products_scope = len(product_df)
 
     st.subheader("📈 Live Workflow Summary")
-    k1, k2, k3, k4 = st.columns(4)
+    k1, k2, k3 = st.columns(3)
     k1.metric("Projects", master_house_df["Project"].nunique())
-    k2.metric("Units", master_house_df["Unit"].nunique())
-    k3.metric("Houses", total_houses)
-    k4.metric("Total Products", total_products_scope)
+    k2.metric("Houses", total_houses)
+    k3.metric("Total Products", total_products_scope)
 
     st.subheader("🚦 Stage Completion Performance Matrix")
 
