@@ -109,14 +109,11 @@ def show_dashboard_v2(conn, cur):
 
         if completed_products == total_house_products:
             completed_houses += 1
-
         elif not_started_products == total_house_products:
             yet_start_houses += 1
-
         else:
             wip_houses += 1
 
-    # ================= KPI ROW 1 HOUSE STATUS =================
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🏠 Total Houses", total_houses)
     c2.metric("✅ Completed", completed_houses)
@@ -188,6 +185,8 @@ def show_dashboard_v2(conn, cur):
 
     # ================= UNIT STATUS KPI =================
     operational_unit_df = df[df["Product"] != "NO PRODUCT"].copy()
+
+    st.write(operational_unit_df[["Project","Unit","UnitKey"]].drop_duplicates().sort_values(["Project","Unit"]))
 
     total_units = operational_unit_df["UnitKey"].nunique()
     active_units = 0
