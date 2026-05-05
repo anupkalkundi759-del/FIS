@@ -115,19 +115,19 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("### Summary Of Total Units")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🏠 Total Houses", total_houses)
-    c2.metric("✅ Completed", completed_houses)
-    c3.metric("🟡 WIP", wip_houses)
-    c4.metric("🔴 Yet Start", yet_start_houses)
+    c1.metric("🏠 Total Units", total_houses)
+    c2.metric("✅ Fully Completed Units", completed_houses)
+    c3.metric("🟡 Units In WIP", wip_houses)
+    c4.metric("🔴 Units Yet To Start", yet_start_houses)
 
     st.markdown("")
     st.markdown("### Summary Of Total Products")
     p1, p2, p3, p4, p5 = st.columns(5)
     p1.metric("📦 Total Products", total_products)
-    p2.metric("🏭 Active Products", active_products_total)
+    p2.metric("🏭 Running Products", active_products_total)
     p3.metric("⌛ Pending Products", pending_products_total)
     p4.metric("🚚 Ready For Dispatch", ready_for_dispatch)
-    p5.metric("✅ Total Dispatched", total_dispatched_products)
+    p5.metric("✅ Total Dispatched Products", total_dispatched_products)
 
     st.markdown("---")
 
