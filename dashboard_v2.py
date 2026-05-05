@@ -4,7 +4,7 @@ def show_dashboard_v2(conn, cur):
 
     st.title("📌 Executive Factory Dashboard")
 
-    # ================= MASTER HOUSE COUNT =================
+    # ================= MASTER HOUSE DATA =================
     cur.execute("""
         SELECT pr.project_name, u.unit_name, h.house_no, h.house_id
         FROM houses h
@@ -82,7 +82,6 @@ def show_dashboard_v2(conn, cur):
 
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
 
-    # remove fake NO PRODUCT from product totals where needed
     real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
 
     # ================= HOUSE KPI CLASSIFICATION =================
@@ -90,12 +89,6 @@ def show_dashboard_v2(conn, cur):
     wip_houses = 0
     pending_houses = 0
     yet_start_houses = 0
-
-    dispatch_today = 0
-    dispatch_week = 0
-    dispatch_month = 0
-
-    now = pd.Timestamp.now()
 
     for house, grp in df.groupby("House"):
 
@@ -117,16 +110,6 @@ def show_dashboard_v2(conn, cur):
         if completed_products == total_house_products:
             completed_houses += 1
 
-            latest_close = actual_grp["Timestamp"].max()
-
-            if pd.notna(latest_close):
-                if latest_close.date() == now.date():
-                    dispatch_today += 1
-                if latest_close >= now - pd.Timedelta(days=7):
-                    dispatch_week += 1
-                if latest_close >= now - pd.Timedelta(days=30):
-                    dispatch_month += 1
-
         elif not_started_products == total_house_products:
             yet_start_houses += 1
 
@@ -136,7 +119,7 @@ def show_dashboard_v2(conn, cur):
         else:
             wip_houses += 1
 
-    # ================= KPI ROW 1 =================
+    # ================= KPI ROW 1 HOUSE STATUS =================
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("🏠 Total Houses", total_houses)
     c2.metric("✅ Completed", completed_houses)
@@ -146,21 +129,34 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ================= KPI ROW 2 =================
-    d1, d2, d3 = st.columns(3)
-    d1.metric("🚚 Dispatch Today", dispatch_today)
-    d2.metric("🚚 Dispatch Week", dispatch_week)
-    d3.metric("🚚 Dispatch Month", dispatch_month)
+    # ================= KPI ROW 2 DISPATCH =================
+    now = pd.Timestamp.now()
+
+    dispatch_completed_df = real_product_df[real_product_df["Stage"] == "Completed"].copy()
+
+    total_dispatch = len(dispatch_completed_df)
+
+    dispatch_today = len(dispatch_completed_df[
+        dispatch_completed_df["Timestamp"].dt.date == now.date()
+    ])
+
+    d1, d2 = st.columns(2)
+    d1.metric("🚚 Total Dispatch", total_dispatch)
+    d2.metric("🚚 Dispatch Today", dispatch_today)
 
     st.markdown("---")
 
-    # ================= KPI ROW 3 PRODUCT =================
+    # ================= KPI ROW 3 PRODUCT STATUS =================
     total_products = len(real_product_df)
+
     active_products_total = len(real_product_df[
         (real_product_df["Stage"] != "Completed") &
         (real_product_df["Stage"] != "Not Started")
     ])
-    pending_products_total = len(real_product_df[real_product_df["Stage"] == "Not Started"])
+
+    pending_products_total = len(real_product_df[
+        real_product_df["Stage"] == "Not Started"
+    ])
 
     p1, p2, p3 = st.columns(3)
     p1.metric("📦 Total Products", total_products)
