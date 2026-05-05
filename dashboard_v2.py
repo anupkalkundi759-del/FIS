@@ -1,56 +1,144 @@
 def show_dashboard_v2(conn, cur):
     import streamlit as st
     import pandas as pd
-    import plotly.express as px
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
+    from datetime import datetime, timedelta
 
-    st.title("📊 MFG Analytics Dashboard")
+    st.title("📌 Executive Factory Dashboard")
 
-    try:
-        conn.rollback()
-    except:
-        pass
+    # ====================== MASTER LIVE QUERY ======================
+    query = """
+    WITH latest_tracking AS (
+        SELECT
+            t.product_instance_id,
+            s.stage_name,
+            t.status,
+            t.timestamp,
+            ROW_NUMBER() OVER (
+                PARTITION BY t.product_instance_id
+                ORDER BY t.timestamp DESC
+            ) AS rn
+        FROM tracking_log t
+        JOIN stages s ON t.stage_id = s.stage_id
+    )
 
-    # =========================================================
-    # LIVE MASTER QUERY
-    # =========================================================
-    live_query = """
     SELECT
-        p.project_name,
+        pr.project_name,
         u.unit_name,
         h.house_no,
-        pr.product_instance_id,
-        COALESCE(pm.product_code,'NO PRODUCT') AS product_code,
-        COALESCE(pcs.stage_name,'Not Started') AS current_stage,
-        COALESCE(pcs.status,'Not Started') AS live_status,
-        pcs.updated_at
-    FROM houses h
+        p.product_instance_id,
+        pm.product_code,
+
+        CASE
+            WHEN lt.stage_name = 'Dispatch' AND lt.status = 'Completed' THEN 'Completed'
+            WHEN lt.stage_name IS NULL THEN 'Not Started'
+            ELSE lt.stage_name
+        END AS current_stage,
+
+        CASE
+            WHEN lt.stage_name IS NULL THEN 'Not Started'
+            ELSE lt.status
+        END AS current_status,
+
+        lt.timestamp
+
+    FROM products p
+    JOIN products_master pm ON p.product_id = pm.product_id
+    JOIN houses h ON p.house_id = h.house_id
     JOIN units u ON h.unit_id = u.unit_id
-    JOIN projects p ON u.project_id = p.project_id
-    LEFT JOIN products pr ON h.house_id = pr.house_id
-    LEFT JOIN products_master pm ON pr.product_id = pm.product_id
-    LEFT JOIN product_current_stage pcs
-        ON pr.product_instance_id = pcs.product_instance_id
+    JOIN projects pr ON u.project_id = pr.project_id
+    LEFT JOIN latest_tracking lt
+        ON lt.product_instance_id = p.product_instance_id
+        AND lt.rn = 1
+    ORDER BY pr.project_name, u.unit_name, h.house_no
     """
 
-    cur.execute(live_query)
+    cur.execute(query)
     rows = cur.fetchall()
 
-    live_df = pd.DataFrame(rows, columns=[
-        "Project", "Unit", "House", "ProductInstance", "Product",
-        "Stage", "Status", "UpdatedAt"
-    ])
-
-    if live_df.empty:
-        st.warning("No dashboard data available.")
+    if not rows:
+        st.warning("No production data found")
         return
 
-    live_df = live_df[live_df["Product"] != "NO PRODUCT"].copy()
+    df = pd.DataFrame(rows, columns=[
+        "Project", "Unit", "House", "ProductInstance", "Product",
+        "Stage", "Status", "Timestamp"
+    ])
 
-    # =========================================================
-    # STAGE ORDER
-    # =========================================================
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+
+    # ====================== KPI ROW 1 HOUSE STATUS ======================
+    total_houses = df["House"].astype(str).nunique()
+
+    house_summary = df.groupby("House")["Stage"].apply(list)
+
+    completed_houses = 0
+    wip_houses = 0
+    pending_houses = 0
+    yet_start_houses = 0
+
+    for house, stages in house_summary.items():
+
+        if all(str(x) == "Completed" for x in stages):
+            completed_houses += 1
+
+        elif all(str(x) == "Not Started" for x in stages):
+            yet_start_houses += 1
+
+        elif "Not Started" in stages and len(set(stages)) == 1:
+            pending_houses += 1
+
+        else:
+            wip_houses += 1
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("🏠 Total Houses", total_houses)
+    c2.metric("✅ Completed", completed_houses)
+    c3.metric("🟡 WIP", wip_houses)
+    c4.metric("🟠 Pending", pending_houses)
+    c5.metric("🔴 Yet Start", yet_start_houses)
+
+    st.markdown("---")
+
+    # ====================== KPI ROW 2 DISPATCH MOVEMENT ======================
+    now = pd.Timestamp.now()
+
+    today_dispatch = len(df[
+        (df["Stage"] == "Completed") &
+        (df["Timestamp"].dt.date == now.date())
+    ]["House"].unique())
+
+    week_dispatch = len(df[
+        (df["Stage"] == "Completed") &
+        (df["Timestamp"] >= now - pd.Timedelta(days=7))
+    ]["House"].unique())
+
+    month_dispatch = len(df[
+        (df["Stage"] == "Completed") &
+        (df["Timestamp"] >= now - pd.Timedelta(days=30))
+    ]["House"].unique())
+
+    d1, d2, d3 = st.columns(3)
+    d1.metric("🚚 Dispatch Today", today_dispatch)
+    d2.metric("🚚 Dispatch Week", week_dispatch)
+    d3.metric("🚚 Dispatch Month", month_dispatch)
+
+    st.markdown("---")
+
+    # ====================== KPI ROW 3 PRODUCT STATUS ======================
+    total_products = len(df)
+    active_products = len(df[df["Stage"] != "Completed"])
+    pending_products = len(df[df["Stage"] == "Not Started"])
+
+    p1, p2, p3 = st.columns(3)
+    p1.metric("📦 Total Products", total_products)
+    p2.metric("🏭 Active Products", active_products)
+    p3.metric("⌛ Pending Products", pending_products)
+
+    st.markdown("---")
+
+    # ====================== STAGE WISE BOTTLENECK ======================
+    st.subheader("🏭 Stage Wise Bottleneck")
+
     stage_order = [
         "Not Started",
         "Cutting List",
@@ -58,274 +146,80 @@ def show_dashboard_v2(conn, cur):
         "Pre Assembly",
         "Polishing",
         "Final Assembly",
-        "Dispatch"
+        "Dispatch",
+        "Completed"
     ]
 
-    stage_rank = {s: i for i, s in enumerate(stage_order)}
-    live_df["StageRank"] = live_df["Stage"].map(stage_rank).fillna(0)
+    stage_counts = df["Stage"].value_counts().reindex(stage_order, fill_value=0)
 
-    # =========================================================
-    # KPI COMPUTATION
-    # =========================================================
-    total_products = len(live_df)
-    total_houses = live_df["House"].nunique()
+    bottleneck_df = pd.DataFrame({
+        "Stage": stage_counts.index,
+        "Products": stage_counts.values
+    })
 
-    pending_products = len(live_df[live_df["Stage"] == "Not Started"])
-    running_products = len(live_df[(live_df["StageRank"] > 0) & (live_df["Stage"] != "Dispatch")])
-    dispatched_products = len(live_df[live_df["Stage"] == "Dispatch"])
-
-    overall_completion = round((dispatched_products / total_products) * 100, 2) if total_products > 0 else 0
-
-    house_grp = live_df.groupby("House").agg(
-        total=("ProductInstance", "count"),
-        dispatch=("Stage", lambda x: (x == "Dispatch").sum())
-    ).reset_index()
-
-    completed_houses = len(house_grp[house_grp["total"] == house_grp["dispatch"]])
-
-    # =========================================================
-    # KPI ROW
-    # =========================================================
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Total Products", total_products)
-    k2.metric("Total Houses", total_houses)
-    k3.metric("Pending Products", pending_products)
-    k4.metric("Running Products", running_products)
-    k5.metric("Dispatched Products", dispatched_products)
-    k6.metric("Overall Completion", f"{overall_completion}%")
+    st.bar_chart(bottleneck_df.set_index("Stage"))
 
     st.markdown("---")
 
-    # =========================================================
-    # ROW 2 - FACTORY FLOW + STATUS
-    # =========================================================
-    r1, r2 = st.columns(2)
+    # ====================== UNIT STATUS KPI ======================
+    total_units = df["Unit"].nunique()
 
-    stage_counts = live_df.groupby("Stage").size().reindex(stage_order).fillna(0)
-    stage_completion = []
+    started_units = df[df["Stage"] != "Not Started"]["Unit"].nunique()
+    pending_units = df[df["Stage"] == "Not Started"]["Unit"].nunique()
 
-    for stg in stage_order:
-        rk = stage_rank[stg]
+    completed_units = 0
 
-        if stg == "Not Started":
-            comp = round(((total_products - stage_counts[stg]) / total_products) * 100, 2)
+    for unit, grp in df.groupby("Unit"):
+        if all(grp["Stage"] == "Completed"):
+            completed_units += 1
 
-        elif stg == "Dispatch":
-            comp = round((stage_counts[stg] / total_products) * 100, 2)
-
-        else:
-            pending = len(live_df[live_df["StageRank"] <= rk])
-            comp = round(((total_products - pending) / total_products) * 100, 2)
-
-        stage_completion.append(comp)
-
-    with r1:
-        fig1 = make_subplots(specs=[[{"secondary_y": True}]])
-        fig1.add_trace(
-            go.Bar(x=stage_order, y=stage_counts.values, name="Pending Distribution"),
-            secondary_y=False
-        )
-        fig1.add_trace(
-            go.Scatter(x=stage_order, y=stage_completion, mode="lines+markers", name="Completion %"),
-            secondary_y=True
-        )
-        fig1.update_layout(title="Factory Stage Flow Trend", height=380, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig1, use_container_width=True)
-
-    live_df["StatusBand"] = live_df.apply(
-        lambda x: "Not Started" if x["Stage"] == "Not Started"
-        else ("Completed" if x["Stage"] == "Dispatch" or x["Status"] == "Completed" else "In Progress"),
-        axis=1
-    )
-
-    stack_df = live_df.groupby(["Stage", "StatusBand"]).size().reset_index(name="Count")
-
-    with r2:
-        fig2 = px.bar(
-            stack_df,
-            x="Stage",
-            y="Count",
-            color="StatusBand",
-            barmode="stack",
-            category_orders={"Stage": stage_order},
-            title="Product Status by Stage"
-        )
-        fig2.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig2, use_container_width=True)
+    u1, u2, u3, u4 = st.columns(4)
+    u1.metric("🏗 Total Units", total_units)
+    u2.metric("▶ Started Units", started_units)
+    u3.metric("⌛ Pending Units", pending_units)
+    u4.metric("✅ Completed Units", completed_units)
 
     st.markdown("---")
 
-    # =========================================================
-    # ROW 3 - UNIT PERFORMANCE + HOUSE COMPLETION
-    # =========================================================
-    r3, r4 = st.columns(2)
+    # ====================== ACTIVE PROJECT SUMMARY ======================
+    st.subheader("📋 Active Project Summary")
 
-    unit_perf = live_df.groupby("Unit").agg(
-        Total=("ProductInstance", "count"),
-        Pending=("Stage", lambda x: (x == "Not Started").sum()),
-        Running=("StageRank", lambda x: ((x > 0) & (x < 6)).sum()),
-        Dispatch=("Stage", lambda x: (x == "Dispatch").sum())
-    ).reset_index()
+    project_rows = []
 
-    unit_perf["PressureScore"] = unit_perf["Pending"] + unit_perf["Running"] - unit_perf["Dispatch"]
-    top_units = unit_perf.sort_values("PressureScore", ascending=False).head(8)
+    for project, grp in df.groupby("Project"):
+        proj_houses = grp["House"].nunique()
+        proj_wip = grp[grp["Stage"] != "Completed"]["House"].nunique()
+        proj_pending_products = len(grp[grp["Stage"] == "Not Started"])
+        proj_dispatch = round((len(grp[grp["Stage"] == "Completed"]) / len(grp)) * 100, 2)
 
-    with r3:
-        fig3 = px.bar(
-            top_units,
-            x="PressureScore",
-            y="Unit",
-            orientation="h",
-            title="Unit Performance Comparison"
-        )
-        fig3.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig3, use_container_width=True)
+        project_rows.append([
+            project,
+            proj_houses,
+            proj_wip,
+            proj_pending_products,
+            f"{proj_dispatch}%"
+        ])
 
-    house_grp["pct"] = (house_grp["dispatch"] / house_grp["total"]) * 100
+    proj_df = pd.DataFrame(project_rows, columns=[
+        "Project", "Total Houses", "WIP Houses", "Pending Products", "Dispatch %"
+    ])
 
-    def get_band(x):
-        if x == 100:
-            return "100%"
-        elif x >= 75:
-            return "75-99%"
-        elif x >= 50:
-            return "50-75%"
-        elif x >= 25:
-            return "25-50%"
-        else:
-            return "0-25%"
-
-    house_grp["Band"] = house_grp["pct"].apply(get_band)
-
-    band_df = house_grp["Band"].value_counts().reindex(
-        ["0-25%", "25-50%", "50-75%", "75-99%", "100%"]
-    ).fillna(0)
-
-    with r4:
-        fig4 = px.bar(
-            x=band_df.index,
-            y=band_df.values,
-            title="House Completion Band"
-        )
-        fig4.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig4, use_container_width=True)
+    st.dataframe(proj_df, use_container_width=True, height=250)
 
     st.markdown("---")
 
-    # =========================================================
-    # ROW 4 - DELAY RISK + BOTTLENECK
-    # =========================================================
-    r5, r6 = st.columns(2)
+    # ====================== CRITICAL ALERT PANEL ======================
+    st.subheader("⚠ Critical Alerts")
 
-    live_df["UpdatedAt"] = pd.to_datetime(live_df["UpdatedAt"], errors="coerce")
-    today = pd.Timestamp.today()
+    highest_pending_stage = stage_counts.drop("Completed").idxmax()
+    highest_pending_count = stage_counts.drop("Completed").max()
 
-    live_df["AgeDays"] = (today - live_df["UpdatedAt"]).dt.days
-    live_df.loc[live_df["UpdatedAt"].isna(), "AgeDays"] = 30
+    max_pending_project = proj_df.sort_values("Pending Products", ascending=False).iloc[0]["Project"]
 
-    def risk_band(x):
-        if x >= 10:
-            return "Critical Delay"
-        elif x >= 5:
-            return "Moderate Delay"
-        else:
-            return "Healthy"
-
-    live_df["RiskBand"] = live_df["AgeDays"].apply(risk_band)
-
-    risk_df = live_df["RiskBand"].value_counts().reindex(
-        ["Healthy", "Moderate Delay", "Critical Delay"]
-    ).fillna(0)
-
-    with r5:
-        fig5 = px.bar(
-            x=risk_df.index,
-            y=risk_df.values,
-            title="Schedule Risk / Delay Trend"
-        )
-        fig5.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig5, use_container_width=True)
-
-    bottleneck_labels = ["Measurement", "Cutting List", "Production", "Pre Assembly", "Polishing", "Final Assembly", "Dispatch"]
-    bottleneck_vals = [
-        len(live_df[live_df["Stage"] == "Not Started"]),
-        len(live_df[live_df["Stage"] == "Cutting List"]),
-        len(live_df[live_df["Stage"] == "Production"]),
-        len(live_df[live_df["Stage"] == "Pre Assembly"]),
-        len(live_df[live_df["Stage"] == "Polishing"]),
-        len(live_df[live_df["Stage"] == "Final Assembly"]),
-        len(live_df[live_df["Stage"] == "Dispatch"])
-    ]
-
-    with r6:
-        fig6 = go.Figure(go.Funnel(y=bottleneck_labels, x=bottleneck_vals))
-        fig6.update_layout(title="Stage Bottleneck Waterfall", height=380, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig6, use_container_width=True)
-
-    st.markdown("---")
-
-    # =========================================================
-    # ROW 5 - DISPATCH READINESS + TOP STUCK UNITS
-    # =========================================================
-    r7, r8 = st.columns(2)
-
-    near_dispatch = live_df[live_df["Stage"].isin(["Polishing", "Final Assembly"])]
-
-    if not near_dispatch.empty:
-        dispatch_ready = near_dispatch.groupby("House").size().reset_index(name="NearDispatchProducts")
-        dispatch_ready = dispatch_ready.sort_values("NearDispatchProducts", ascending=False).head(10)
-
-        with r7:
-            fig7 = px.bar(
-                dispatch_ready,
-                x="House",
-                y="NearDispatchProducts",
-                title="Near Dispatch Readiness Houses"
-            )
-            fig7.update_layout(height=360, margin=dict(l=10, r=10, t=40, b=10))
-            st.plotly_chart(fig7, use_container_width=True)
-    else:
-        with r7:
-            st.info("No near dispatch houses.")
-
-    stuck_units = (
-        live_df[live_df["RiskBand"] == "Critical Delay"]
-        .groupby("Unit")
-        .size()
-        .reset_index(name="CriticalProducts")
-        .sort_values("CriticalProducts", ascending=False)
-        .head(10)
-    )
-
-    if not stuck_units.empty:
-        with r8:
-            fig8 = px.bar(
-                stuck_units,
-                x="CriticalProducts",
-                y="Unit",
-                orientation="h",
-                title="Top Stuck Units"
-            )
-            fig8.update_layout(height=360, margin=dict(l=10, r=10, t=40, b=10))
-            st.plotly_chart(fig8, use_container_width=True)
-    else:
-        with r8:
-            st.info("No critical stuck units.")
-
-    st.markdown("---")
-
-    # =========================================================
-    # BOTTOM KPI STRIP
-    # =========================================================
-    b1, b2, b3, b4 = st.columns(4)
-
-    highest_stage = stage_counts.idxmax()
-    highest_stage_count = int(stage_counts.max())
-
-    high_risk_products = len(live_df[live_df["RiskBand"] == "Critical Delay"])
-    near_dispatch_count = len(near_dispatch)
-    closure_houses = completed_houses
-
+    st.error(f"⚠ Highest Pending Stage : {highest_pending_stage} ({highest_pending_count} products)")
+    st.error(f"⚠ Yet To Start Houses : {yet_start_houses}")
+    st.error(f"⚠ Max Pending Project : {max_pending_project}")
+    st.error(f"⚠ Dispatch Performance This Week : {week_dispatch} Houses")
     b1.metric("Highest Pressure Stage", f"{highest_stage} ({highest_stage_count})")
     b2.metric("Critical Delayed Products", high_risk_products)
     b3.metric("Near Dispatch Products", near_dispatch_count)
