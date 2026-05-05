@@ -187,27 +187,24 @@ def show_dashboard_v2(conn, cur):
     st.markdown("---")
 
     # ================= UNIT STATUS KPI =================
-    total_units = house_master_df["UnitKey"].nunique()
+    operational_unit_df = df[df["Product"] != "NO PRODUCT"].copy()
+
+    total_units = operational_unit_df["UnitKey"].nunique()
     active_units = 0
     yetstart_units = 0
     completed_units = 0
 
-    for unitkey, grp in df.groupby("UnitKey"):
+    for unitkey, grp in operational_unit_df.groupby("UnitKey"):
 
         houses_in_unit = grp["HouseID"].nunique()
         completed_in_unit = 0
         yetstart_in_unit = 0
 
         for house_id, hgrp in grp.groupby("HouseID"):
-            actual_h = hgrp[hgrp["Product"] != "NO PRODUCT"]
 
-            if len(actual_h) == 0:
-                yetstart_in_unit += 1
-                continue
-
-            if all(actual_h["Stage"] == "Completed"):
+            if all(hgrp["Stage"] == "Completed"):
                 completed_in_unit += 1
-            elif all(actual_h["Stage"] == "Not Started"):
+            elif all(hgrp["Stage"] == "Not Started"):
                 yetstart_in_unit += 1
 
         if completed_in_unit == houses_in_unit:
