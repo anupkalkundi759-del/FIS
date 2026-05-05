@@ -3,7 +3,7 @@ def show_dashboard_v2(conn, cur):
     import pandas as pd
     import plotly.express as px
 
-    st.title("📌 Executive Factory Dashboard")
+    st.title("📌 Production Monitoring Dashboard")
 
     # ================= MASTER HOUSE COUNT =================
     cur.execute("""
