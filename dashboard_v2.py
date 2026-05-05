@@ -44,7 +44,7 @@ def show_dashboard_v2(conn, cur):
 
         CASE
             WHEN lt.stage_name = 'Dispatch' AND lt.status = 'Completed' THEN 'Completed'
-            WHEN lt.stage_name IS NULL THEN 'Not Started'
+            WHEN lt.stage_name IS NULL THEN 'Yet To Start'
             ELSE lt.stage_name
         END AS current_stage
 
@@ -72,19 +72,7 @@ def show_dashboard_v2(conn, cur):
 
     real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
 
-    stage_rank = {
-        "Not Started": 0,
-        "Cutting List": 1,
-        "Production": 2,
-        "Pre Assembly": 3,
-        "Polishing": 4,
-        "Final Assembly": 5,
-        "Dispatch": 6,
-        "Completed": 7
-    }
-
-    real_product_df["StageRank"] = real_product_df["Stage"].map(stage_rank).fillna(0)
-
+    # ================= HOUSE SUMMARY =================
     completed_houses = 0
     wip_houses = 0
     yet_start_houses = 0
@@ -98,29 +86,35 @@ def show_dashboard_v2(conn, cur):
             continue
 
         completed_products = len(actual_grp[actual_grp["Stage"] == "Completed"])
-        not_started_products = len(actual_grp[actual_grp["Stage"] == "Not Started"])
+        yts_products = len(actual_grp[actual_grp["Stage"] == "Yet To Start"])
 
         if completed_products == total_house_products:
             completed_houses += 1
-        elif not_started_products == total_house_products:
+        elif yts_products == total_house_products:
             yet_start_houses += 1
         else:
             wip_houses += 1
 
+    # ================= PRODUCT SUMMARY =================
     total_products = len(real_product_df)
-    active_products_total = len(real_product_df[(real_product_df["Stage"] != "Completed") & (real_product_df["Stage"] != "Not Started")])
-    pending_products_total = len(real_product_df[real_product_df["Stage"] == "Not Started"])
+    active_products_total = len(real_product_df[
+        ~real_product_df["Stage"].isin(["Yet To Start", "Completed"])
+    ])
+    pending_products_total = len(real_product_df[real_product_df["Stage"] == "Yet To Start"])
     ready_for_dispatch = len(real_product_df[real_product_df["Stage"] == "Dispatch"])
     total_dispatched_products = len(real_product_df[real_product_df["Stage"] == "Completed"])
 
+    # ================= SUMMARY OF TOTAL UNITS =================
     st.markdown("### Summary Of Total Units")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🏠 Total Units", total_houses)
-    c2.metric("✅ Fully Completed Units", completed_houses)
-    c3.metric("🟡 Units In WIP", wip_houses)
-    c4.metric("🔴 Units Yet To Start", yet_start_houses)
+    c1.metric("🏠 Total Houses", total_houses)
+    c2.metric("✅ Completed", completed_houses)
+    c3.metric("🟡 WIP", wip_houses)
+    c4.metric("🔴 Yet Start", yet_start_houses)
 
     st.markdown("")
+
+    # ================= SUMMARY OF TOTAL PRODUCTS =================
     st.markdown("### Summary Of Total Products")
     p1, p2, p3, p4, p5 = st.columns(5)
     p1.metric("📦 Total Products", total_products)
@@ -131,41 +125,26 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
+    # ================= STAGE WISE BOTTLENECK =================
     st.markdown("### Stage wise bottleneck")
 
-    yet_to_start_count = len(real_product_df[real_product_df["StageRank"] == 0])
-    measurement_count = total_products
-    cutting_count = len(real_product_df[real_product_df["StageRank"] <= 1])
-    production_count = len(real_product_df[real_product_df["StageRank"] <= 2])
-    preassembly_count = len(real_product_df[real_product_df["StageRank"] <= 3])
-    polishing_count = len(real_product_df[real_product_df["StageRank"] <= 4])
-    finalassembly_count = len(real_product_df[real_product_df["StageRank"] <= 5])
-    dispatch_count = len(real_product_df[real_product_df["StageRank"] <= 6])
-    completed_count = len(real_product_df[real_product_df["StageRank"] == 7])
+    stage_order = [
+        "Yet To Start",
+        "Measurement",
+        "Cutting List",
+        "Production",
+        "Pre Assembly",
+        "Polishing",
+        "Final Assembly",
+        "Dispatch",
+        "Completed"
+    ]
+
+    stage_counts = real_product_df["Stage"].value_counts().reindex(stage_order, fill_value=0)
 
     chart_df = pd.DataFrame({
-        "Stage": [
-            "Yet To Start",
-            "Measurement",
-            "Cutting List",
-            "Production",
-            "Pre Assembly",
-            "Polishing",
-            "Final Assembly",
-            "Dispatch",
-            "Completed"
-        ],
-        "Products": [
-            yet_to_start_count,
-            measurement_count,
-            cutting_count,
-            production_count,
-            preassembly_count,
-            polishing_count,
-            finalassembly_count,
-            dispatch_count,
-            completed_count
-        ]
+        "Stage": stage_counts.index,
+        "Products": stage_counts.values
     })
 
     fig = px.bar(chart_df, x="Stage", y="Products", text="Products", height=360)
@@ -173,15 +152,26 @@ def show_dashboard_v2(conn, cur):
     fig.update_layout(
         margin=dict(l=10, r=10, t=20, b=20),
         xaxis_title="",
-        yaxis_title="Products",
-        uniformtext_minsize=10,
-        uniformtext_mode='hide'
+        yaxis_title="Products"
     )
     st.plotly_chart(fig, use_container_width=True)
 
+    # ================= ACTIVE PROJECT SUMMARY =================
     st.markdown("### 📋 Active Project Summary")
 
     project_rows = []
+
+    stage_score = {
+        "Yet To Start": 0,
+        "Measurement": 1,
+        "Cutting List": 2,
+        "Production": 3,
+        "Pre Assembly": 4,
+        "Polishing": 5,
+        "Final Assembly": 6,
+        "Dispatch": 7,
+        "Completed": 8
+    }
 
     for project, grp in df.groupby("Project"):
 
@@ -196,20 +186,19 @@ def show_dashboard_v2(conn, cur):
                 proj_yetstart_houses += 1
                 continue
 
-            if all(actual_h["Stage"] == "Not Started"):
+            if all(actual_h["Stage"] == "Yet To Start"):
                 proj_yetstart_houses += 1
             else:
                 proj_started_houses += 1
 
         proj_total_products = len(grp[grp["Product"] != "NO PRODUCT"])
         proj_pending_products = len(grp[(grp["Product"] != "NO PRODUCT") & (grp["Stage"] != "Completed")])
+        proj_dispatched_products = len(grp[(grp["Product"] != "NO PRODUCT") & (grp["Stage"] == "Completed")])
 
-        project_total_possible_progress = proj_total_products * 7
-        project_achieved_progress = grp[grp["Product"] != "NO PRODUCT"]["Stage"].map(stage_rank).fillna(0).sum()
+        achieved = grp[grp["Product"] != "NO PRODUCT"]["Stage"].map(stage_score).fillna(0).sum()
+        total_possible = proj_total_products * 8
 
-        proj_overall_completion = round(
-            (project_achieved_progress / project_total_possible_progress) * 100, 2
-        ) if project_total_possible_progress > 0 else 0
+        proj_overall_completion = round((achieved / total_possible) * 100, 2) if total_possible > 0 else 0
 
         project_rows.append([
             project,
@@ -217,23 +206,28 @@ def show_dashboard_v2(conn, cur):
             proj_started_houses,
             proj_yetstart_houses,
             proj_pending_products,
+            proj_dispatched_products,
             f"{proj_overall_completion}%"
         ])
 
     proj_df = pd.DataFrame(project_rows, columns=[
-        "Project", "Total Houses", "Started Houses", "Yet Start Houses", "Pending Products", "Overall Completion %"
+        "Project", "Total Houses", "Started Houses", "Yet Start Houses",
+        "Pending Products", "Total Dispatched Products", "Overall Completion %"
     ])
 
     st.dataframe(proj_df, use_container_width=True, height=220)
 
     st.markdown("---")
 
+    # ================= CRITICAL ALERTS =================
     st.markdown("### ⚠ Critical Alerts")
 
+    highest_pending_stage = stage_counts.drop("Completed").idxmax()
+    highest_pending_count = stage_counts.drop("Completed").max()
     max_pending_project = proj_df.sort_values("Pending Products", ascending=False).iloc[0]["Project"]
 
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Highest Pressure Stage", f"Yet To Start ({yet_to_start_count})")
+    a1.metric("Highest Pressure Stage", f"{highest_pending_stage} ({highest_pending_count})")
     a2.metric("Yet To Start Houses", yet_start_houses)
     a3.metric("Max Pending Project", max_pending_project)
     a4.metric("Ready For Dispatch", ready_for_dispatch)
