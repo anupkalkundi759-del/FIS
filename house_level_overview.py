@@ -182,7 +182,7 @@ def show_dashboard(conn, cur):
     total_possible_progress = total_products_scope * 7
     achieved_progress = product_df["StageRank"].sum()
 
-    overall_pending = total_possible_progress - achieved_progress
+    overall_pending = len(product_df[product_df["StageRank"] < 7])
 
     overall_completion = round(
         (achieved_progress / total_possible_progress) * 100, 2
