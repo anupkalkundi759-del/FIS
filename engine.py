@@ -9,9 +9,6 @@ def run_engine(conn, cur):
     tz = ZoneInfo("Asia/Kolkata")
     today = datetime.now(tz)
 
-    # =========================================================
-    # PROJECT / UNIT / HOUSE SELECTION WITH ALL OPTION
-    # =========================================================
     top1, top2, top3 = st.columns(3)
 
     with top1:
@@ -28,10 +25,7 @@ def run_engine(conn, cur):
             unit_id = None
         else:
             project_id = project_dict[selected_project]
-            cur.execute(
-                "SELECT unit_id, unit_name FROM units WHERE project_id=%s ORDER BY unit_name",
-                (project_id,)
-            )
+            cur.execute("SELECT unit_id, unit_name FROM units WHERE project_id=%s ORDER BY unit_name", (project_id,))
             units = cur.fetchall()
             unit_dict = {u[1]: u[0] for u in units}
             unit_options = ["ALL"] + list(unit_dict.keys())
@@ -65,11 +59,7 @@ def run_engine(conn, cur):
 
     with r1c1:
         if project_id is not None and unit_id is not None:
-            cur.execute("""
-                SELECT bac_amount
-                FROM project_evm_baseline
-                WHERE project_id=%s AND unit_id=%s
-            """, (project_id, unit_id))
+            cur.execute("SELECT bac_amount FROM project_evm_baseline WHERE project_id=%s AND unit_id=%s", (project_id, unit_id))
             b = cur.fetchone()
             existing_bac = float(b[0]) if b else 0.0
         else:
@@ -133,9 +123,8 @@ def run_engine(conn, cur):
                 INSERT INTO sla_monitor(house_id, sla_date, priority_level)
                 VALUES(%s, %s, %s)
                 ON CONFLICT(house_id)
-                DO UPDATE SET
-                    sla_date = EXCLUDED.sla_date,
-                    priority_level = EXCLUDED.priority_level
+                DO UPDATE SET sla_date = EXCLUDED.sla_date,
+                              priority_level = EXCLUDED.priority_level
             """, (house_dict[sla_house], sla_date, sla_priority))
             conn.commit()
             st.success("SLA Saved")
@@ -164,18 +153,13 @@ def run_engine(conn, cur):
     total_houses = len(master_house_list)
 
     if unit_id is not None:
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM products p
-            JOIN houses h ON p.house_id = h.house_id
-            WHERE h.unit_id=%s
-        """, (unit_id,))
+        cur.execute("SELECT COUNT(*) FROM products p JOIN houses h ON p.house_id=h.house_id WHERE h.unit_id=%s", (unit_id,))
     elif project_id is not None:
         cur.execute("""
             SELECT COUNT(*)
             FROM products p
-            JOIN houses h ON p.house_id = h.house_id
-            JOIN units u ON h.unit_id = u.unit_id
+            JOIN houses h ON p.house_id=h.house_id
+            JOIN units u ON h.unit_id=u.unit_id
             WHERE u.project_id=%s
         """, (project_id,))
     else:
@@ -203,10 +187,8 @@ def run_engine(conn, cur):
         FROM houses h
         JOIN products p ON h.house_id = p.house_id
         LEFT JOIN latest_log ll
-            ON p.product_instance_id = ll.product_instance_id
-            AND ll.rn = 1
+        ON p.product_instance_id = ll.product_instance_id AND ll.rn=1
     """
-
     params = ()
 
     if unit_id is not None:
@@ -219,14 +201,13 @@ def run_engine(conn, cur):
     if selected_house != "ALL":
         if "WHERE" in live_sql:
             live_sql += " AND h.house_no=%s"
-            params = params + (selected_house,)
+            params += (selected_house,)
         else:
             live_sql += " WHERE h.house_no=%s"
             params = (selected_house,)
 
     live_sql += " ORDER BY h.house_no"
     cur.execute(live_sql, params)
-
     live_df = pd.DataFrame(cur.fetchall(), columns=["house", "house_id", "product_instance_id", "stage", "status", "timestamp"])
 
     if live_df.empty:
@@ -238,33 +219,34 @@ def run_engine(conn, cur):
     start_sql = """
         SELECT
             h.house_no,
-            MIN(t.timestamp) AS measure_start
+            MIN(t.timestamp) AS actual_start
         FROM houses h
         JOIN products p ON h.house_id = p.house_id
         JOIN tracking_log t ON p.product_instance_id = t.product_instance_id
-        JOIN stages s ON t.stage_id = s.stage_id
-        WHERE s.stage_name='Measurement'
     """
-
     params = ()
 
     if unit_id is not None:
-        start_sql += " AND h.unit_id=%s"
+        start_sql += " WHERE h.unit_id=%s"
         params = (unit_id,)
     elif project_id is not None:
-        start_sql += " AND h.unit_id IN (SELECT unit_id FROM units WHERE project_id=%s)"
+        start_sql += " WHERE h.unit_id IN (SELECT unit_id FROM units WHERE project_id=%s)"
         params = (project_id,)
 
     if selected_house != "ALL":
-        start_sql += " AND h.house_no=%s"
-        params = params + (selected_house,)
+        if "WHERE" in start_sql:
+            start_sql += " AND h.house_no=%s"
+            params += (selected_house,)
+        else:
+            start_sql += " WHERE h.house_no=%s"
+            params = (selected_house,)
 
     start_sql += " GROUP BY h.house_no"
     cur.execute(start_sql, params)
 
-    start_df = pd.DataFrame(cur.fetchall(), columns=["house", "measure_start"])
-    start_df["measure_start"] = pd.to_datetime(start_df["measure_start"], utc=True, errors="coerce").dt.tz_convert(tz)
-    start_map = dict(zip(start_df["house"], start_df["measure_start"]))
+    start_df = pd.DataFrame(cur.fetchall(), columns=["house", "actual_start"])
+    start_df["actual_start"] = pd.to_datetime(start_df["actual_start"], utc=True, errors="coerce").dt.tz_convert(tz)
+    start_map = dict(zip(start_df["house"], start_df["actual_start"]))
 
     finish_sql = """
         WITH latest_dispatch AS (
@@ -279,7 +261,6 @@ def run_engine(conn, cur):
             LEFT JOIN tracking_log t ON p.product_instance_id = t.product_instance_id
             LEFT JOIN stages s ON t.stage_id = s.stage_id
     """
-
     params = ()
 
     if unit_id is not None:
@@ -292,7 +273,7 @@ def run_engine(conn, cur):
     if selected_house != "ALL":
         if "WHERE" in finish_sql:
             finish_sql += " AND h.house_no=%s"
-            params = params + (selected_house,)
+            params += (selected_house,)
         else:
             finish_sql += " WHERE h.house_no=%s"
             params = (selected_house,)
@@ -308,7 +289,6 @@ def run_engine(conn, cur):
         WHERE rn=1
         GROUP BY house_no
     """
-
     cur.execute(finish_sql, params)
     finish_df = pd.DataFrame(cur.fetchall(), columns=["house", "total_products", "dispatched_products", "actual_finish"])
     finish_df["actual_finish"] = pd.to_datetime(finish_df["actual_finish"], utc=True, errors="coerce").dt.tz_convert(tz)
@@ -317,15 +297,12 @@ def run_engine(conn, cur):
     live_df["earned_pct"] = live_df["stage"].map(lambda x: earned_map.get(x, 0.0))
     project_actual_progress = round(live_df["earned_pct"].mean(), 2)
 
-    planned_progress_list = []
-    for house, start_dt in start_map.items():
-        if pd.isna(start_dt):
-            continue
-        elapsed = max(0, (today - start_dt).days)
-        pprog = min(100, round((elapsed / total_duration) * 100, 2))
-        planned_progress_list.append(pprog)
-
-    project_planned_progress = round(sum(planned_progress_list) / len(planned_progress_list), 2) if planned_progress_list else 0
+    if len(start_map) > 0:
+        earliest_start = min(start_map.values())
+        elapsed_batch = max(0, (today - earliest_start).days)
+        project_planned_progress = min(100, round((elapsed_batch / total_duration) * 100, 2))
+    else:
+        project_planned_progress = 0
 
     if project_id is not None and unit_id is not None:
         cur.execute("SELECT bac_amount FROM project_evm_baseline WHERE project_id=%s AND unit_id=%s", (project_id, unit_id))
@@ -358,16 +335,15 @@ def run_engine(conn, cur):
     cap_map = {x[0]: x[1] for x in cap_rows}
 
     cur.execute("""
-        SELECT
-            s.stage_name,
-            COUNT(*)::float / NULLIF(COUNT(DISTINCT DATE(t.timestamp)), 0) AS avg_exit_day
+        SELECT s.stage_name,
+               COUNT(*)::float / NULLIF(COUNT(DISTINCT DATE(t.timestamp)),0) AS avg_exit_day
         FROM tracking_log t
-        JOIN stages s ON t.stage_id = s.stage_id
+        JOIN stages s ON t.stage_id=s.stage_id
         WHERE t.status='Completed'
         GROUP BY s.stage_name
     """)
     thr_rows = cur.fetchall()
-    throughput_map = {x[0]: round(float(x[1]), 2) if x[1] else 0 for x in thr_rows}
+    throughput_map = {x[0]: round(float(x[1]),2) if x[1] else 0 for x in thr_rows}
 
     bottleneck_rows = []
     bottleneck_stage = None
@@ -410,12 +386,9 @@ def run_engine(conn, cur):
 
         if house in start_map:
             start_dt = start_map[house]
-            elapsed = max(0, (today - start_dt).days)
-            planned_prog = min(100, round((elapsed / total_duration) * 100, 2))
             planned_finish = (start_dt + timedelta(days=total_duration)).date()
         else:
             start_dt = None
-            planned_prog = 0
             planned_finish = "Not Started"
 
         dispatch_info = finish_map.get(house, {})
@@ -566,10 +539,9 @@ def run_engine(conn, cur):
     warn_df = pd.DataFrame(warning_rows)
 
     cur.execute("""
-        SELECT
-            s.stage_name,
-            COUNT(*) AS entered,
-            COUNT(CASE WHEN t.status='Completed' THEN 1 END) AS completed
+        SELECT s.stage_name,
+               COUNT(*) AS entered,
+               COUNT(CASE WHEN t.status='Completed' THEN 1 END) AS completed
         FROM tracking_log t
         JOIN stages s ON t.stage_id = s.stage_id
         GROUP BY s.stage_name
@@ -578,7 +550,6 @@ def run_engine(conn, cur):
     flow = cur.fetchall()
 
     flow_rows = []
-
     for f in flow:
         entered = int(f[1]) if f[1] else 0
         completed = int(f[2]) if f[2] else 0
