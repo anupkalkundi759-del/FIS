@@ -1,11 +1,26 @@
 def show_dashboard_v2(conn, cur):
     import streamlit as st
     import pandas as pd
-    from datetime import datetime, timedelta
 
     st.title("📌 Executive Factory Dashboard")
 
-    # ====================== MASTER LIVE QUERY ======================
+    # ================= MASTER HOUSE COUNT =================
+    cur.execute("""
+        SELECT pr.project_name, u.unit_name, h.house_no, h.house_id
+        FROM houses h
+        JOIN units u ON h.unit_id = u.unit_id
+        JOIN projects pr ON u.project_id = pr.project_id
+        ORDER BY pr.project_name, u.unit_name, h.house_no
+    """)
+    house_master_rows = cur.fetchall()
+
+    house_master_df = pd.DataFrame(house_master_rows, columns=[
+        "Project", "Unit", "House", "HouseID"
+    ])
+
+    total_houses = len(house_master_df)
+
+    # ================= MASTER LIVE PRODUCT QUERY =================
     query = """
     WITH latest_tracking AS (
         SELECT
@@ -25,8 +40,9 @@ def show_dashboard_v2(conn, cur):
         pr.project_name,
         u.unit_name,
         h.house_no,
+        h.house_id,
         p.product_instance_id,
-        pm.product_code,
+        COALESCE(pm.product_code,'NO PRODUCT') AS product_code,
 
         CASE
             WHEN lt.stage_name = 'Dispatch' AND lt.status = 'Completed' THEN 'Completed'
@@ -41,11 +57,11 @@ def show_dashboard_v2(conn, cur):
 
         lt.timestamp
 
-    FROM products p
-    JOIN products_master pm ON p.product_id = pm.product_id
-    JOIN houses h ON p.house_id = h.house_id
+    FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
     JOIN projects pr ON u.project_id = pr.project_id
+    LEFT JOIN products p ON h.house_id = p.house_id
+    LEFT JOIN products_master pm ON p.product_id = pm.product_id
     LEFT JOIN latest_tracking lt
         ON lt.product_instance_id = p.product_instance_id
         AND lt.rn = 1
@@ -60,36 +76,67 @@ def show_dashboard_v2(conn, cur):
         return
 
     df = pd.DataFrame(rows, columns=[
-        "Project", "Unit", "House", "ProductInstance", "Product",
-        "Stage", "Status", "Timestamp"
+        "Project", "Unit", "House", "HouseID", "ProductInstance",
+        "Product", "Stage", "Status", "Timestamp"
     ])
 
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
 
-    # ====================== KPI ROW 1 HOUSE STATUS ======================
-    total_houses = df["House"].astype(str).nunique()
+    # remove fake NO PRODUCT from product totals where needed
+    real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
 
-    house_summary = df.groupby("House")["Stage"].apply(list)
-
+    # ================= HOUSE KPI CLASSIFICATION =================
     completed_houses = 0
     wip_houses = 0
     pending_houses = 0
     yet_start_houses = 0
 
-    for house, stages in house_summary.items():
+    dispatch_today = 0
+    dispatch_week = 0
+    dispatch_month = 0
 
-        if all(str(x) == "Completed" for x in stages):
+    now = pd.Timestamp.now()
+
+    for house, grp in df.groupby("House"):
+
+        actual_grp = grp[grp["Product"] != "NO PRODUCT"]
+
+        total_house_products = len(actual_grp)
+
+        if total_house_products == 0:
+            yet_start_houses += 1
+            continue
+
+        completed_products = len(actual_grp[actual_grp["Stage"] == "Completed"])
+        not_started_products = len(actual_grp[actual_grp["Stage"] == "Not Started"])
+        active_products = len(actual_grp[
+            (actual_grp["Stage"] != "Completed") &
+            (actual_grp["Stage"] != "Not Started")
+        ])
+
+        if completed_products == total_house_products:
             completed_houses += 1
 
-        elif all(str(x) == "Not Started" for x in stages):
+            latest_close = actual_grp["Timestamp"].max()
+
+            if pd.notna(latest_close):
+                if latest_close.date() == now.date():
+                    dispatch_today += 1
+                if latest_close >= now - pd.Timedelta(days=7):
+                    dispatch_week += 1
+                if latest_close >= now - pd.Timedelta(days=30):
+                    dispatch_month += 1
+
+        elif not_started_products == total_house_products:
             yet_start_houses += 1
 
-        elif "Not Started" in stages and len(set(stages)) == 1:
+        elif not_started_products > 0 and (completed_products > 0 or active_products > 0):
             pending_houses += 1
 
         else:
             wip_houses += 1
 
+    # ================= KPI ROW 1 =================
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("🏠 Total Houses", total_houses)
     c2.metric("✅ Completed", completed_houses)
@@ -99,44 +146,30 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ====================== KPI ROW 2 DISPATCH MOVEMENT ======================
-    now = pd.Timestamp.now()
-
-    today_dispatch = len(df[
-        (df["Stage"] == "Completed") &
-        (df["Timestamp"].dt.date == now.date())
-    ]["House"].unique())
-
-    week_dispatch = len(df[
-        (df["Stage"] == "Completed") &
-        (df["Timestamp"] >= now - pd.Timedelta(days=7))
-    ]["House"].unique())
-
-    month_dispatch = len(df[
-        (df["Stage"] == "Completed") &
-        (df["Timestamp"] >= now - pd.Timedelta(days=30))
-    ]["House"].unique())
-
+    # ================= KPI ROW 2 =================
     d1, d2, d3 = st.columns(3)
-    d1.metric("🚚 Dispatch Today", today_dispatch)
-    d2.metric("🚚 Dispatch Week", week_dispatch)
-    d3.metric("🚚 Dispatch Month", month_dispatch)
+    d1.metric("🚚 Dispatch Today", dispatch_today)
+    d2.metric("🚚 Dispatch Week", dispatch_week)
+    d3.metric("🚚 Dispatch Month", dispatch_month)
 
     st.markdown("---")
 
-    # ====================== KPI ROW 3 PRODUCT STATUS ======================
-    total_products = len(df)
-    active_products = len(df[df["Stage"] != "Completed"])
-    pending_products = len(df[df["Stage"] == "Not Started"])
+    # ================= KPI ROW 3 PRODUCT =================
+    total_products = len(real_product_df)
+    active_products_total = len(real_product_df[
+        (real_product_df["Stage"] != "Completed") &
+        (real_product_df["Stage"] != "Not Started")
+    ])
+    pending_products_total = len(real_product_df[real_product_df["Stage"] == "Not Started"])
 
     p1, p2, p3 = st.columns(3)
     p1.metric("📦 Total Products", total_products)
-    p2.metric("🏭 Active Products", active_products)
-    p3.metric("⌛ Pending Products", pending_products)
+    p2.metric("🏭 Active Products", active_products_total)
+    p3.metric("⌛ Pending Products", pending_products_total)
 
     st.markdown("---")
 
-    # ====================== STAGE WISE BOTTLENECK ======================
+    # ================= STAGE WISE BOTTLENECK =================
     st.subheader("🏭 Stage Wise Bottleneck")
 
     stage_order = [
@@ -150,7 +183,7 @@ def show_dashboard_v2(conn, cur):
         "Completed"
     ]
 
-    stage_counts = df["Stage"].value_counts().reindex(stage_order, fill_value=0)
+    stage_counts = real_product_df["Stage"].value_counts().reindex(stage_order, fill_value=0)
 
     bottleneck_df = pd.DataFrame({
         "Stage": stage_counts.index,
@@ -161,17 +194,36 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ====================== UNIT STATUS KPI ======================
-    total_units = df["Unit"].nunique()
-
-    started_units = df[df["Stage"] != "Not Started"]["Unit"].nunique()
-    pending_units = df[df["Stage"] == "Not Started"]["Unit"].nunique()
-
+    # ================= UNIT STATUS KPI =================
+    total_units = house_master_df["Unit"].nunique()
+    started_units = 0
+    pending_units = 0
     completed_units = 0
 
     for unit, grp in df.groupby("Unit"):
-        if all(grp["Stage"] == "Completed"):
+
+        houses_in_unit = grp["House"].nunique()
+        completed_in_unit = 0
+        notstart_in_unit = 0
+
+        for house, hgrp in grp.groupby("House"):
+            actual_h = hgrp[hgrp["Product"] != "NO PRODUCT"]
+
+            if len(actual_h) == 0:
+                notstart_in_unit += 1
+                continue
+
+            if all(actual_h["Stage"] == "Completed"):
+                completed_in_unit += 1
+            elif all(actual_h["Stage"] == "Not Started"):
+                notstart_in_unit += 1
+
+        if completed_in_unit == houses_in_unit:
             completed_units += 1
+        elif notstart_in_unit == houses_in_unit:
+            pending_units += 1
+        else:
+            started_units += 1
 
     u1, u2, u3, u4 = st.columns(4)
     u1.metric("🏗 Total Units", total_units)
@@ -181,23 +233,31 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ====================== ACTIVE PROJECT SUMMARY ======================
+    # ================= ACTIVE PROJECT SUMMARY =================
     st.subheader("📋 Active Project Summary")
 
     project_rows = []
 
     for project, grp in df.groupby("Project"):
-        proj_houses = grp["House"].nunique()
-        proj_wip = grp[grp["Stage"] != "Completed"]["House"].nunique()
-        proj_pending_products = len(grp[grp["Stage"] == "Not Started"])
-        proj_dispatch = round((len(grp[grp["Stage"] == "Completed"]) / len(grp)) * 100, 2)
+
+        proj_total_houses = grp["House"].nunique()
+        proj_completed_houses = 0
+        proj_pending_products = len(grp[(grp["Product"] != "NO PRODUCT") & (grp["Stage"] == "Not Started")])
+
+        for house, hgrp in grp.groupby("House"):
+            actual_h = hgrp[hgrp["Product"] != "NO PRODUCT"]
+            if len(actual_h) > 0 and all(actual_h["Stage"] == "Completed"):
+                proj_completed_houses += 1
+
+        proj_wip = proj_total_houses - proj_completed_houses
+        proj_dispatch_pct = round((proj_completed_houses / proj_total_houses) * 100, 2) if proj_total_houses > 0 else 0
 
         project_rows.append([
             project,
-            proj_houses,
+            proj_total_houses,
             proj_wip,
             proj_pending_products,
-            f"{proj_dispatch}%"
+            f"{proj_dispatch_pct}%"
         ])
 
     proj_df = pd.DataFrame(project_rows, columns=[
@@ -208,7 +268,7 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    # ====================== CRITICAL ALERT PANEL ======================
+    # ================= CRITICAL ALERTS =================
     st.subheader("⚠ Critical Alerts")
 
     highest_pending_stage = stage_counts.drop("Completed").idxmax()
@@ -216,11 +276,10 @@ def show_dashboard_v2(conn, cur):
 
     max_pending_project = proj_df.sort_values("Pending Products", ascending=False).iloc[0]["Project"]
 
-    st.error(f"⚠ Highest Pending Stage : {highest_pending_stage} ({highest_pending_count} products)")
-    st.error(f"⚠ Yet To Start Houses : {yet_start_houses}")
-    st.error(f"⚠ Max Pending Project : {max_pending_project}")
-    st.error(f"⚠ Dispatch Performance This Week : {week_dispatch} Houses")
-    b1.metric("Highest Pressure Stage", f"{highest_stage} ({highest_stage_count})")
-    b2.metric("Critical Delayed Products", high_risk_products)
-    b3.metric("Near Dispatch Products", near_dispatch_count)
-    b4.metric("Fully Closed Houses", closure_houses)
+    near_dispatch_products = len(real_product_df[real_product_df["Stage"] == "Dispatch"])
+
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("Highest Pressure Stage", f"{highest_pending_stage} ({highest_pending_count})")
+    a2.metric("Yet To Start Houses", yet_start_houses)
+    a3.metric("Max Pending Project", max_pending_project)
+    a4.metric("Near Dispatch Products", near_dispatch_products)
