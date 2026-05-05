@@ -1,6 +1,7 @@
 def show_dashboard_v2(conn, cur):
     import streamlit as st
     import pandas as pd
+    from datetime import datetime
 
     st.title("📌 Executive Factory Dashboard")
 
@@ -28,6 +29,7 @@ def show_dashboard_v2(conn, cur):
             s.stage_name,
             t.status,
             t.timestamp,
+            DATE(t.timestamp) as track_date,
             ROW_NUMBER() OVER (
                 PARTITION BY t.product_instance_id
                 ORDER BY t.timestamp DESC
@@ -55,7 +57,8 @@ def show_dashboard_v2(conn, cur):
             ELSE lt.status
         END AS current_status,
 
-        lt.timestamp
+        lt.timestamp,
+        lt.track_date
 
     FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
@@ -77,12 +80,10 @@ def show_dashboard_v2(conn, cur):
 
     df = pd.DataFrame(rows, columns=[
         "Project", "Unit", "House", "HouseID", "ProductInstance",
-        "Product", "Stage", "Status", "Timestamp"
+        "Product", "Stage", "Status", "Timestamp", "TrackDate"
     ])
 
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
-    df["Timestamp"] = df["Timestamp"].dt.tz_localize(None)
-
     real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
 
     # ================= HOUSE KPI CLASSIFICATION =================
@@ -90,7 +91,7 @@ def show_dashboard_v2(conn, cur):
     wip_houses = 0
     yet_start_houses = 0
 
-    for house, grp in df.groupby("House"):
+    for house_id, grp in df.groupby("HouseID"):
 
         actual_grp = grp[grp["Product"] != "NO PRODUCT"]
         total_house_products = len(actual_grp)
@@ -121,14 +122,14 @@ def show_dashboard_v2(conn, cur):
     st.markdown("---")
 
     # ================= KPI ROW 2 DISPATCH =================
-    now = pd.Timestamp.now().tz_localize(None)
+    today_date = datetime.now().date()
 
     dispatch_completed_df = real_product_df[real_product_df["Stage"] == "Completed"].copy()
 
     total_dispatch = len(dispatch_completed_df)
 
     dispatch_today = len(dispatch_completed_df[
-        dispatch_completed_df["Timestamp"].dt.date == now.date()
+        pd.to_datetime(dispatch_completed_df["TrackDate"], errors="coerce").dt.date == today_date
     ])
 
     d1, d2 = st.columns(2)
@@ -189,11 +190,11 @@ def show_dashboard_v2(conn, cur):
 
     for unit, grp in df.groupby("Unit"):
 
-        houses_in_unit = grp["House"].nunique()
+        houses_in_unit = grp["HouseID"].nunique()
         completed_in_unit = 0
         yetstart_in_unit = 0
 
-        for house, hgrp in grp.groupby("House"):
+        for house_id, hgrp in grp.groupby("HouseID"):
             actual_h = hgrp[hgrp["Product"] != "NO PRODUCT"]
 
             if len(actual_h) == 0:
@@ -227,11 +228,11 @@ def show_dashboard_v2(conn, cur):
 
     for project, grp in df.groupby("Project"):
 
-        proj_total_houses = grp["House"].nunique()
+        proj_total_houses = grp["HouseID"].nunique()
         proj_started_houses = 0
         proj_yetstart_houses = 0
 
-        for house, hgrp in grp.groupby("House"):
+        for house_id, hgrp in grp.groupby("HouseID"):
             actual_h = hgrp[hgrp["Product"] != "NO PRODUCT"]
 
             if len(actual_h) == 0:
