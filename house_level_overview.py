@@ -179,11 +179,14 @@ def show_dashboard(conn, cur):
 
     overall_houses_impacted = total_houses - fully_dispatch_houses
 
-    dispatch_completed_products = len(product_df[product_df["Current Stage"] == "Completed"])
-    overall_pending = total_products_scope - dispatch_completed_products
+    total_possible_progress = total_products_scope * 7
+    achieved_progress = product_df["StageRank"].sum()
+
+    overall_pending = total_possible_progress - achieved_progress
+
     overall_completion = round(
-        (dispatch_completed_products / total_products_scope) * 100, 2
-    ) if total_products_scope > 0 else 0
+        (achieved_progress / total_possible_progress) * 100, 2
+    ) if total_possible_progress > 0 else 0
 
     kpi_rows.append([
         "OVERALL COMPLETION",
