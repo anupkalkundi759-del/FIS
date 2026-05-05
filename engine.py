@@ -64,7 +64,6 @@ def run_engine(conn, cur):
             existing_bac = float(b[0]) if b else 0.0
         else:
             existing_bac = 0.0
-
         bac_input = st.number_input("Total Planned Project Cost (BAC)", min_value=0.0, value=existing_bac, step=1000.0)
 
     with r1c2:
@@ -215,6 +214,8 @@ def run_engine(conn, cur):
         return
 
     live_df["timestamp"] = pd.to_datetime(live_df["timestamp"], utc=True, errors="coerce").dt.tz_convert(tz)
+
+    started_houses = live_df["house"].nunique()
 
     start_sql = """
         SELECT
@@ -375,7 +376,6 @@ def run_engine(conn, cur):
     house_rows = []
     delayed_houses = 0
     completed_houses = 0
-    started_houses = len(start_map)
 
     loop_houses = [selected_house] if selected_house != "ALL" else master_house_list
 
@@ -538,42 +538,6 @@ def run_engine(conn, cur):
 
     warn_df = pd.DataFrame(warning_rows)
 
-    cur.execute("""
-        SELECT s.stage_name,
-               COUNT(*) AS entered,
-               COUNT(CASE WHEN t.status='Completed' THEN 1 END) AS completed
-        FROM tracking_log t
-        JOIN stages s ON t.stage_id = s.stage_id
-        GROUP BY s.stage_name
-        ORDER BY MIN(s.stage_id)
-    """)
-    flow = cur.fetchall()
-
-    flow_rows = []
-    for f in flow:
-        entered = int(f[1]) if f[1] else 0
-        completed = int(f[2]) if f[2] else 0
-        pending_stage = entered - completed
-
-        if pending_stage > 20:
-            reason = "Severe Queue"
-        elif pending_stage > 5:
-            reason = "Pending Build-up"
-        elif pending_stage > 0:
-            reason = "Under Processing"
-        else:
-            reason = "Stable"
-
-        flow_rows.append({
-            "Stage": f[0],
-            "Entered": entered,
-            "Completed": completed,
-            "Pending in Stage": pending_stage,
-            "Reason": reason
-        })
-
-    flow_df = pd.DataFrame(flow_rows)
-
     st.subheader("📈 EVM Executive Control Panel")
     e1, e2, e3, e4, e5 = st.columns(5)
     e6, e7, e8, e9, e10 = st.columns(5)
@@ -613,6 +577,3 @@ def run_engine(conn, cur):
         st.dataframe(warn_df, use_container_width=True, height=220)
     else:
         st.success("No critical warnings")
-
-    st.subheader("🔄 Flow Throughput Monitor")
-    st.dataframe(flow_df, use_container_width=True, height=250)
