@@ -16,7 +16,6 @@ def show_product_tracking(conn, cur):
         "Not Started": 0
     }
 
-    # ================= DATA FUNCTIONS =================
     def get_projects():
         cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
         return ["All"] + [p[0] for p in cur.fetchall()]
@@ -50,7 +49,6 @@ def show_product_tracking(conn, cur):
     def get_stages():
         return ["All", "Measurement", "Cutting List", "Production", "Pre Assembly", "Polishing", "Final Assembly", "Dispatch"]
 
-    # ================= FILTERS =================
     col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     selected_project = col1.selectbox("Project", get_projects())
@@ -60,7 +58,6 @@ def show_product_tracking(conn, cur):
     selected_status = col5.selectbox("Status", ["All", "Not Started", "In Progress", "Completed"])
     search = col6.text_input("Search")
 
-    # ================= MAIN BASE QUERY =================
     with st.spinner("Loading data..."):
 
         query = """
@@ -72,7 +69,7 @@ def show_product_tracking(conn, cur):
                 t.timestamp,
                 ROW_NUMBER() OVER (
                     PARTITION BY t.product_instance_id
-                    ORDER BY t.timestamp DESC
+                    ORDER BY t.timestamp DESC, t.ctid DESC
                 ) AS rn
             FROM tracking_log t
             JOIN stages s ON t.stage_id = s.stage_id
@@ -138,7 +135,6 @@ def show_product_tracking(conn, cur):
         st.warning("No data found")
         return
 
-    # ================= DATAFRAME =================
     df = pd.DataFrame(data, columns=[
         "Product", "Type", "Orientation",
         "Project", "Unit", "House",
@@ -147,7 +143,6 @@ def show_product_tracking(conn, cur):
 
     df["LiveRank"] = df["Stage"].map(stage_rank).fillna(0)
 
-    # ================= UNIVERSAL BUSINESS FILTER =================
     if selected_stage != "All":
         target_rank = stage_rank[selected_stage]
 
@@ -184,16 +179,13 @@ def show_product_tracking(conn, cur):
         st.warning("No data found")
         return
 
-    # ================= KPI BEFORE FORMAT =================
     running_count = len(df[~df["Stage"].isin(["Not Started", "Completed"])])
 
-    # ================= DATE FORMAT =================
     df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
     df["Date & Time"] = df["Date & Time"].dt.tz_convert("Asia/Kolkata")
     df["Date & Time"] = df["Date & Time"].dt.strftime("%d-%m-%Y %H:%M")
     df = df.drop(columns=["Timestamp", "LiveRank"])
 
-    # ================= KPI =================
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Visible Products", len(df))
     k2.metric("In Progress", running_count)
@@ -202,7 +194,6 @@ def show_product_tracking(conn, cur):
 
     st.dataframe(df, use_container_width=True, height=420)
 
-    # ================= BREAKDOWN FILTER =================
     st.divider()
     st.subheader("🎯 Breakdown Filters")
 
@@ -211,7 +202,6 @@ def show_product_tracking(conn, cur):
     breakdown_project = b1.selectbox("Project (Breakdown)", get_projects(), key="b_proj")
     breakdown_unit = b2.selectbox("Unit (Breakdown)", get_units(breakdown_project), key="b_unit")
 
-    # ================= STATUS BREAKDOWN =================
     st.subheader("📊 Product Status Breakdown")
 
     with st.spinner("Calculating breakdown..."):
@@ -224,7 +214,7 @@ def show_product_tracking(conn, cur):
                 t.status,
                 ROW_NUMBER() OVER (
                     PARTITION BY t.product_instance_id
-                    ORDER BY t.timestamp DESC
+                    ORDER BY t.timestamp DESC, t.ctid DESC
                 ) AS rn
             FROM tracking_log t
             JOIN stages s ON t.stage_id = s.stage_id
