@@ -57,20 +57,16 @@ def run_engine(conn, cur):
     master_house_rows = cur.fetchall()
     master_house_df = pd.DataFrame(master_house_rows, columns=["house_id", "house_no"])
 
-    if master_house_df.empty:
-        house_options = ["ALL"]
-    else:
-        house_options = ["ALL"] + [
-            f"{row.house_no} | ID:{row.house_id}"
-            for row in master_house_df.itertuples(index=False)
-        ]
+    house_name_map = dict(zip(master_house_df["house_id"], master_house_df["house_no"])) if not master_house_df.empty else {}
 
     with top3:
-        selected_house_label = st.selectbox("Select House", house_options, key="eng_house")
-
-    selected_house_id = None
-    if selected_house_label != "ALL":
-        selected_house_id = int(selected_house_label.split("ID:")[1])
+        house_options = [None] + list(house_name_map.keys())
+        selected_house_id = st.selectbox(
+            "Select House",
+            house_options,
+            format_func=lambda x: "ALL" if x is None else str(house_name_map.get(x, x)),
+            key="eng_house"
+        )
 
     st.markdown("---")
     st.subheader("💰 Project EVM Baseline / Actual Cost / SLA Monitor")
@@ -125,12 +121,12 @@ def run_engine(conn, cur):
         if master_house_df.empty:
             st.info("No houses available for SLA monitor")
         else:
-            sla_options = [
-                f"{row.house_no} | ID:{row.house_id}"
-                for row in master_house_df.itertuples(index=False)
-            ]
-            sla_house_label = st.selectbox("SLA Monitor House", sla_options, key="sla_house")
-            sla_house_id = int(sla_house_label.split("ID:")[1])
+            sla_house_id = st.selectbox(
+                "SLA Monitor House",
+                list(house_name_map.keys()),
+                format_func=lambda x: str(house_name_map.get(x, x)),
+                key="sla_house"
+            )
 
             sla_date = st.date_input("SLA Date", key="sla_dt")
             sla_priority = st.selectbox("Priority", ["Normal", "High", "Critical"], key="sla_pri")
@@ -196,26 +192,6 @@ def run_engine(conn, cur):
 
     seq_map = dict(zip(activity_df["stage"], activity_df["seq"]))
     earned_map = dict(zip(activity_df["stage"], activity_df["earned_pct"]))
-
-    if unit_id is not None:
-        cur.execute("""
-            SELECT COUNT(DISTINCT p.product_instance_id)
-            FROM products p
-            JOIN houses h ON p.house_id=h.house_id
-            WHERE h.unit_id=%s
-        """, (unit_id,))
-    elif project_id is not None:
-        cur.execute("""
-            SELECT COUNT(DISTINCT p.product_instance_id)
-            FROM products p
-            JOIN houses h ON p.house_id=h.house_id
-            JOIN units u ON h.unit_id=u.unit_id
-            WHERE u.project_id=%s
-        """, (project_id,))
-    else:
-        cur.execute("SELECT COUNT(DISTINCT product_instance_id) FROM products")
-
-    total_products_project = cur.fetchone()[0]
 
     live_sql = """
         WITH latest_log AS (
@@ -479,11 +455,9 @@ def run_engine(conn, cur):
                 q_penalty = float(bottleneck_df[bottleneck_df["Stage"] == dominant_stage]["Queue Load Days"].iloc[0])
 
             spi_penalty = (1 / SPI) if SPI > 0 and SPI < 1 else 1
-            work_remaining_days = int(round((base_remaining_days * spi_penalty) + q_penalty))
+            work_remaining_days = max(1, int(round((base_remaining_days * spi_penalty) + q_penalty)))
 
-            planned_remaining_days = max(0, (planned_finish_date - today.date()).days) if planned_finish_date else total_duration
-            ettc_days = max(planned_remaining_days, work_remaining_days)
-
+            ettc_days = work_remaining_days
             predicted_finish_dt = today + timedelta(days=ettc_days)
             predicted_finish = predicted_finish_dt.date()
             actual_finish = "Not Finished"
@@ -509,7 +483,7 @@ def run_engine(conn, cur):
                 health = "On Track"
 
         house_rows.append({
-            "House ID": house_id,
+            "_house_id": house_id,
             "House": house,
             "Total Products": total_products,
             "Earned Progress %": actual_prog,
@@ -538,7 +512,7 @@ def run_engine(conn, cur):
         sla_dt = r[2]
         pri = r[3]
 
-        rr = house_df[house_df["House ID"] == house_id]
+        rr = house_df[house_df["_house_id"] == house_id]
         if rr.empty:
             continue
 
@@ -548,7 +522,7 @@ def run_engine(conn, cur):
         risk = "Miss Risk" if miss > 0 else ("Tight" if miss == 0 else "Safe")
 
         sla_priority_rows.append({
-            "House ID": house_id,
+            "_house_id": house_id,
             "House": house_no,
             "SLA Date": sla_dt,
             "Predicted Finish": pred_finish,
@@ -592,11 +566,13 @@ def run_engine(conn, cur):
     e10.metric("ETC", f"₹{ETC_COST:,.0f}")
 
     st.subheader("🏠 House Predictive Intelligence")
-    st.dataframe(house_df, use_container_width=True, height=420)
+    display_house_df = house_df.drop(columns=["_house_id"], errors="ignore")
+    st.dataframe(display_house_df, use_container_width=True, height=420)
 
     st.subheader("🎯 SLA Priority Monitor")
     if not sla_df.empty:
-        st.dataframe(sla_df.sort_values("Expected Miss Days", ascending=False), use_container_width=True, height=220)
+        display_sla_df = sla_df.drop(columns=["_house_id"], errors="ignore")
+        st.dataframe(display_sla_df.sort_values("Expected Miss Days", ascending=False), use_container_width=True, height=220)
     else:
         st.info("No SLA monitored houses")
 
