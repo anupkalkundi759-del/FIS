@@ -20,6 +20,10 @@ def show_dashboard_v2(conn, cur):
 
     total_houses = len(house_master_df)
 
+    cur.execute("SELECT stage_name FROM stages ORDER BY sequence")
+    stage_sequence = [x[0] for x in cur.fetchall()]
+    last_stage_name = stage_sequence[-1] if stage_sequence else None
+
     query = """
     WITH latest_tracking AS (
         SELECT
@@ -28,7 +32,7 @@ def show_dashboard_v2(conn, cur):
             t.status,
             ROW_NUMBER() OVER (
                 PARTITION BY t.product_instance_id
-                ORDER BY t.timestamp DESC
+                ORDER BY t.timestamp DESC, t.ctid DESC
             ) AS rn
         FROM tracking_log t
         JOIN stages s ON t.stage_id = s.stage_id
@@ -41,20 +45,7 @@ def show_dashboard_v2(conn, cur):
         h.house_id,
         p.product_instance_id,
         COALESCE(pm.product_code,'NO PRODUCT') AS product_code,
-
-        CASE
-            WHEN lt.stage_name IS NULL THEN 'Yet To Start'
-            WHEN TRIM(LOWER(lt.stage_name)) = 'measurement' THEN 'Measurement'
-            WHEN TRIM(LOWER(lt.stage_name)) = 'cutting list' THEN 'Cutting List'
-            WHEN TRIM(LOWER(lt.stage_name)) = 'production' THEN 'Production'
-            WHEN TRIM(LOWER(lt.stage_name)) IN ('pre assembly','preassembly') THEN 'Pre Assembly'
-            WHEN TRIM(LOWER(lt.stage_name)) = 'polishing' THEN 'Polishing'
-            WHEN TRIM(LOWER(lt.stage_name)) IN ('final assembly','finalassembly') THEN 'Final Assembly'
-            WHEN TRIM(LOWER(lt.stage_name)) = 'dispatch' AND lt.status = 'Completed' THEN 'Completed'
-            WHEN TRIM(LOWER(lt.stage_name)) = 'dispatch' THEN 'Dispatch'
-            ELSE 'Yet To Start'
-        END AS current_stage,
-
+        lt.stage_name,
         COALESCE(lt.status,'Not Started') AS latest_status
 
     FROM houses h
@@ -77,8 +68,20 @@ def show_dashboard_v2(conn, cur):
 
     df = pd.DataFrame(rows, columns=[
         "Project", "Unit", "House", "HouseID",
-        "ProductInstance", "Product", "Stage", "Status"
+        "ProductInstance", "Product", "RawStage", "Status"
     ])
+
+    df["Stage"] = df["RawStage"].fillna("Yet To Start")
+    df["Status"] = df["Status"].fillna("Not Started")
+
+    if last_stage_name:
+        df.loc[
+            (df["Stage"] == last_stage_name) &
+            (df["Status"] == "Completed"),
+            "Stage"
+        ] = "Completed"
+
+    df["Stage"] = df["Stage"].replace("Not Started", "Yet To Start")
 
     real_product_df = df[df["Product"] != "NO PRODUCT"].copy()
 
