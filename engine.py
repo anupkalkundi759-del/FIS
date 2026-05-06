@@ -620,4 +620,3 @@ def run_engine(conn, cur):
         )
     else:
         st.success("No critical warnings")
-```
