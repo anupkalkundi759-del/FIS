@@ -57,7 +57,10 @@ def run_engine(conn, cur):
     master_house_rows = cur.fetchall()
     master_house_df = pd.DataFrame(master_house_rows, columns=["house_id", "house_no"])
 
-    house_name_map = dict(zip(master_house_df["house_id"], master_house_df["house_no"])) if not master_house_df.empty else {}
+    if master_house_df.empty:
+        house_name_map = {}
+    else:
+        house_name_map = dict(zip(master_house_df["house_id"], master_house_df["house_no"]))
 
     with top3:
         house_options = [None] + list(house_name_map.keys())
@@ -65,8 +68,13 @@ def run_engine(conn, cur):
             "Select House",
             house_options,
             format_func=lambda x: "ALL" if x is None else str(house_name_map.get(x, x)),
-            key="eng_house"
+            key="eng_house_id_v2"
         )
+
+    if selected_house_id == "ALL":
+        selected_house_id = None
+    elif selected_house_id is not None:
+        selected_house_id = int(selected_house_id)
 
     st.markdown("---")
     st.subheader("💰 Project EVM Baseline / Actual Cost / SLA Monitor")
@@ -125,8 +133,9 @@ def run_engine(conn, cur):
                 "SLA Monitor House",
                 list(house_name_map.keys()),
                 format_func=lambda x: str(house_name_map.get(x, x)),
-                key="sla_house"
+                key="sla_house_id_v2"
             )
+            sla_house_id = int(sla_house_id)
 
             sla_date = st.date_input("SLA Date", key="sla_dt")
             sla_priority = st.selectbox("Priority", ["Normal", "High", "Critical"], key="sla_pri")
@@ -387,8 +396,6 @@ def run_engine(conn, cur):
     bottleneck_df = pd.DataFrame(bottleneck_rows)
 
     house_rows = []
-    delayed_houses = 0
-    completed_houses = 0
 
     loop_house_ids = [selected_house_id] if selected_house_id is not None else live_df["house_id"].drop_duplicates().tolist()
 
@@ -424,7 +431,6 @@ def run_engine(conn, cur):
             health = "Awaiting"
 
         elif dispatched == total_products:
-            completed_houses += 1
             predicted_finish = actual_finish_dt.date() if pd.notna(actual_finish_dt) else today.date()
             actual_finish = predicted_finish
             ettc_days = 0
@@ -462,9 +468,6 @@ def run_engine(conn, cur):
             predicted_finish = predicted_finish_dt.date()
             actual_finish = "Not Finished"
             delay_days = max(0, (predicted_finish - planned_finish_date).days) if planned_finish_date else 0
-
-            if delay_days > 0:
-                delayed_houses += 1
 
             stagnant_days = 0
             last_move = sub["timestamp"].max()
@@ -512,6 +515,9 @@ def run_engine(conn, cur):
         sla_dt = r[2]
         pri = r[3]
 
+        if house_df.empty:
+            continue
+
         rr = house_df[house_df["_house_id"] == house_id]
         if rr.empty:
             continue
@@ -543,10 +549,11 @@ def run_engine(conn, cur):
     if bottleneck_stage:
         warning_rows.append({"Alert": f"Critical Bottleneck Detected at {bottleneck_stage}"})
 
-    for _, rr in house_df[house_df["Health"] == "No Movement"].iterrows():
-        warning_rows.append({"Alert": f"House {rr['House']} has no recent movement"})
-    for _, rr in house_df[house_df["Health"] == "Critical Delay"].iterrows():
-        warning_rows.append({"Alert": f"House {rr['House']} critically delayed by {rr['Delay Days']} days"})
+    if not house_df.empty:
+        for _, rr in house_df[house_df["Health"] == "No Movement"].iterrows():
+            warning_rows.append({"Alert": f"House {rr['House']} has no recent movement"})
+        for _, rr in house_df[house_df["Health"] == "Critical Delay"].iterrows():
+            warning_rows.append({"Alert": f"House {rr['House']} critically delayed by {rr['Delay Days']} days"})
 
     warn_df = pd.DataFrame(warning_rows)
 
