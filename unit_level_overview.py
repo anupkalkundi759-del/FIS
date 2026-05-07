@@ -209,16 +209,14 @@ def show_dashboard(conn, cur):
         completed_count = len(completed_df)
         pending_count = len(pending_df)
 
-        if pending_count == 0 and completed_count == total_house_products:
+        if completed_count == total_house_products:
             house_status = "✅ Fully Completed"
-        elif pending_count == 0 and completed_count == 0:
-            house_status = "🔴 Not Started"
-        elif pending_count == 0:
-            house_status = "🟡 Not Entered"
-        elif completed_count == 0:
+        elif completed_count > 0:
+            house_status = "🟡 Partial"
+        elif pending_count > 0:
             house_status = "🔴 Not Started"
         else:
-            house_status = "🟡 Partial"
+            house_status = "🔴 Not Started"
 
         audit_rows.append([house_no, total_house_products, completed_count, pending_count, house_status])
 
