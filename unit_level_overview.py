@@ -191,9 +191,17 @@ def show_dashboard(conn, cur):
             continue
 
         total_house_products = len(house_products)
+        audit_rank = stage_rank[audit_stage]
 
-        pending_df = house_products[house_products["Current Stage"] == audit_stage]
-        completed_df = house_products[house_products["Current Stage"] != audit_stage]
+        if audit_stage == "Yet To Start":
+            pending_df = house_products[house_products["StageRank"] == 0]
+            completed_df = house_products[house_products["StageRank"] > 0]
+        elif audit_stage == "Dispatch":
+            pending_df = house_products[house_products["StageRank"] < 8]
+            completed_df = house_products[house_products["StageRank"] == 8]
+        else:
+            pending_df = house_products[house_products["StageRank"] <= audit_rank]
+            completed_df = house_products[house_products["StageRank"] > audit_rank]
 
         completed_count = len(completed_df)
         pending_count = len(pending_df)
