@@ -128,17 +128,21 @@ def show_dashboard(conn, cur):
     for stage in workflow_stages:
         current_rank = stage_rank[stage]
 
+        pending_df = product_df[product_df["Current Stage"] == stage]
+
         if stage == "Yet To Start":
-            pending_df = product_df[product_df["StageRank"] == 0]
+            completed_df = product_df[product_df["StageRank"] > 0]
         elif stage == "Dispatch":
-            pending_df = product_df[product_df["StageRank"] < 8]
+            completed_df = product_df[product_df["StageRank"] == 8]
         else:
-            pending_df = product_df[product_df["StageRank"] <= current_rank]
+            completed_df = product_df[product_df["StageRank"] > current_rank]
 
         pending_products = len(pending_df)
         houses_impacted = pending_df["HouseID"].nunique()
 
-        completion_pct = round(((total_products_scope - pending_products) / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
+        completed_products = len(completed_df)
+        completion_pct = round((completed_products / total_products_scope) * 100, 2) if total_products_scope > 0 else 0
+
         kpi_rows.append([stage, total_products_scope, pending_products, houses_impacted, f"{completion_pct}%"])
 
     house_group = product_df.groupby("HouseID")["Current Stage"].apply(list)
@@ -168,14 +172,7 @@ def show_dashboard(conn, cur):
 
     audit_preview_counts = {}
     for stg in audit_stage_options:
-        stg_rank = stage_rank[stg]
-
-        if stg == "Yet To Start":
-            audit_preview_counts[stg] = len(product_df[product_df["StageRank"] == 0])
-        elif stg == "Dispatch":
-            audit_preview_counts[stg] = len(product_df[product_df["StageRank"] < 8])
-        else:
-            audit_preview_counts[stg] = len(product_df[product_df["StageRank"] <= stg_rank])
+        audit_preview_counts[stg] = len(product_df[product_df["Current Stage"] == stg])
 
     stage_cols = st.columns(len(audit_stage_options))
 
@@ -200,21 +197,24 @@ def show_dashboard(conn, cur):
         total_house_products = len(house_products)
         audit_rank = stage_rank[audit_stage]
 
+        pending_df = house_products[house_products["Current Stage"] == audit_stage]
+
         if audit_stage == "Yet To Start":
-            pending_df = house_products[house_products["StageRank"] == 0]
             completed_df = house_products[house_products["StageRank"] > 0]
         elif audit_stage == "Dispatch":
-            pending_df = house_products[house_products["StageRank"] < 8]
             completed_df = house_products[house_products["StageRank"] == 8]
         else:
-            pending_df = house_products[house_products["StageRank"] <= audit_rank]
             completed_df = house_products[house_products["StageRank"] > audit_rank]
 
         completed_count = len(completed_df)
         pending_count = len(pending_df)
 
-        if pending_count == 0:
+        if pending_count == 0 and completed_count == total_house_products:
             house_status = "✅ Fully Completed"
+        elif pending_count == 0 and completed_count == 0:
+            house_status = "🔴 Not Started"
+        elif pending_count == 0:
+            house_status = "🟡 Not Entered"
         elif completed_count == 0:
             house_status = "🔴 Not Started"
         else:
@@ -251,4 +251,4 @@ def show_dashboard(conn, cur):
         pending_df2 = pd.DataFrame(pending_exception_rows, columns=["Unit", "Pending Product", "Why Pending"])
         st.dataframe(pending_df2, use_container_width=True, height=420)
     else:
-        st.success(f"All houses fully completed at {audit_stage}.")
+        st.success(f"No products are currently pending inside {audit_stage}.")
