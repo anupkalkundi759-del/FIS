@@ -167,8 +167,30 @@ def show_dashboard(conn, cur):
         st.session_state.selected_audit_stage = "Yet To Start"
 
     audit_preview_counts = {}
+
     for stg in audit_stage_options:
-        audit_preview_counts[stg] = len(product_df[product_df["Current Stage"] == stg])
+        audit_rank = stage_rank[stg]
+        impacted_houses = 0
+
+        for house_id in master_house_df["HouseID"].unique():
+            house_products = product_df[product_df["HouseID"] == house_id]
+
+            if house_products.empty:
+                if stg == "Yet To Start":
+                    impacted_houses += 1
+                continue
+
+            if stg == "Yet To Start":
+                pending_df = house_products[house_products["StageRank"] == 0]
+            elif stg == "Dispatch":
+                pending_df = house_products[house_products["StageRank"] < 8]
+            else:
+                pending_df = house_products[house_products["StageRank"] <= audit_rank]
+
+            if not pending_df.empty:
+                impacted_houses += 1
+
+        audit_preview_counts[stg] = impacted_houses
 
     stage_cols = st.columns(len(audit_stage_options))
 
@@ -192,8 +214,19 @@ def show_dashboard(conn, cur):
 
         total_house_products = len(house_products)
 
-        pending_df = house_products[house_products["Current Stage"] == audit_stage]
-        completed_df = house_products[house_products["Current Stage"] != audit_stage]
+        audit_rank = stage_rank[audit_stage]
+
+        if audit_stage == "Yet To Start":
+            pending_df = house_products[house_products["StageRank"] == 0]
+            completed_df = house_products[house_products["StageRank"] > 0]
+
+        elif audit_stage == "Dispatch":
+            pending_df = house_products[house_products["StageRank"] < 8]
+            completed_df = house_products[house_products["StageRank"] == 8]
+
+        else:
+            pending_df = house_products[house_products["StageRank"] <= audit_rank]
+            completed_df = house_products[house_products["StageRank"] > audit_rank]
 
         completed_count = len(completed_df)
         pending_count = len(pending_df)
