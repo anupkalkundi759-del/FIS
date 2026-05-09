@@ -9,6 +9,292 @@ def show_upload(conn, cur):
 
     st.title("📤 Upload Project Setup Excel")
 
+    # =========================================================
+    # QUICK PRODUCT CODE RENAME
+    # =========================================================
+
+    st.markdown("## ✏ Rename / Correct Product Code")
+
+    cur.execute("""
+        SELECT product_code
+        FROM products_master
+        ORDER BY product_code
+    """)
+    product_codes = [x[0] for x in cur.fetchall()]
+
+    rename_col1, rename_col2 = st.columns(2)
+
+    with rename_col1:
+        old_code = st.selectbox(
+            "Select Existing Product Code",
+            options=product_codes,
+            key="rename_old_code"
+        )
+
+    with rename_col2:
+        new_code = st.text_input(
+            "Enter New Product Code",
+            key="rename_new_code"
+        )
+
+    if st.button("✅ Update Product Code"):
+
+        if not old_code or not new_code.strip():
+            st.warning("Please select old code and enter new code")
+
+        else:
+
+            new_code = new_code.strip()
+
+            cur.execute("""
+                SELECT COUNT(*)
+                FROM products_master
+                WHERE product_code = %s
+            """, (new_code,))
+
+            exists = cur.fetchone()[0]
+
+            if exists > 0:
+                st.error("New product code already exists")
+
+            else:
+
+                try:
+
+                    cur.execute("""
+                        UPDATE products_master
+                        SET product_code = %s
+                        WHERE product_code = %s
+                    """, (new_code, old_code))
+
+                    conn.commit()
+
+                    st.success(f"""
+✅ Product Code Updated Successfully
+
+OLD:
+{old_code}
+
+NEW:
+{new_code}
+""")
+
+                    st.rerun()
+
+                except Exception as e:
+                    conn.rollback()
+                    st.error(f"Rename failed: {str(e)}")
+
+    st.divider()
+
+    # =========================================================
+    # QUICK ADD PRODUCT
+    # =========================================================
+
+    st.markdown("## ➕ Add Extra Product Instantly")
+
+    # ================= PROJECTS =================
+
+    cur.execute("""
+        SELECT project_id, project_name
+        FROM projects
+        ORDER BY project_name
+    """)
+    project_data = cur.fetchall()
+
+    project_map = {name: pid for pid, name in project_data}
+
+    selected_project = st.selectbox(
+        "Project",
+        options=list(project_map.keys()),
+        key="quick_project"
+    )
+
+    # ================= UNITS =================
+
+    cur.execute("""
+        SELECT unit_id, unit_name
+        FROM units
+        WHERE project_id = %s
+        ORDER BY unit_name
+    """, (project_map[selected_project],))
+
+    unit_data = cur.fetchall()
+
+    unit_map = {name: uid for uid, name in unit_data}
+
+    selected_unit = st.selectbox(
+        "Unit",
+        options=list(unit_map.keys()),
+        key="quick_unit"
+    )
+
+    # ================= HOUSES =================
+
+    cur.execute("""
+        SELECT house_id, house_no
+        FROM houses
+        WHERE unit_id = %s
+        ORDER BY house_no
+    """, (unit_map[selected_unit],))
+
+    house_data = cur.fetchall()
+
+    house_map = {name: hid for hid, name in house_data}
+
+    selected_house = st.selectbox(
+        "House",
+        options=list(house_map.keys()),
+        key="quick_house"
+    )
+
+    # ================= PRODUCT INPUTS =================
+
+    add_col1, add_col2 = st.columns(2)
+
+    with add_col1:
+
+        quick_product_code = st.text_input(
+            "Product Code",
+            key="quick_product_code"
+        )
+
+        quick_orientation = st.text_input(
+            "Orientation (Optional)",
+            key="quick_orientation"
+        )
+
+        quick_quantity = st.number_input(
+            "Quantity",
+            min_value=1,
+            value=1,
+            step=1,
+            key="quick_quantity"
+        )
+
+    with add_col2:
+
+        quick_category = st.text_input(
+            "Product Category",
+            key="quick_category"
+        )
+
+    if st.button("➕ Add Product Instantly"):
+
+        try:
+
+            product_code = quick_product_code.strip()
+            orientation = quick_orientation.strip()
+            category = quick_category.strip()
+            quantity = int(quick_quantity)
+
+            if not product_code:
+                st.warning("Product code required")
+                st.stop()
+
+            # ================= FULL CODE =================
+
+            full_code = (
+                f"{product_code} ({orientation})"
+                if orientation else product_code
+            )
+
+            # ================= INSERT PRODUCT MASTER =================
+
+            cur.execute("""
+                INSERT INTO products_master
+                (product_code, product_category)
+                VALUES (%s, %s)
+                ON CONFLICT (product_code)
+                DO UPDATE SET
+                product_category = EXCLUDED.product_category
+            """, (full_code, category))
+
+            conn.commit()
+
+            # ================= GET PRODUCT ID =================
+
+            cur.execute("""
+                SELECT product_id
+                FROM products_master
+                WHERE product_code = %s
+            """, (full_code,))
+
+            result = cur.fetchone()
+
+            if not result:
+                st.error("Failed to create product")
+                st.stop()
+
+            product_id = result[0]
+
+            house_id = house_map[selected_house]
+
+            # ================= EXISTING CHECK =================
+
+            cur.execute("""
+                SELECT COUNT(*)
+                FROM products
+                WHERE house_id = %s
+                AND product_id = %s
+                AND COALESCE(orientation,'') =
+                    COALESCE(%s,'')
+            """, (house_id, product_id, orientation))
+
+            existing_qty = cur.fetchone()[0]
+
+            qty_to_insert = max(quantity - existing_qty, 0)
+
+            inserted = 0
+
+            for _ in range(qty_to_insert):
+
+                cur.execute("""
+                    INSERT INTO products
+                    (house_id, product_id, orientation)
+                    VALUES (%s, %s, %s)
+                """, (
+                    house_id,
+                    product_id,
+                    orientation
+                ))
+
+                inserted += 1
+
+            conn.commit()
+
+            st.success(f"""
+✅ Product Added Successfully
+
+Project:
+{selected_project}
+
+Unit:
+{selected_unit}
+
+House:
+{selected_house}
+
+Product:
+{full_code}
+
+Inserted Quantity:
+{inserted}
+
+Existing Preserved:
+{existing_qty}
+""")
+
+        except Exception as e:
+            conn.rollback()
+            st.error(f"Add product failed: {str(e)}")
+
+    st.divider()
+
+    # =========================================================
+    # ORIGINAL UPLOAD LOGIC (UNCHANGED)
+    # =========================================================
+
     file = st.file_uploader("Upload Excel", type=["xlsx"])
 
     if file:
