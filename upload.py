@@ -834,6 +834,12 @@ Existing Preserved:
                     "Please select houses and products"
                 )
 
+            elif not new_code.strip():
+
+                st.warning(
+                    "Please enter new product code"
+                )
+
             else:
 
                 try:
@@ -865,35 +871,9 @@ Existing Preserved:
                         old_product_id = old_product[0]
                         old_category = old_product[1]
 
-                        # ================= AUTO NEW CODE =================
+                        # ================= NEW CODE FROM INPUT =================
 
-                        base_code = code
-
-                        orientation = ""
-
-                        if "(" in code and ")" in code:
-
-                            split_part = code.split("(")
-
-                            base_code = split_part[0].strip()
-
-                            orientation = (
-                                "(" +
-                                split_part[1]
-                            ).strip()
-
-                        cleaned = (
-                            base_code
-                            .replace("D0", "D")
-                            .replace("W0", "W")
-                            .replace("V0", "V")
-                        )
-
-                        cleaned = cleaned.replace("-1.1", "")
-
-                        new_product_code = (
-                            f"{cleaned}-1.1 {orientation}"
-                        ).strip()
+                        new_product_code = new_code.strip()
 
                         # ================= CREATE NEW PRODUCT =================
 
