@@ -828,47 +828,122 @@ Existing Preserved:
             if (
                 not rename_houses
                 or not old_code
-                or not new_code.strip()
             ):
 
                 st.warning(
-                    "Please select houses, products and enter new code"
+                    "Please select houses and products"
                 )
 
             else:
 
-                new_code = new_code.strip()
-
                 try:
 
-                    cur.execute("""
-                        SELECT COUNT(*)
-                        FROM products_master
-                        WHERE product_code = %s
-                    """, (
-                        new_code,
-                    ))
+                    updated_count = 0
 
-                    exists = cur.fetchone()[0]
-
-                    if exists > 0:
-
-                        st.error(
-                            f"{new_code} already exists"
-                        )
-
-                        st.stop()
+                    house_ids = [
+                        rename_house_map[h]
+                        for h in rename_houses
+                    ]
 
                     for code in old_code:
 
+                        # ================= OLD PRODUCT =================
+
                         cur.execute("""
-                            UPDATE products_master
-                            SET product_code = %s
+                            SELECT product_id, product_category
+                            FROM products_master
                             WHERE product_code = %s
                         """, (
-                            new_code,
-                            code
+                            code,
                         ))
+
+                        old_product = cur.fetchone()
+
+                        if not old_product:
+                            continue
+
+                        old_product_id = old_product[0]
+                        old_category = old_product[1]
+
+                        # ================= AUTO NEW CODE =================
+
+                        base_code = code
+
+                        orientation = ""
+
+                        if "(" in code and ")" in code:
+
+                            split_part = code.split("(")
+
+                            base_code = split_part[0].strip()
+
+                            orientation = (
+                                "(" +
+                                split_part[1]
+                            ).strip()
+
+                        cleaned = (
+                            base_code
+                            .replace("D0", "D")
+                            .replace("W0", "W")
+                            .replace("V0", "V")
+                        )
+
+                        cleaned = cleaned.replace("-1.1", "")
+
+                        new_product_code = (
+                            f"{cleaned}-1.1 {orientation}"
+                        ).strip()
+
+                        # ================= CREATE NEW PRODUCT =================
+
+                        cur.execute("""
+                            INSERT INTO products_master
+                            (product_code, product_category)
+                            VALUES (%s, %s)
+                            ON CONFLICT (product_code)
+                            DO NOTHING
+                        """, (
+                            new_product_code,
+                            old_category
+                        ))
+
+                        conn.commit()
+
+                        # ================= GET NEW PRODUCT ID =================
+
+                        cur.execute("""
+                            SELECT product_id
+                            FROM products_master
+                            WHERE product_code = %s
+                        """, (
+                            new_product_code,
+                        ))
+
+                        new_product_id = cur.fetchone()[0]
+
+                        # ================= UPDATE ONLY SELECTED HOUSES =================
+
+                        placeholders = ",".join(
+                            ["%s"] * len(house_ids)
+                        )
+
+                        query = f"""
+                            UPDATE products
+                            SET product_id = %s
+                            WHERE house_id IN ({placeholders})
+                            AND product_id = %s
+                        """
+
+                        values = (
+                            [new_product_id]
+                            + house_ids
+                            + [old_product_id]
+                        )
+
+                        cur.execute(query, values)
+
+                        updated_count += cur.rowcount
 
                     conn.commit()
 
@@ -878,11 +953,11 @@ Existing Preserved:
 Selected Houses:
 {len(rename_houses)}
 
-Updated Product(s):
+Updated Products:
 {len(old_code)}
 
-New Code:
-{new_code}
+Updated Rows:
+{updated_count}
 """)
 
                     st.rerun()
