@@ -10,7 +10,7 @@ def show_upload(conn, cur):
     st.title("📤 Upload Project Setup Excel")
 
     # =========================================================
-    # ORIGINAL UPLOAD LOGIC (KEEP FIRST)
+    # ORIGINAL UPLOAD LOGIC
     # =========================================================
 
     file = st.file_uploader("Upload Excel", type=["xlsx"])
@@ -28,21 +28,52 @@ def show_upload(conn, cur):
         df = pd.read_excel(file, engine="openpyxl")
 
         # ================= CLEAN =================
-        df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
 
-        required_cols = ["project_name", "unit_name", "house_no", "product_code"]
+        df.columns = (
+            df.columns
+            .str.strip()
+            .str.lower()
+            .str.replace(" ", "_")
+        )
+
+        required_cols = [
+            "project_name",
+            "unit_name",
+            "house_no",
+            "product_code"
+        ]
 
         for col in required_cols:
+
             if col not in df.columns:
                 st.error(f"Missing column: {col}")
                 st.stop()
 
         df = df.dropna(subset=required_cols)
 
-        df["project_name"] = df["project_name"].astype(str).str.strip()
-        df["unit_name"] = df["unit_name"].astype(str).str.strip()
-        df["house_no"] = df["house_no"].astype(str).str.strip()
-        df["product_code"] = df["product_code"].astype(str).str.strip()
+        df["project_name"] = (
+            df["project_name"]
+            .astype(str)
+            .str.strip()
+        )
+
+        df["unit_name"] = (
+            df["unit_name"]
+            .astype(str)
+            .str.strip()
+        )
+
+        df["house_no"] = (
+            df["house_no"]
+            .astype(str)
+            .str.strip()
+        )
+
+        df["product_code"] = (
+            df["product_code"]
+            .astype(str)
+            .str.strip()
+        )
 
         df["product_category"] = (
             df.get("product_category", "")
@@ -265,8 +296,6 @@ def show_upload(conn, cur):
                     row["full_code"]
                 ]
 
-                # ================= EXISTING CHECK =================
-
                 cur.execute("""
                     SELECT COUNT(*)
                     FROM products
@@ -390,7 +419,7 @@ items/sec
     st.divider()
 
     # =========================================================
-    # QUICK ADD EXTRA PRODUCT
+    # ADD EXTRA PRODUCT
     # =========================================================
 
     st.subheader("➕ Add Extra Product")
@@ -521,8 +550,6 @@ items/sec
                     else product_code
                 )
 
-                # ================= PRODUCT MASTER =================
-
                 cur.execute("""
                     INSERT INTO products_master
                     (product_code, product_category)
@@ -561,8 +588,6 @@ items/sec
                 house_id = house_map[
                     selected_house
                 ]
-
-                # ================= EXISTING CHECK =================
 
                 cur.execute("""
                     SELECT COUNT(*)
@@ -636,30 +661,100 @@ Existing Preserved:
     st.divider()
 
     # =========================================================
-    # RENAME / CORRECT PRODUCT CODE
+    # RENAME PRODUCT CODE
     # =========================================================
 
     st.subheader("✏ Rename / Correct Product Code")
 
     cur.execute("""
-        SELECT product_code
-        FROM products_master
-        ORDER BY product_code
+        SELECT project_id, project_name
+        FROM projects
+        ORDER BY project_name
     """)
 
-    product_codes = [
-        x[0]
-        for x in cur.fetchall()
-    ]
+    rename_project_data = cur.fetchall()
 
-    if product_codes:
+    if rename_project_data:
+
+        rename_project_map = {
+            name: pid
+            for pid, name in rename_project_data
+        }
+
+        rename_project = st.selectbox(
+            "Select Project",
+            options=list(rename_project_map.keys()),
+            key="rename_project"
+        )
+
+        cur.execute("""
+            SELECT unit_id, unit_name
+            FROM units
+            WHERE project_id = %s
+            ORDER BY unit_name
+        """, (
+            rename_project_map[rename_project],
+        ))
+
+        rename_unit_data = cur.fetchall()
+
+        rename_unit_map = {
+            name: uid
+            for uid, name in rename_unit_data
+        }
+
+        rename_unit = st.selectbox(
+            "Select Unit",
+            options=list(rename_unit_map.keys()),
+            key="rename_unit"
+        )
+
+        cur.execute("""
+            SELECT house_id, house_no
+            FROM houses
+            WHERE unit_id = %s
+            ORDER BY house_no
+        """, (
+            rename_unit_map[rename_unit],
+        ))
+
+        rename_house_data = cur.fetchall()
+
+        rename_house_map = {
+            name: hid
+            for hid, name in rename_house_data
+        }
+
+        rename_house = st.selectbox(
+            "Select House",
+            options=list(rename_house_map.keys()),
+            key="rename_house"
+        )
+
+        # ================= PRODUCTS =================
+
+        cur.execute("""
+            SELECT DISTINCT pm.product_code
+            FROM products p
+            JOIN products_master pm
+            ON p.product_id = pm.product_id
+            WHERE p.house_id = %s
+            ORDER BY pm.product_code
+        """, (
+            rename_house_map[rename_house],
+        ))
+
+        product_codes = [
+            x[0]
+            for x in cur.fetchall()
+        ]
 
         rename_col1, rename_col2 = st.columns(2)
 
         with rename_col1:
 
-            old_code = st.selectbox(
-                "Select Existing Product Code",
+            old_code = st.multiselect(
+                "Select Product Codes",
                 options=product_codes,
                 key="rename_old_code"
             )
@@ -679,32 +774,34 @@ Existing Preserved:
             ):
 
                 st.warning(
-                    "Please select old code and enter new code"
+                    "Please select product and enter new code"
                 )
 
             else:
 
                 new_code = new_code.strip()
 
-                cur.execute("""
-                    SELECT COUNT(*)
-                    FROM products_master
-                    WHERE product_code = %s
-                """, (
-                    new_code,
-                ))
+                try:
 
-                exists = cur.fetchone()[0]
+                    for code in old_code:
 
-                if exists > 0:
+                        cur.execute("""
+                            SELECT COUNT(*)
+                            FROM products_master
+                            WHERE product_code = %s
+                        """, (
+                            new_code,
+                        ))
 
-                    st.error(
-                        "New product code already exists"
-                    )
+                        exists = cur.fetchone()[0]
 
-                else:
+                        if exists > 0:
 
-                    try:
+                            st.error(
+                                f"{new_code} already exists"
+                            )
+
+                            st.stop()
 
                         cur.execute("""
                             UPDATE products_master
@@ -712,27 +809,27 @@ Existing Preserved:
                             WHERE product_code = %s
                         """, (
                             new_code,
-                            old_code
+                            code
                         ))
 
-                        conn.commit()
+                    conn.commit()
 
-                        st.success(f"""
+                    st.success(f"""
 ✅ Product Code Updated Successfully
 
-OLD:
-{old_code}
+Updated Product(s):
+{len(old_code)}
 
-NEW:
+New Code:
 {new_code}
 """)
 
-                        st.rerun()
+                    st.rerun()
 
-                    except Exception as e:
+                except Exception as e:
 
-                        conn.rollback()
+                    conn.rollback()
 
-                        st.error(
-                            f"Rename failed: {str(e)}"
-                        )
+                    st.error(
+                        f"Rename failed: {str(e)}"
+                    )
