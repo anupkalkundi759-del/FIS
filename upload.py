@@ -763,29 +763,40 @@ Existing Preserved:
 
         with rename_row1_col3:
 
-            rename_house = st.selectbox(
-                "Select House",
+            rename_houses = st.multiselect(
+                "Select Houses",
                 options=list(rename_house_map.keys()),
                 key="rename_house"
             )
 
         # ================= PRODUCTS =================
 
-        cur.execute("""
-            SELECT DISTINCT pm.product_code
-            FROM products p
-            JOIN products_master pm
-            ON p.product_id = pm.product_id
-            WHERE p.house_id = %s
-            ORDER BY pm.product_code
-        """, (
-            rename_house_map[rename_house],
-        ))
+        product_codes = []
 
-        product_codes = [
-            x[0]
-            for x in cur.fetchall()
-        ]
+        if rename_houses:
+
+            house_ids = [
+                rename_house_map[h]
+                for h in rename_houses
+            ]
+
+            placeholders = ",".join(
+                ["%s"] * len(house_ids)
+            )
+
+            cur.execute(f"""
+                SELECT DISTINCT pm.product_code
+                FROM products p
+                JOIN products_master pm
+                ON p.product_id = pm.product_id
+                WHERE p.house_id IN ({placeholders})
+                ORDER BY pm.product_code
+            """, tuple(house_ids))
+
+            product_codes = [
+                x[0]
+                for x in cur.fetchall()
+            ]
 
         # ================= ROW 2 =================
 
@@ -815,12 +826,13 @@ Existing Preserved:
         if rename_btn:
 
             if (
-                not old_code
+                not rename_houses
+                or not old_code
                 or not new_code.strip()
             ):
 
                 st.warning(
-                    "Please select product and enter new code"
+                    "Please select houses, products and enter new code"
                 )
 
             else:
@@ -829,25 +841,25 @@ Existing Preserved:
 
                 try:
 
+                    cur.execute("""
+                        SELECT COUNT(*)
+                        FROM products_master
+                        WHERE product_code = %s
+                    """, (
+                        new_code,
+                    ))
+
+                    exists = cur.fetchone()[0]
+
+                    if exists > 0:
+
+                        st.error(
+                            f"{new_code} already exists"
+                        )
+
+                        st.stop()
+
                     for code in old_code:
-
-                        cur.execute("""
-                            SELECT COUNT(*)
-                            FROM products_master
-                            WHERE product_code = %s
-                        """, (
-                            new_code,
-                        ))
-
-                        exists = cur.fetchone()[0]
-
-                        if exists > 0:
-
-                            st.error(
-                                f"{new_code} already exists"
-                            )
-
-                            st.stop()
 
                         cur.execute("""
                             UPDATE products_master
@@ -862,6 +874,9 @@ Existing Preserved:
 
                     st.success(f"""
 ✅ Product Code Updated Successfully
+
+Selected Houses:
+{len(rename_houses)}
 
 Updated Product(s):
 {len(old_code)}
