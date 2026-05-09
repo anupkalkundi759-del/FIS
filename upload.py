@@ -439,11 +439,17 @@ items/sec
             for pid, name in project_data
         }
 
-        selected_project = st.selectbox(
-            "Project",
-            options=list(project_map.keys()),
-            key="quick_project"
-        )
+        # ================= ROW 1 =================
+
+        row1_col1, row1_col2, row1_col3 = st.columns(3)
+
+        with row1_col1:
+
+            selected_project = st.selectbox(
+                "Project",
+                options=list(project_map.keys()),
+                key="quick_project"
+            )
 
         cur.execute("""
             SELECT unit_id, unit_name
@@ -461,11 +467,13 @@ items/sec
             for uid, name in unit_data
         }
 
-        selected_unit = st.selectbox(
-            "Unit",
-            options=list(unit_map.keys()),
-            key="quick_unit"
-        )
+        with row1_col2:
+
+            selected_unit = st.selectbox(
+                "Unit",
+                options=list(unit_map.keys()),
+                key="quick_unit"
+            )
 
         cur.execute("""
             SELECT house_id, house_no
@@ -483,25 +491,44 @@ items/sec
             for hid, name in house_data
         }
 
-        selected_house = st.selectbox(
-            "House",
-            options=list(house_map.keys()),
-            key="quick_house"
-        )
+        with row1_col3:
 
-        col1, col2 = st.columns(2)
+            selected_house = st.selectbox(
+                "House",
+                options=list(house_map.keys()),
+                key="quick_house"
+            )
 
-        with col1:
+        # ================= ROW 2 =================
+
+        row2_col1, row2_col2, row2_col3 = st.columns(3)
+
+        with row2_col1:
 
             quick_product_code = st.text_input(
                 "Product Code",
                 key="quick_product_code"
             )
 
+        with row2_col2:
+
+            quick_category = st.text_input(
+                "Product Category",
+                key="quick_category"
+            )
+
+        with row2_col3:
+
             quick_orientation = st.text_input(
                 "Orientation (Optional)",
                 key="quick_orientation"
             )
+
+        # ================= ROW 3 =================
+
+        row3_col1, row3_col2 = st.columns([1, 1])
+
+        with row3_col1:
 
             quick_quantity = st.number_input(
                 "Quantity",
@@ -511,14 +538,15 @@ items/sec
                 key="quick_quantity"
             )
 
-        with col2:
+        with row3_col2:
 
-            quick_category = st.text_input(
-                "Product Category",
-                key="quick_category"
-            )
+            st.markdown("<br>", unsafe_allow_html=True)
 
-        if st.button("➕ Add Product Instantly"):
+            add_btn = st.button("➕ Add Product Instantly")
+
+        # ================= ADD LOGIC =================
+
+        if add_btn:
 
             try:
 
@@ -681,11 +709,17 @@ Existing Preserved:
             for pid, name in rename_project_data
         }
 
-        rename_project = st.selectbox(
-            "Select Project",
-            options=list(rename_project_map.keys()),
-            key="rename_project"
-        )
+        # ================= ROW 1 =================
+
+        rename_row1_col1, rename_row1_col2, rename_row1_col3 = st.columns(3)
+
+        with rename_row1_col1:
+
+            rename_project = st.selectbox(
+                "Select Project",
+                options=list(rename_project_map.keys()),
+                key="rename_project"
+            )
 
         cur.execute("""
             SELECT unit_id, unit_name
@@ -703,11 +737,13 @@ Existing Preserved:
             for uid, name in rename_unit_data
         }
 
-        rename_unit = st.selectbox(
-            "Select Unit",
-            options=list(rename_unit_map.keys()),
-            key="rename_unit"
-        )
+        with rename_row1_col2:
+
+            rename_unit = st.selectbox(
+                "Select Unit",
+                options=list(rename_unit_map.keys()),
+                key="rename_unit"
+            )
 
         cur.execute("""
             SELECT house_id, house_no
@@ -725,11 +761,13 @@ Existing Preserved:
             for hid, name in rename_house_data
         }
 
-        rename_house = st.selectbox(
-            "Select House",
-            options=list(rename_house_map.keys()),
-            key="rename_house"
-        )
+        with rename_row1_col3:
+
+            rename_house = st.selectbox(
+                "Select House",
+                options=list(rename_house_map.keys()),
+                key="rename_house"
+            )
 
         # ================= PRODUCTS =================
 
@@ -749,9 +787,11 @@ Existing Preserved:
             for x in cur.fetchall()
         ]
 
-        rename_col1, rename_col2 = st.columns(2)
+        # ================= ROW 2 =================
 
-        with rename_col1:
+        rename_row2_col1, rename_row2_col2 = st.columns(2)
+
+        with rename_row2_col1:
 
             old_code = st.multiselect(
                 "Select Product Codes",
@@ -759,14 +799,20 @@ Existing Preserved:
                 key="rename_old_code"
             )
 
-        with rename_col2:
+        with rename_row2_col2:
 
             new_code = st.text_input(
                 "Enter New Product Code",
                 key="rename_new_code"
             )
 
-        if st.button("✅ Update Product Code"):
+        # ================= ROW 3 =================
+
+        rename_btn = st.button("✅ Update Product Code")
+
+        # ================= UPDATE LOGIC =================
+
+        if rename_btn:
 
             if (
                 not old_code
