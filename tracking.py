@@ -292,27 +292,93 @@ def show_tracking(conn, cur):
 
         with st.spinner("Updating selected products..."):
             try:
-                cur.execute("SELECT stage_id FROM stages WHERE stage_name=%s", (selected_stage,))
-                stage_id = cur.fetchone()[0]
+
+                # =========================================
+                # RESET TO NOT STARTED
+                # =========================================
+
+                if (
+                    movement_type == "Rework / Send Back"
+                    and selected_stage == "Not Started"
+                ):
+
+                    cur.execute("""
+                        DELETE FROM tracking_log
+                        WHERE product_instance_id = ANY(%s)
+                    """, (
+                        move_ids,
+                    ))
+
+                    conn.commit()
+
+                    if "inspect_stage" in st.session_state:
+                        del st.session_state["inspect_stage"]
+
+                    st.success(
+                        f"{len(move_ids)} products reset to Not Started"
+                    )
+
+                    st.rerun()
+
+                # =========================================
+                # NORMAL STAGE FETCH
+                # =========================================
+
+                cur.execute(
+                    "SELECT stage_id FROM stages WHERE stage_name=%s",
+                    (selected_stage,)
+                )
+
+                result = cur.fetchone()
+
+                if not result:
+
+                    st.error(
+                        f"Stage not found: {selected_stage}"
+                    )
+
+                    return
+
+                stage_id = result[0]
 
                 data = []
 
                 for pid in move_ids:
+
                     data.append((pid, stage_id, status))
 
-                    if movement_type == "Normal Forward Move" and selected_stage == current_stage and status == "Completed":
+                    if (
+                        movement_type == "Normal Forward Move"
+                        and selected_stage == current_stage
+                        and status == "Completed"
+                    ):
+
                         if current_stage in stage_sequence:
+
                             idx = stage_sequence.index(current_stage)
+
                             if idx + 1 < len(stage_sequence):
+
                                 next_stage_name = stage_sequence[idx + 1]
-                                cur.execute("SELECT stage_id FROM stages WHERE stage_name=%s", (next_stage_name,))
+
+                                cur.execute(
+                                    "SELECT stage_id FROM stages WHERE stage_name=%s",
+                                    (next_stage_name,)
+                                )
+
                                 auto_next_stage_id = cur.fetchone()[0]
-                                data.append((pid, auto_next_stage_id, "In Progress"))
+
+                                data.append((
+                                    pid,
+                                    auto_next_stage_id,
+                                    "In Progress"
+                                ))
 
                 execute_values(
                     cur,
                     """
-                    INSERT INTO tracking_log (product_instance_id, stage_id, status, timestamp)
+                    INSERT INTO tracking_log
+                    (product_instance_id, stage_id, status, timestamp)
                     VALUES %s
                     """,
                     data,
@@ -324,12 +390,17 @@ def show_tracking(conn, cur):
                 if "inspect_stage" in st.session_state:
                     del st.session_state["inspect_stage"]
 
-                st.success(f"{len(move_ids)} products updated successfully")
+                st.success(
+                    f"{len(move_ids)} products updated successfully"
+                )
+
                 st.rerun()
 
             except Exception as e:
+
                 try:
                     conn.rollback()
                 except:
                     pass
+
                 st.error(f"Update failed: {e}")
