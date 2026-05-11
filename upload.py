@@ -296,27 +296,33 @@ def show_upload(conn, cur):
                     row["full_code"]
                 ]
 
-                product_id = product_map[
-                    row["full_code"]
-                ]
+                cur.execute("""
+                    SELECT COUNT(*)
+                    FROM products
+                    WHERE house_id = %s
+                    AND product_id = %s
+                    AND COALESCE(orientation,'')
+                    =
+                    COALESCE(%s,'')
+                """, (
+                    house_id,
+                    product_id,
+                    row["orientation"]
+                ))
 
-                upload_qty = int(
-                    row["quantity"]
+                existing_qty = cur.fetchone()[0]
+
+                upload_qty = int(row["quantity"])
+
+                qty_to_insert = max(
+                    upload_qty - existing_qty,
+                    0
                 )
 
-                qty_to_insert = upload_qty
-
-                for _ in range(qty_to_insert):
-
-                    cur.execute("""
-                        INSERT INTO products
-                        (house_id, product_id, orientation)
-                        VALUES (%s, %s, %s)
-                    """, (
-                        house_id,
-                        product_id,
-                        row["orientation"]
-                    ))
+                skipped_existing += min(
+                    existing_qty,
+                    upload_qty
+                )
 
                 for _ in range(qty_to_insert):
 
@@ -401,6 +407,7 @@ def show_upload(conn, cur):
 - Houses: {len(house_set)}
 - Product Types: {len(product_set)}
 - Newly Added Product Items: {inserted_products}
+- Existing Preserved Items: {skipped_existing}
 """)
 
         st.info(f"""
