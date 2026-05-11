@@ -315,7 +315,7 @@ def show_upload(conn, cur):
                 upload_qty = int(row["quantity"])
 
                 qty_to_insert = max(
-                    upload_qty - existing_qty,
+                    upload_qty - upload_qty,
                     0
                 )
 
@@ -407,7 +407,6 @@ def show_upload(conn, cur):
 - Houses: {len(house_set)}
 - Product Types: {len(product_set)}
 - Newly Added Product Items: {inserted_products}
-- Existing Preserved Items: {skipped_existing}
 """)
 
         st.info(f"""
