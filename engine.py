@@ -130,7 +130,7 @@ def run_engine(conn, cur):
             st.info("No houses available for SLA monitor")
         else:
             sla_house_id = st.selectbox(
-                "SLA Monitor House",
+                "Select SLA Unit Number",
                 list(house_name_map.keys()),
                 format_func=lambda x: str(house_name_map.get(x, x)),
                 key="sla_house_id_v2"
@@ -140,7 +140,7 @@ def run_engine(conn, cur):
             sla_date = st.date_input("SLA Date", key="sla_dt")
             sla_priority = st.selectbox("Priority", ["Normal", "High", "Critical"], key="sla_pri")
 
-            if st.button("Save SLA House"):
+            if st.button("Save SLA"):
                 cur.execute("""
                     INSERT INTO sla_monitor(house_id, sla_date, priority_level)
                     VALUES(%s,%s,%s)
