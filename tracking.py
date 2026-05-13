@@ -90,7 +90,7 @@ def show_tracking(conn, cur):
     with col2:
         units = get_units(project_id)
         unit_dict = {u[1]: u[0] for u in units}
-        selected_unit = st.selectbox("Select Unit", ["All"] + list(unit_dict.keys()))
+        selected_unit = st.selectbox("Select Unit Type", ["All"] + list(unit_dict.keys()))
         unit_id = None if selected_unit == "All" else unit_dict[selected_unit]
 
     with col3:
