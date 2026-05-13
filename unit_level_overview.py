@@ -231,7 +231,7 @@ def show_dashboard(conn, cur):
         "House Status"
     ])
 
-    st.subheader(f"🏠 {audit_stage} Unit Audit Summary")
+    st.subheader(f"🏠 {audit_stage} - Unit Audit Summary")
     st.dataframe(audit_df, use_container_width=True, height=420)
 
     fully_completed_houses = len(audit_df[audit_df["House Status"] == "✅ Fully Completed"])
