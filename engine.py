@@ -30,7 +30,7 @@ def run_engine(conn, cur):
 
     with top2:
         if selected_project == "ALL":
-            selected_unit = st.selectbox("Select Unit", ["ALL"], key="eng_unit")
+            selected_unit = st.selectbox("Select Unit Type", ["ALL"], key="eng_unit")
             project_id = None
             unit_id = None
         else:
