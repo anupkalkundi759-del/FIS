@@ -96,7 +96,7 @@ def show_tracking(conn, cur):
     with col3:
         house_data = get_houses(project_id, unit_id)
         house_dict = {h[1]: h[0] for h in house_data}
-        selected_houses = st.multiselect("Select House", options=list(house_dict.keys()))
+        selected_houses = st.multiselect("Select Unit Number", options=list(house_dict.keys()))
         house_ids = [house_dict[h] for h in selected_houses] if selected_houses else None
 
     products = get_products_cached(tuple(house_ids) if house_ids else tuple(), unit_id)
