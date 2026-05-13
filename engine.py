@@ -594,7 +594,7 @@ def run_engine(conn, cur):
     e9.metric("EAC", f"₹{EAC:,.0f}")
     e10.metric("ETC", f"₹{ETC_COST:,.0f}")
 
-    st.subheader("🏠 Unit Predictive Intelligence")
+    st.subheader("🏠 Unit Wise Predictive Intelligence")
     display_house_df = house_df.drop(columns=["_house_id"], errors="ignore")
     st.dataframe(display_house_df, use_container_width=True, height=420)
 
