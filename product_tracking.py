@@ -52,7 +52,7 @@ def show_product_tracking(conn, cur):
     col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     selected_project = col1.selectbox("Project", get_projects())
-    selected_unit = col2.selectbox("Unit", get_units(selected_project))
+    selected_unit = col2.selectbox("Unit Type", get_units(selected_project))
     selected_house = col3.selectbox("Unit Number", get_houses(selected_unit))
     selected_stage = col4.selectbox("Stage", get_stages())
     selected_status = col5.selectbox("Status", ["All", "Not Started", "In Progress", "Completed"])
@@ -137,7 +137,7 @@ def show_product_tracking(conn, cur):
 
     df = pd.DataFrame(data, columns=[
         "Product", "Type", "Orientation",
-        "Project", "Unit", "House",
+        "Project", "Unit Type", "Unit Number",
         "Stage", "Status", "Timestamp"
     ])
 
@@ -199,8 +199,8 @@ def show_product_tracking(conn, cur):
 
     b1, b2 = st.columns(2)
 
-    breakdown_project = b1.selectbox("Project", get_projects(), key="b_proj")
-    breakdown_unit = b2.selectbox("Unit", get_units(breakdown_project), key="b_unit")
+    breakdown_project = b1.selectbox("Select Project", get_projects(), key="b_proj")
+    breakdown_unit = b2.selectbox("Select Unit Type", get_units(breakdown_project), key="b_unit")
 
     st.subheader("📊 Product Status Breakdown")
 
