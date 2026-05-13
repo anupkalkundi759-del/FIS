@@ -51,11 +51,11 @@ def show_product_tracking(conn, cur):
 
     col1, col2, col3, col4, col5, col6 = st.columns(6)
 
-    selected_project = col1.selectbox("Project", get_projects())
-    selected_unit = col2.selectbox("Unit Type", get_units(selected_project))
-    selected_house = col3.selectbox("Unit Number", get_houses(selected_unit))
-    selected_stage = col4.selectbox("Stage", get_stages())
-    selected_status = col5.selectbox("Status", ["All", "Not Started", "In Progress", "Completed"])
+    selected_project = col1.selectbox("Select Project", get_projects())
+    selected_unit = col2.selectbox("Select Unit Type", get_units(selected_project))
+    selected_house = col3.selectbox("Select Unit Number", get_houses(selected_unit))
+    selected_stage = col4.selectbox("Select Stage", get_stages())
+    selected_status = col5.selectbox("Select Status", ["All", "Not Started", "In Progress", "Completed"])
     search = col6.text_input("Search")
 
     with st.spinner("Loading data..."):
