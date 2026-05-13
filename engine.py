@@ -320,7 +320,36 @@ def run_engine(conn, cur):
         finish_map = {}
 
     live_df["earned_pct"] = live_df["stage"].map(lambda x: earned_map.get(x, 0.0))
-    project_actual_progress = round(live_df["earned_pct"].mean(), 2)
+
+    evm_live_sql = """
+        WITH latest_log AS (
+            SELECT t.product_instance_id,s.stage_name,t.status,t.timestamp,
+                   ROW_NUMBER() OVER(PARTITION BY t.product_instance_id ORDER BY t.timestamp DESC) rn
+            FROM tracking_log t
+            JOIN stages s ON t.stage_id=s.stage_id
+        )
+        SELECT COALESCE(ll.stage_name,'Not Started') AS stage
+        FROM houses h
+        JOIN products p ON h.house_id=p.house_id
+        LEFT JOIN latest_log ll ON p.product_instance_id=ll.product_instance_id AND ll.rn=1
+    """
+    evm_params = ()
+
+    if unit_id is not None:
+        evm_live_sql += " WHERE h.unit_id=%s"
+        evm_params = (unit_id,)
+    elif project_id is not None:
+        evm_live_sql += " WHERE h.unit_id IN (SELECT unit_id FROM units WHERE project_id=%s)"
+        evm_params = (project_id,)
+
+    cur.execute(evm_live_sql, evm_params)
+    evm_live_df = pd.DataFrame(cur.fetchall(), columns=["stage"])
+
+    if evm_live_df.empty:
+        project_actual_progress = 0
+    else:
+        evm_live_df["earned_pct"] = evm_live_df["stage"].map(lambda x: earned_map.get(x, 0.0))
+        project_actual_progress = round(evm_live_df["earned_pct"].mean(), 2)
 
     cur.execute("""
         SELECT baseline_start_date, target_days, buffer_days
