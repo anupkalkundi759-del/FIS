@@ -88,7 +88,7 @@ def show_dashboard(conn, cur):
         selected_unit = st.selectbox("Select Unit", ["All"] + sorted(master_house_df["Unit"].dropna().unique().tolist()))
     if selected_unit != "All":
         latest_df = latest_df[latest_df["Unit"] == selected_unit]
-        master_house_df = master_house_df[master_house_df["Unit Type"] == selected_unit]
+        master_house_df = master_house_df[master_house_df["Unit"] == selected_unit]
 
     with c3:
         house_options = sorted(master_house_df["House"].astype(str).dropna().unique().tolist())
