@@ -188,7 +188,7 @@ def show_tracking(conn, cur):
     available_stages = []
     stage_counts = {}
 
-    for stg in ["Yet To Start"] + stage_sequence + ["Completed"]:
+    for stg in ["Not Started"] + stage_sequence + ["Completed"]:
         cnt = len(matrix_df[matrix_df["stage"] == stg])
         if cnt > 0:
             available_stages.append(stg)
