@@ -214,7 +214,7 @@ def show_dashboard_v2(conn, cur):
         ])
 
     proj_df = pd.DataFrame(project_rows, columns=[
-        "Project","Total Houses","Started Houses","Yet Start Houses",
+        "Project","Total Units","Started Units","Yet Start Units",
         "Pending Products","Total Dispatched Products","Running Products","Overall Completion %"
     ])
 
