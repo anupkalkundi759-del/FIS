@@ -509,7 +509,7 @@ def run_engine(conn, cur):
 
         house_rows.append({
             "_house_id": house_id,
-            "House": house,
+            "Unit Number": house,
             "Total Products": total_products,
             "Earned Progress %": actual_prog,
             "Planned Finish": planned_finish,
@@ -594,7 +594,7 @@ def run_engine(conn, cur):
     e9.metric("EAC", f"₹{EAC:,.0f}")
     e10.metric("ETC", f"₹{ETC_COST:,.0f}")
 
-    st.subheader("🏠 House Predictive Intelligence")
+    st.subheader("🏠 Unit Predictive Intelligence")
     display_house_df = house_df.drop(columns=["_house_id"], errors="ignore")
     st.dataframe(display_house_df, use_container_width=True, height=420)
 
