@@ -343,16 +343,9 @@ def run_engine(conn, cur):
         BAC = float(bb[0]) if bb else 0.0
         cur.execute("SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log WHERE project_id=%s AND unit_id=%s", (project_id, unit_id))
         AC = float(cur.fetchone()[0])
-    elif project_id is not None:
-        cur.execute("SELECT COALESCE(SUM(bac_amount),0) FROM project_evm_baseline WHERE project_id=%s", (project_id,))
-        BAC = float(cur.fetchone()[0])
-        cur.execute("SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log WHERE project_id=%s", (project_id,))
-        AC = float(cur.fetchone()[0])
     else:
-        cur.execute("SELECT COALESCE(SUM(bac_amount),0) FROM project_evm_baseline")
-        BAC = float(cur.fetchone()[0])
-        cur.execute("SELECT COALESCE(SUM(actual_cost),0) FROM evm_cost_log")
-        AC = float(cur.fetchone()[0])
+        BAC = 0.0
+        AC = 0.0
 
     PV = round((project_planned_progress / 100) * BAC, 2)
     EV = round((project_actual_progress / 100) * BAC, 2)
