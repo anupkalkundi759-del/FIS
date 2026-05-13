@@ -53,7 +53,7 @@ def show_product_tracking(conn, cur):
 
     selected_project = col1.selectbox("Project", get_projects())
     selected_unit = col2.selectbox("Unit", get_units(selected_project))
-    selected_house = col3.selectbox("House", get_houses(selected_unit))
+    selected_house = col3.selectbox("Unit Number", get_houses(selected_unit))
     selected_stage = col4.selectbox("Stage", get_stages())
     selected_status = col5.selectbox("Status", ["All", "Not Started", "In Progress", "Completed"])
     search = col6.text_input("Search")
@@ -187,7 +187,7 @@ def show_product_tracking(conn, cur):
     df = df.drop(columns=["Timestamp", "LiveRank"])
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Visible Products", len(df))
+    k1.metric("Total Products", len(df))
     k2.metric("In Progress", running_count)
     k3.metric("Completed", len(df[df["Status"] == "Completed"]))
     k4.metric("Not Started", len(df[df["Status"] == "Not Started"]))
@@ -199,8 +199,8 @@ def show_product_tracking(conn, cur):
 
     b1, b2 = st.columns(2)
 
-    breakdown_project = b1.selectbox("Project (Breakdown)", get_projects(), key="b_proj")
-    breakdown_unit = b2.selectbox("Unit (Breakdown)", get_units(breakdown_project), key="b_unit")
+    breakdown_project = b1.selectbox("Project", get_projects(), key="b_proj")
+    breakdown_unit = b2.selectbox("Unit", get_units(breakdown_project), key="b_unit")
 
     st.subheader("📊 Product Status Breakdown")
 
