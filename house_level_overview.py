@@ -163,7 +163,7 @@ def show_dashboard(conn, cur):
     kpi_df.index = kpi_df.index + 1
     st.dataframe(kpi_df, use_container_width=True, height=400)
 
-    st.subheader("🔍 Automatic House Wise Audit Analyzer")
+    st.subheader("🔍 House Wise Audit Analyzer")
 
     audit_stage_options = workflow_stages
 
