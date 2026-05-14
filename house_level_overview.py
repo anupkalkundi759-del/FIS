@@ -92,7 +92,7 @@ def show_dashboard(conn, cur):
 
     with c3:
         house_options = sorted(master_house_df["House"].astype(str).dropna().unique().tolist())
-        selected_houses = st.multiselect("Select Unit Number", house_options)
+        selected_houses = st.multiselect("Select House Number", house_options)
     if selected_houses:
         latest_df = latest_df[latest_df["House"].astype(str).isin(selected_houses)]
         master_house_df = master_house_df[master_house_df["House"].astype(str).isin(selected_houses)]
@@ -104,7 +104,7 @@ def show_dashboard(conn, cur):
     st.subheader("📈 Live Workflow Summary")
     k1, k2, k3 = st.columns(3)
     k1.metric("Projects", master_house_df["Project"].nunique())
-    k2.metric("Total Units", total_houses)
+    k2.metric("Total Houses", total_houses)
     k3.metric("Total Products", total_products_scope)
 
     st.subheader("🚦 Stage Completion Performance Matrix")
@@ -159,11 +159,11 @@ def show_dashboard(conn, cur):
     overall_completion = round((achieved_progress / total_possible_progress) * 100, 2) if total_possible_progress > 0 else 0
     kpi_rows.append(["OVERALL COMPLETION", total_products_scope, overall_pending, overall_houses_impacted, f"{overall_completion}%"])
 
-    kpi_df = pd.DataFrame(kpi_rows, columns=["Stage", "Total Products", "Pending Products", "Units Impacted", "Completion %"])
+    kpi_df = pd.DataFrame(kpi_rows, columns=["Stage", "Total Products", "Pending Products", "Houses Impacted", "Completion %"])
     kpi_df.index = kpi_df.index + 1
     st.dataframe(kpi_df, use_container_width=True, height=400)
 
-    st.subheader("🔍 Automatic Unit Wise Audit Analyzer")
+    st.subheader("🔍 Automatic House Wise Audit Analyzer")
 
     audit_stage_options = workflow_stages
 
@@ -231,7 +231,7 @@ def show_dashboard(conn, cur):
         "House Status"
     ])
 
-    st.subheader(f"🏠 {audit_stage} - Unit Audit Summary")
+    st.subheader(f"🏠 {audit_stage} - House Audit Summary")
     st.dataframe(audit_df, use_container_width=True, height=420)
 
     fully_completed_houses = len(audit_df[audit_df["House Status"] == "✅ Fully Completed"])
@@ -239,9 +239,9 @@ def show_dashboard(conn, cur):
     not_started_houses = len(audit_df[audit_df["House Status"] == "🔴 Not Started"])
 
     a1, a2, a3 = st.columns(3)
-    a1.metric("✅ Fully Completed Unit", fully_completed_houses)
-    a2.metric("🟡 Partial Units", partial_houses)
-    a3.metric("🔴 Not Started Units", not_started_houses)
+    a1.metric("✅ Fully Completed Houses", fully_completed_houses)
+    a2.metric("🟡 Partial Houses", partial_houses)
+    a3.metric("🔴 Not Started Houses", not_started_houses)
 
     st.subheader(f"📌 Pending Product Exception List - {audit_stage}")
 
