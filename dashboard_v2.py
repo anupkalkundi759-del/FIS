@@ -115,10 +115,10 @@ def show_dashboard_v2(conn, cur):
 
     total_dispatched_products = len(real_product_df[real_product_df["Stage"] == "Completed"])
 
-    st.markdown("### Summary Of Total Units")
+    st.markdown("### Total Houses Summary")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🏠 Total Units", total_houses)
-    c2.metric("✅ Fully Completed Units", completed_houses)
+    c1.metric("🏠 Total Houses", total_houses)
+    c2.metric("✅ Fully Completed Houses", completed_houses)
     c3.metric("🟡 Units At WIP", wip_houses)
     c4.metric("🔴 Units Yet To Start", yet_start_houses)
 
@@ -214,7 +214,7 @@ def show_dashboard_v2(conn, cur):
         ])
 
     proj_df = pd.DataFrame(project_rows, columns=[
-        "Project","Total Units","Started Units","Yet Start Units",
+        "Project","Total Houses","Started Houses","Yet Start Houses",
         "Pending Products","Total Dispatched Products","Running Products","Overall Completion %"
     ])
 
