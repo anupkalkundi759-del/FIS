@@ -53,7 +53,7 @@ def show_product_tracking(conn, cur):
 
     selected_project = col1.selectbox("Select Project", get_projects())
     selected_unit = col2.selectbox("Select Unit Type", get_units(selected_project))
-    selected_house = col3.selectbox("Select Unit Number", get_houses(selected_unit))
+    selected_house = col3.selectbox("Select House Number", get_houses(selected_unit))
     selected_stage = col4.selectbox("Select Stage", get_stages())
     selected_status = col5.selectbox("Select Status", ["All", "Not Started", "In Progress", "Completed"])
     search = col6.text_input("Search")
@@ -137,7 +137,7 @@ def show_product_tracking(conn, cur):
 
     df = pd.DataFrame(data, columns=[
         "Product", "Type", "Orientation",
-        "Project", "Unit Type", "Unit Number",
+        "Project", "Unit Type", "House Number",
         "Stage", "Status", "Timestamp"
     ])
 
