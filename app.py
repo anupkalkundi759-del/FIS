@@ -251,8 +251,8 @@ try:
         from dashboard_v2 import show_dashboard_v2
         show_dashboard_v2(conn, cur)
 
-    elif page == "Unit Level Overview":
-        from unit_level_overview import show_dashboard
+    elif page == "House Level Overview":
+        from house_level_overview import show_dashboard
         show_dashboard(conn, cur)
 
     elif page == "Product Tracking":
