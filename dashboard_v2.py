@@ -16,22 +16,33 @@ def show_dashboard_v2(conn, cur):
     if "2026-Q2" not in quarters:
         quarters.insert(0, "2026-Q2")
 
-    selected_quarter = st.selectbox(
-        "Select Quarter",
-        options=quarters,
-        index=quarters.index("2026-Q2") if "2026-Q2" in quarters else 0,
-        key="dashboard_quarter"
-    )
+    filter_col, blank_col = st.columns([1, 4])
 
-    cur.execute("""
+    with filter_col:
+        selected_quarter = st.selectbox(
+            "Select Quarter",
+            options=["All"] + quarters,
+            index=(["All"] + quarters).index("2026-Q2") if "2026-Q2" in quarters else 0,
+            key="dashboard_quarter"
+        )
+
+    if selected_quarter == "All":
+        quarter_where = ""
+        quarter_params = ()
+    else:
+        quarter_where = "WHERE p.quarter = %s"
+        quarter_params = (selected_quarter,)
+
+    cur.execute(f"""
         SELECT DISTINCT pr.project_name, u.unit_name, h.house_no, h.house_id
         FROM houses h
         JOIN units u ON h.unit_id = u.unit_id
         JOIN projects pr ON u.project_id = pr.project_id
         JOIN products p ON h.house_id = p.house_id
-        WHERE p.quarter = %s
+        {quarter_where}
         ORDER BY pr.project_name, u.unit_name, h.house_no
-    """, (selected_quarter,))
+    """, quarter_params)
+
     house_master_rows = cur.fetchall()
 
     house_master_df = pd.DataFrame(house_master_rows, columns=[
@@ -44,7 +55,7 @@ def show_dashboard_v2(conn, cur):
     stage_sequence = [x[0] for x in cur.fetchall()]
     last_stage_name = stage_sequence[-1] if stage_sequence else None
 
-    query = """
+    query = f"""
     WITH latest_tracking AS (
         SELECT
             t.product_instance_id,
@@ -76,11 +87,11 @@ def show_dashboard_v2(conn, cur):
     LEFT JOIN latest_tracking lt
         ON lt.product_instance_id = p.product_instance_id
         AND lt.rn = 1
-    WHERE p.quarter = %s
+    {quarter_where}
     ORDER BY pr.project_name, u.unit_name, h.house_no
     """
 
-    cur.execute(query, (selected_quarter,))
+    cur.execute(query, quarter_params)
     rows = cur.fetchall()
 
     if not rows:
@@ -143,8 +154,6 @@ def show_dashboard_v2(conn, cur):
     c3.metric("🟡 Units At WIP", wip_houses)
     c4.metric("🔴 Units Yet To Start", yet_start_houses)
 
-    st.markdown("")
-
     st.markdown("### Summary Of Total Products")
     p1, p2, p3, p4, p5 = st.columns(5)
     p1.metric("📦 Total Products", total_products)
@@ -155,11 +164,9 @@ def show_dashboard_v2(conn, cur):
 
     st.markdown("---")
 
-    st.markdown("### Stage wise bottleneck")
-
     ordered_stages = [
-        "Yet To Start","Measurement","Cutting List","Production",
-        "Pre Assembly","Polishing","Final Assembly","Dispatch","Completed"
+        "Yet To Start", "Measurement", "Cutting List", "Production",
+        "Pre Assembly", "Polishing", "Final Assembly", "Dispatch", "Completed"
     ]
 
     stage_counts = {}
@@ -171,14 +178,73 @@ def show_dashboard_v2(conn, cur):
         "Products": list(stage_counts.values())
     })
 
-    fig = px.bar(chart_df, x="Stage", y="Products", text="Products", height=360)
-    fig.update_traces(textposition="outside")
-    fig.update_layout(
-        margin=dict(l=10, r=10, t=20, b=20),
-        xaxis_title="",
-        yaxis_title="Products"
+    cur.execute("""
+        SELECT COALESCE(quarter, 'No Quarter') AS quarter, COUNT(*) AS product_count
+        FROM products
+        GROUP BY COALESCE(quarter, 'No Quarter')
+        ORDER BY quarter
+    """)
+
+    quarter_rows = cur.fetchall()
+
+    quarter_chart_df = pd.DataFrame(
+        quarter_rows,
+        columns=["Quarter", "Products"]
     )
-    st.plotly_chart(fig, use_container_width=True)
+
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        st.markdown("### Stage wise bottleneck")
+
+        fig = px.bar(
+            chart_df,
+            x="Stage",
+            y="Products",
+            text="Products",
+            height=300
+        )
+
+        fig.update_traces(textposition="outside")
+
+        fig.update_layout(
+            margin=dict(l=5, r=5, t=10, b=5),
+            xaxis_title="",
+            yaxis_title="Products",
+            showlegend=False
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={"displayModeBar": False}
+        )
+
+    with chart_col2:
+        st.markdown("### Quarter comparison")
+
+        qfig = px.bar(
+            quarter_chart_df,
+            x="Quarter",
+            y="Products",
+            text="Products",
+            height=300
+        )
+
+        qfig.update_traces(textposition="outside")
+
+        qfig.update_layout(
+            margin=dict(l=5, r=5, t=10, b=5),
+            xaxis_title="",
+            yaxis_title="Products",
+            showlegend=False
+        )
+
+        st.plotly_chart(
+            qfig,
+            use_container_width=True,
+            config={"displayModeBar": False}
+        )
 
     st.markdown("### 📋 Active Project Summary")
 
@@ -235,8 +301,8 @@ def show_dashboard_v2(conn, cur):
         ])
 
     proj_df = pd.DataFrame(project_rows, columns=[
-        "Project","Total Houses","Started Houses","Yet Start Houses",
-        "Pending Products","Total Dispatched Products","Running Products","Overall Completion %"
+        "Project", "Total Houses", "Started Houses", "Yet Start Houses",
+        "Pending Products", "Total Dispatched Products", "Running Products", "Overall Completion %"
     ])
 
     st.dataframe(proj_df, use_container_width=True, height=220)
