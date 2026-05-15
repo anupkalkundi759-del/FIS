@@ -209,6 +209,7 @@ with st.sidebar:
             "House Level Overview",
             "Product Tracking",
             "Scheduling Engine",
+            "Rework Sent Back",
             "Upload Excel",
             "Delete Data"
         ]
@@ -262,6 +263,10 @@ try:
     elif page == "Scheduling Engine":
         from engine import run_engine
         run_engine(conn, cur)
+
+    elif page == "Rework Sent Back":
+        from rework_sent_back import show_rework_history
+        show_rework_history(conn, cur)
 
     elif page == "Upload Excel":
         from upload import show_upload
