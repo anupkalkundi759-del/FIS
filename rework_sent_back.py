@@ -3,25 +3,30 @@ def show_rework_history(conn, cur):
     import streamlit as st
     import pandas as pd
 
-    st.title("🔁 Rework / Send Back History")
+    st.title("🔁 Rework / Sent Back History")
 
     cur.execute("""
         SELECT
-            product_code,
-            house_no,
-            from_stage,
-            to_stage,
-            reason,
-            note,
-            timestamp
-        FROM rework_sentback_log
-        ORDER BY timestamp DESC
+            r.product_code,
+            r.house_no,
+            r.from_stage,
+            r.to_stage,
+            r.reason,
+            r.note,
+            r.timestamp,
+            pr.project_name,
+            u.unit_name
+        FROM rework_sentback_log r
+        LEFT JOIN houses h ON r.house_no = h.house_no
+        LEFT JOIN units u ON h.unit_id = u.unit_id
+        LEFT JOIN projects pr ON u.project_id = pr.project_id
+        ORDER BY r.timestamp DESC
     """)
 
     data = cur.fetchall()
 
     if not data:
-        st.warning("No rework / send back history found")
+        st.warning("No rework / sent back history found")
         return
 
     df = pd.DataFrame(data, columns=[
@@ -31,32 +36,42 @@ def show_rework_history(conn, cur):
         "To Stage",
         "Reason",
         "Note",
-        "Timestamp"
+        "Timestamp",
+        "Project",
+        "Unit"
     ])
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        selected_house = st.selectbox(
-            "Filter House",
-            ["All"] + sorted(df["House"].dropna().astype(str).unique().tolist())
+        selected_project = st.selectbox(
+            "Filter Project",
+            ["All"] + sorted(df["Project"].dropna().astype(str).unique().tolist())
         )
+
+    filtered_for_units = df.copy()
+    if selected_project != "All":
+        filtered_for_units = filtered_for_units[filtered_for_units["Project"].astype(str) == selected_project]
 
     with col2:
-        selected_from_stage = st.selectbox(
-            "Filter From Stage",
-            ["All"] + sorted(df["From Stage"].dropna().astype(str).unique().tolist())
+        selected_unit = st.selectbox(
+            "Filter Unit",
+            ["All"] + sorted(filtered_for_units["Unit"].dropna().astype(str).unique().tolist())
         )
 
+    filtered_for_houses = filtered_for_units.copy()
+    if selected_unit != "All":
+        filtered_for_houses = filtered_for_houses[filtered_for_houses["Unit"].astype(str) == selected_unit]
+
     with col3:
-        selected_to_stage = st.selectbox(
-            "Filter To Stage",
-            ["All"] + sorted(df["To Stage"].dropna().astype(str).unique().tolist())
+        selected_house = st.selectbox(
+            "Filter House",
+            ["All"] + sorted(filtered_for_houses["House"].dropna().astype(str).unique().tolist())
         )
 
     with col4:
         selected_reason = st.selectbox(
-            "Filter Reason",
+            "Rework / Sent Back Reason",
             ["All"] + sorted(df["Reason"].dropna().astype(str).unique().tolist())
         )
 
@@ -64,14 +79,14 @@ def show_rework_history(conn, cur):
 
     filtered_df = df.copy()
 
+    if selected_project != "All":
+        filtered_df = filtered_df[filtered_df["Project"].astype(str) == selected_project]
+
+    if selected_unit != "All":
+        filtered_df = filtered_df[filtered_df["Unit"].astype(str) == selected_unit]
+
     if selected_house != "All":
         filtered_df = filtered_df[filtered_df["House"].astype(str) == selected_house]
-
-    if selected_from_stage != "All":
-        filtered_df = filtered_df[filtered_df["From Stage"].astype(str) == selected_from_stage]
-
-    if selected_to_stage != "All":
-        filtered_df = filtered_df[filtered_df["To Stage"].astype(str) == selected_to_stage]
 
     if selected_reason != "All":
         filtered_df = filtered_df[filtered_df["Reason"].astype(str) == selected_reason]
@@ -83,18 +98,30 @@ def show_rework_history(conn, cur):
             filtered_df["Note"].astype(str).str.contains(search_text, case=False, na=False)
         ]
 
-    st.markdown(f"### Records Found: {len(filtered_df)}")
+    display_df = filtered_df[[
+        "Project",
+        "Unit",
+        "Product",
+        "House",
+        "From Stage",
+        "To Stage",
+        "Reason",
+        "Note",
+        "Timestamp"
+    ]]
+
+    st.markdown(f"### Records Found: {len(display_df)}")
 
     st.dataframe(
-        filtered_df,
+        display_df,
         use_container_width=True,
         hide_index=True
     )
 
-    csv = filtered_df.to_csv(index=False).encode("utf-8")
+    csv = display_df.to_csv(index=False).encode("utf-8")
 
     st.download_button(
-        "⬇ Download Rework / Send Back Report",
+        "⬇ Download Rework / Sent Back Report",
         csv,
         file_name="rework_sentback_history.csv",
         mime="text/csv"
