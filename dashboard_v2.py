@@ -232,22 +232,16 @@ def show_dashboard_v2(conn, cur):
         )
 
         fig.update_traces(
-            textposition="inside",
-            textfont=dict(
-                size=15,
-                color="white",
-                family="Arial Black"
-            ),
-            insidetextanchor="end",
-            marker_line_width=0
+            textposition="outside",
+            textfont=dict(size=13, color="#111827", family="Arial Black")
         )
 
         fig.update_layout(
-            margin=dict(l=5, r=5, t=25, b=5),
+            margin=dict(l=5, r=5, t=10, b=5),
             xaxis_title="",
             yaxis_title="Products",
             showlegend=False,
-            uniformtext_minsize=12,
+            uniformtext_minsize=11,
             uniformtext_mode="show"
         )
 
@@ -274,22 +268,16 @@ def show_dashboard_v2(conn, cur):
         )
 
         qfig.update_traces(
-            textposition="inside",
-            textfont=dict(
-                size=16,
-                color="white",
-                family="Arial Black"
-            ),
-            insidetextanchor="end",
-            marker_line_width=0
+            textposition="outside",
+            textfont=dict(size=13, color="#111827", family="Arial Black")
         )
 
         qfig.update_layout(
-            margin=dict(l=5, r=5, t=25, b=5),
+            margin=dict(l=5, r=5, t=10, b=5),
             xaxis_title="",
             yaxis_title="Products",
             showlegend=False,
-            uniformtext_minsize=12,
+            uniformtext_minsize=11,
             uniformtext_mode="show"
         )
 
