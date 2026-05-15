@@ -192,13 +192,16 @@ def show_product_tracking(conn, cur):
 
     k2.metric("In Progress", running_count)
 
-    # FIXED COMPLETED COUNT ONLY
-    completed_count = len(
-        df[
-            (df["Stage"] == "Completed") &
-            (df["Status"] == "Completed")
-        ]
-    )
+    # ONLY FIXED COMPLETED KPI
+    if selected_stage == "Dispatch" and selected_status == "Completed":
+        completed_count = len(df)
+    else:
+        completed_count = len(
+            df[
+                (df["Stage"] == "Completed") &
+                (df["Status"] == "Completed")
+            ]
+        )
 
     k3.metric("Completed", completed_count)
 
