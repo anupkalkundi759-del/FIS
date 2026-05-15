@@ -14,6 +14,16 @@ def show_tracking(conn, cur):
         return
 
     @st.cache_data(ttl=300)
+    def get_quarters():
+        cur.execute("""
+            SELECT DISTINCT quarter
+            FROM products
+            WHERE quarter IS NOT NULL
+            ORDER BY quarter DESC
+        """)
+        return [q[0] for q in cur.fetchall()]
+
+    @st.cache_data(ttl=300)
     def get_projects():
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
         return cur.fetchall()
@@ -27,19 +37,34 @@ def show_tracking(conn, cur):
         return cur.fetchall()
 
     @st.cache_data(ttl=300)
-    def get_houses(project_id, unit_id):
+    def get_houses(project_id, unit_id, quarter):
         if unit_id:
-            cur.execute("SELECT house_id, house_no FROM houses WHERE unit_id=%s ORDER BY house_no", (unit_id,))
+            cur.execute("""
+                SELECT DISTINCT h.house_id, h.house_no
+                FROM houses h
+                JOIN products p ON p.house_id = h.house_id
+                WHERE h.unit_id=%s
+                  AND (%s IS NULL OR p.quarter=%s)
+                ORDER BY h.house_no
+            """, (unit_id, quarter, quarter))
         elif project_id:
             cur.execute("""
-                SELECT h.house_id, h.house_no
+                SELECT DISTINCT h.house_id, h.house_no
                 FROM houses h
                 JOIN units u ON h.unit_id = u.unit_id
+                JOIN products p ON p.house_id = h.house_id
                 WHERE u.project_id=%s
+                  AND (%s IS NULL OR p.quarter=%s)
                 ORDER BY h.house_no
-            """, (project_id,))
+            """, (project_id, quarter, quarter))
         else:
-            cur.execute("SELECT house_id, house_no FROM houses ORDER BY house_no")
+            cur.execute("""
+                SELECT DISTINCT h.house_id, h.house_no
+                FROM houses h
+                JOIN products p ON p.house_id = h.house_id
+                WHERE (%s IS NULL OR p.quarter=%s)
+                ORDER BY h.house_no
+            """, (quarter, quarter))
         return cur.fetchall()
 
     @st.cache_data(ttl=600)
@@ -48,7 +73,7 @@ def show_tracking(conn, cur):
         return [s[0] for s in cur.fetchall()]
 
     @st.cache_data(ttl=300)
-    def get_products_cached(house_ids_tuple, unit_id):
+    def get_products_cached(quarter, house_ids_tuple, unit_id):
         house_ids = list(house_ids_tuple) if house_ids_tuple else None
 
         if house_ids:
@@ -58,8 +83,9 @@ def show_tracking(conn, cur):
                 JOIN products_master pm ON p.product_id = pm.product_id
                 JOIN houses h ON p.house_id = h.house_id
                 WHERE p.house_id = ANY(%s)
+                  AND (%s IS NULL OR p.quarter=%s)
                 ORDER BY h.house_no, pm.product_code
-            """, (house_ids,))
+            """, (house_ids, quarter, quarter))
         elif unit_id:
             cur.execute("""
                 SELECT p.product_instance_id, pm.product_code, h.house_no
@@ -67,19 +93,27 @@ def show_tracking(conn, cur):
                 JOIN products_master pm ON p.product_id = pm.product_id
                 JOIN houses h ON p.house_id = h.house_id
                 WHERE h.unit_id = %s
+                  AND (%s IS NULL OR p.quarter=%s)
                 ORDER BY h.house_no, pm.product_code
-            """, (unit_id,))
+            """, (unit_id, quarter, quarter))
         else:
             cur.execute("""
                 SELECT p.product_instance_id, pm.product_code, h.house_no
                 FROM products p
                 JOIN products_master pm ON p.product_id = pm.product_id
                 JOIN houses h ON p.house_id = h.house_id
+                WHERE (%s IS NULL OR p.quarter=%s)
                 ORDER BY h.house_no, pm.product_code
-            """)
+            """, (quarter, quarter))
         return cur.fetchall()
 
-    col1, col2, col3 = st.columns(3)
+    col0, col1, col2, col3 = st.columns(4)
+
+    with col0:
+        quarters = get_quarters()
+        default_index = quarters.index("2026-Q2") + 1 if "2026-Q2" in quarters else 0
+        selected_quarter = st.selectbox("Select Quarter", ["All"] + quarters, index=default_index)
+        quarter = None if selected_quarter == "All" else selected_quarter
 
     with col1:
         projects = get_projects()
@@ -94,12 +128,12 @@ def show_tracking(conn, cur):
         unit_id = None if selected_unit == "All" else unit_dict[selected_unit]
 
     with col3:
-        house_data = get_houses(project_id, unit_id)
+        house_data = get_houses(project_id, unit_id, quarter)
         house_dict = {h[1]: h[0] for h in house_data}
         selected_houses = st.multiselect("Select House Number", options=list(house_dict.keys()))
         house_ids = [house_dict[h] for h in selected_houses] if selected_houses else None
 
-    products = get_products_cached(tuple(house_ids) if house_ids else tuple(), unit_id)
+    products = get_products_cached(quarter, tuple(house_ids) if house_ids else tuple(), unit_id)
     df = pd.DataFrame(products, columns=["product_instance_id", "product_code", "house_no"]) if products else pd.DataFrame()
 
     if df.empty:
