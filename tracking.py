@@ -293,9 +293,52 @@ def show_tracking(conn, cur):
         with st.spinner("Updating selected products..."):
             try:
 
-                # =========================================
-                # RESET TO NOT STARTED
-                # =========================================
+                if movement_type == "Rework / Send Back":
+                    cur.execute("""
+                        SELECT
+                            p.product_instance_id,
+                            pm.product_code,
+                            h.house_no
+                        FROM products p
+                        JOIN products_master pm ON p.product_id = pm.product_id
+                        JOIN houses h ON p.house_id = h.house_id
+                        WHERE p.product_instance_id = ANY(%s)
+                    """, (move_ids,))
+
+                    product_rows = cur.fetchall()
+
+                    rework_data = [
+                        (
+                            pid,
+                            product_code,
+                            house_no,
+                            current_stage,
+                            selected_stage,
+                            rework_reason,
+                            rework_note
+                        )
+                        for pid, product_code, house_no in product_rows
+                    ]
+
+                    execute_values(
+                        cur,
+                        """
+                        INSERT INTO rework_sentback_log
+                        (
+                            product_instance_id,
+                            product_code,
+                            house_no,
+                            from_stage,
+                            to_stage,
+                            reason,
+                            note,
+                            timestamp
+                        )
+                        VALUES %s
+                        """,
+                        rework_data,
+                        template="(%s, %s, %s, %s, %s, %s, %s, NOW())"
+                    )
 
                 if (
                     movement_type == "Rework / Send Back"
@@ -319,10 +362,6 @@ def show_tracking(conn, cur):
                     )
 
                     st.rerun()
-
-                # =========================================
-                # NORMAL STAGE FETCH
-                # =========================================
 
                 cur.execute(
                     "SELECT stage_id FROM stages WHERE stage_name=%s",
