@@ -9,6 +9,18 @@ def show_upload(conn, cur):
 
     st.title("📤 Upload Project Setup Excel")
 
+    def get_quarter_options():
+        cur.execute("""
+            SELECT DISTINCT quarter
+            FROM products
+            WHERE quarter IS NOT NULL
+            ORDER BY quarter DESC
+        """)
+        quarters = [q[0] for q in cur.fetchall()]
+        if "2026-Q2" not in quarters:
+            quarters.insert(0, "2026-Q2")
+        return quarters
+
     # =========================================================
     # ORIGINAL UPLOAD LOGIC
     # =========================================================
@@ -35,6 +47,9 @@ def show_upload(conn, cur):
             .str.lower()
             .str.replace(" ", "_")
         )
+
+        if "quater" in df.columns and "quarter" not in df.columns:
+            df = df.rename(columns={"quater": "quarter"})
 
         required_cols = [
             "project_name",
@@ -75,6 +90,15 @@ def show_upload(conn, cur):
             .str.strip()
         )
 
+        df["quarter"] = (
+            df.get("quarter", "2026-Q2")
+            .fillna("2026-Q2")
+            .astype(str)
+            .str.strip()
+        )
+
+        df.loc[df["quarter"] == "", "quarter"] = "2026-Q2"
+
         df["product_category"] = (
             df.get("product_category", "")
             .fillna("")
@@ -113,7 +137,8 @@ def show_upload(conn, cur):
                 "house_no",
                 "full_code",
                 "orientation",
-                "product_category"
+                "product_category",
+                "quarter"
             ],
             as_index=False
         )["quantity"].sum()
@@ -140,6 +165,8 @@ def show_upload(conn, cur):
         )
 
         product_set = set(df["full_code"])
+
+        quarter_set = set(df["quarter"])
 
         total_items = int(df["quantity"].sum())
 
@@ -304,10 +331,12 @@ def show_upload(conn, cur):
                     AND COALESCE(orientation,'')
                     =
                     COALESCE(%s,'')
+                    AND quarter = %s
                 """, (
                     house_id,
                     product_id,
-                    row["orientation"]
+                    row["orientation"],
+                    row["quarter"]
                 ))
 
                 existing_qty = cur.fetchone()[0]
@@ -328,12 +357,13 @@ def show_upload(conn, cur):
 
                     cur.execute("""
                         INSERT INTO products
-                        (house_id, product_id, orientation)
-                        VALUES (%s, %s, %s)
+                        (house_id, product_id, orientation, quarter)
+                        VALUES (%s, %s, %s, %s)
                     """, (
                         house_id,
                         product_id,
-                        row["orientation"]
+                        row["orientation"],
+                        row["quarter"]
                     ))
 
                     inserted_products += 1
@@ -402,6 +432,7 @@ def show_upload(conn, cur):
 📄 Excel Rows: {total_rows}
 
 📊 Summary:
+- Quarters: {len(quarter_set)}
 - Projects: {len(project_set)}
 - Units: {len(unit_set)}
 - Houses: {len(house_set)}
@@ -434,6 +465,8 @@ items/sec
 
     if project_data:
 
+        quarter_options = get_quarter_options()
+
         project_map = {
             name: pid
             for pid, name in project_data
@@ -441,9 +474,18 @@ items/sec
 
         # ================= ROW 1 =================
 
-        row1_col1, row1_col2, row1_col3 = st.columns(3)
+        row1_col1, row1_col2, row1_col3, row1_col4 = st.columns(4)
 
         with row1_col1:
+
+            quick_quarter = st.selectbox(
+                "Quarter",
+                options=quarter_options,
+                index=quarter_options.index("2026-Q2") if "2026-Q2" in quarter_options else 0,
+                key="quick_quarter"
+            )
+
+        with row1_col2:
 
             selected_project = st.selectbox(
                 "Project",
@@ -467,7 +509,7 @@ items/sec
             for uid, name in unit_data
         }
 
-        with row1_col2:
+        with row1_col3:
 
             selected_unit = st.selectbox(
                 "Unit",
@@ -491,7 +533,7 @@ items/sec
             for hid, name in house_data
         }
 
-        with row1_col3:
+        with row1_col4:
 
             selected_house = st.selectbox(
                 "House",
@@ -625,10 +667,12 @@ items/sec
                     AND COALESCE(orientation,'')
                     =
                     COALESCE(%s,'')
+                    AND quarter = %s
                 """, (
                     house_id,
                     product_id,
-                    orientation
+                    orientation,
+                    quick_quarter
                 ))
 
                 existing_qty = cur.fetchone()[0]
@@ -644,12 +688,13 @@ items/sec
 
                     cur.execute("""
                         INSERT INTO products
-                        (house_id, product_id, orientation)
-                        VALUES (%s, %s, %s)
+                        (house_id, product_id, orientation, quarter)
+                        VALUES (%s, %s, %s, %s)
                     """, (
                         house_id,
                         product_id,
-                        orientation
+                        orientation,
+                        quick_quarter
                     ))
 
                     inserted += 1
@@ -658,6 +703,9 @@ items/sec
 
                 st.success(f"""
 ✅ Product Added Successfully
+
+Quarter:
+{quick_quarter}
 
 Project:
 {selected_project}
@@ -704,6 +752,8 @@ Existing Preserved:
 
     if rename_project_data:
 
+        quarter_options = get_quarter_options()
+
         rename_project_map = {
             name: pid
             for pid, name in rename_project_data
@@ -711,9 +761,18 @@ Existing Preserved:
 
         # ================= ROW 1 =================
 
-        rename_row1_col1, rename_row1_col2, rename_row1_col3 = st.columns(3)
+        rename_row1_col1, rename_row1_col2, rename_row1_col3, rename_row1_col4 = st.columns(4)
 
         with rename_row1_col1:
+
+            rename_quarter = st.selectbox(
+                "Select Quarter",
+                options=quarter_options,
+                index=quarter_options.index("2026-Q2") if "2026-Q2" in quarter_options else 0,
+                key="rename_quarter"
+            )
+
+        with rename_row1_col2:
 
             rename_project = st.selectbox(
                 "Select Project",
@@ -737,7 +796,7 @@ Existing Preserved:
             for uid, name in rename_unit_data
         }
 
-        with rename_row1_col2:
+        with rename_row1_col3:
 
             rename_unit = st.selectbox(
                 "Select Unit",
@@ -761,7 +820,7 @@ Existing Preserved:
             for hid, name in rename_house_data
         }
 
-        with rename_row1_col3:
+        with rename_row1_col4:
 
             rename_houses = st.multiselect(
                 "Select Houses",
@@ -790,8 +849,9 @@ Existing Preserved:
                 JOIN products_master pm
                 ON p.product_id = pm.product_id
                 WHERE p.house_id IN ({placeholders})
+                AND p.quarter = %s
                 ORDER BY pm.product_code
-            """, tuple(house_ids))
+            """, tuple(house_ids + [rename_quarter]))
 
             product_codes = [
                 x[0]
@@ -902,7 +962,7 @@ Existing Preserved:
 
                         new_product_id = cur.fetchone()[0]
 
-                        # ================= UPDATE ONLY SELECTED HOUSES =================
+                        # ================= UPDATE ONLY SELECTED HOUSES + QUARTER =================
 
                         placeholders = ",".join(
                             ["%s"] * len(house_ids)
@@ -913,12 +973,13 @@ Existing Preserved:
                             SET product_id = %s
                             WHERE house_id IN ({placeholders})
                             AND product_id = %s
+                            AND quarter = %s
                         """
 
                         values = (
                             [new_product_id]
                             + house_ids
-                            + [old_product_id]
+                            + [old_product_id, rename_quarter]
                         )
 
                         cur.execute(query, values)
@@ -929,6 +990,9 @@ Existing Preserved:
 
                     st.success(f"""
 ✅ Product Code Updated Successfully
+
+Quarter:
+{rename_quarter}
 
 Selected Houses:
 {len(rename_houses)}
