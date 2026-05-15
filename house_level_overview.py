@@ -15,7 +15,49 @@ def show_dashboard(conn, cur):
         "Dispatch"
     ]
 
-    latest_query = """
+    cur.execute("""
+        SELECT DISTINCT quarter
+        FROM products
+        WHERE quarter IS NOT NULL
+        ORDER BY quarter DESC
+    """)
+    quarters = [q[0] for q in cur.fetchall()]
+
+    if "2026-Q2" not in quarters:
+        quarters.insert(0, "2026-Q2")
+
+    quarter_options = ["All"] + quarters
+
+    st.subheader("📌 Drilldown Filters")
+
+    c0, c1, c2, c3 = st.columns(4)
+
+    with c0:
+        selected_quarter = st.selectbox(
+            "Select Quarter",
+            quarter_options,
+            index=quarter_options.index("2026-Q2") if "2026-Q2" in quarter_options else 0,
+            key="workflow_quarter"
+        )
+
+    if selected_quarter == "All":
+        product_quarter_join = "LEFT JOIN products pr ON h.house_id = pr.house_id"
+        product_quarter_where = ""
+        quarter_params = ()
+    else:
+        product_quarter_join = """
+        LEFT JOIN products pr
+            ON h.house_id = pr.house_id
+            AND pr.quarter = %s
+        """
+        product_quarter_where = """
+        JOIN products prq
+            ON h.house_id = prq.house_id
+            AND prq.quarter = %s
+        """
+        quarter_params = (selected_quarter,)
+
+    latest_query = f"""
     WITH latest_tracking AS (
         SELECT
             t.product_instance_id,
@@ -46,21 +88,21 @@ def show_dashboard(conn, cur):
     FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
     JOIN projects p ON u.project_id = p.project_id
-    LEFT JOIN products pr ON h.house_id = pr.house_id
+    {product_quarter_join}
     LEFT JOIN products_master pm ON pr.product_id = pm.product_id
     LEFT JOIN latest_tracking lt
         ON pr.product_instance_id = lt.product_instance_id
         AND lt.rn = 1
     """
-    cur.execute(latest_query)
+    cur.execute(latest_query, quarter_params)
     latest_rows = cur.fetchall()
 
     latest_df = pd.DataFrame(latest_rows, columns=[
         "Project", "Unit", "House", "HouseID", "ProductInstance", "Product", "Current Stage"
     ])
 
-    house_query = """
-    SELECT
+    house_query = f"""
+    SELECT DISTINCT
         p.project_name,
         u.unit_name,
         h.house_no,
@@ -68,15 +110,12 @@ def show_dashboard(conn, cur):
     FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
     JOIN projects p ON u.project_id = p.project_id
+    {product_quarter_where}
     """
-    cur.execute(house_query)
+    cur.execute(house_query, quarter_params)
     house_rows = cur.fetchall()
 
     master_house_df = pd.DataFrame(house_rows, columns=["Project", "Unit", "House", "HouseID"])
-
-    st.subheader("📌 Drilldown Filters")
-
-    c1, c2, c3 = st.columns(3)
 
     with c1:
         selected_project = st.selectbox("Select Project", ["All"] + sorted(master_house_df["Project"].dropna().unique().tolist()))
