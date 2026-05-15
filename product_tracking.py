@@ -179,7 +179,6 @@ def show_product_tracking(conn, cur):
         st.warning("No data found")
         return
 
-    # FIXED ONLY THIS
     running_count = len(df[df["Status"] == "In Progress"])
 
     df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
@@ -188,14 +187,18 @@ def show_product_tracking(conn, cur):
     df = df.drop(columns=["Timestamp", "LiveRank"])
 
     k1, k2, k3, k4 = st.columns(4)
+
     k1.metric("Total Products", len(df))
+
     k2.metric("In Progress", running_count)
 
-    # FIXED COMPLETED KPI
-    if selected_stage == "Dispatch" and selected_status == "Completed":
-        completed_count = len(df)
-    else:
-        completed_count = len(df[df["Status"] == "Completed"])
+    # FIXED COMPLETED COUNT ONLY
+    completed_count = len(
+        df[
+            (df["Stage"] == "Completed") &
+            (df["Status"] == "Completed")
+        ]
+    )
 
     k3.metric("Completed", completed_count)
 
