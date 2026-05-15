@@ -179,7 +179,8 @@ def show_product_tracking(conn, cur):
         st.warning("No data found")
         return
 
-    running_count = len(df[~df["Stage"].isin(["Not Started", "Completed"])])
+    # ONLY FIXED THIS LINE
+    running_count = len(df[df["Status"] == "In Progress"])
 
     df["Date & Time"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
     df["Date & Time"] = df["Date & Time"].dt.tz_convert("Asia/Kolkata")
