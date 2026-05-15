@@ -15,8 +15,10 @@ def show_rework_history(conn, cur):
             r.note,
             r.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata' AS india_timestamp,
             pr.project_name,
-            u.unit_name
+            u.unit_name,
+            p.quarter
         FROM rework_sentback_log r
+        LEFT JOIN products p ON r.product_instance_id = p.product_instance_id
         LEFT JOIN houses h ON r.house_no = h.house_no
         LEFT JOIN units u ON h.unit_id = u.unit_id
         LEFT JOIN projects pr ON u.project_id = pr.project_id
@@ -38,20 +40,35 @@ def show_rework_history(conn, cur):
         "Note",
         "Timestamp",
         "Project",
-        "Unit"
+        "Unit",
+        "Quarter"
     ])
 
     df["Timestamp"] = pd.to_datetime(df["Timestamp"]).dt.strftime("%Y-%m-%d %I:%M:%S %p")
 
-    col1, col2, col3, col4 = st.columns(4)
+    col0, col1, col2, col3, col4 = st.columns(5)
+
+    with col0:
+        quarter_options = ["All"] + sorted(df["Quarter"].dropna().astype(str).unique().tolist())
+        default_quarter_index = quarter_options.index("2026-Q2") if "2026-Q2" in quarter_options else 0
+
+        selected_quarter = st.selectbox(
+            "Select Quarter",
+            quarter_options,
+            index=default_quarter_index
+        )
+
+    filtered_for_projects = df.copy()
+    if selected_quarter != "All":
+        filtered_for_projects = filtered_for_projects[filtered_for_projects["Quarter"].astype(str) == selected_quarter]
 
     with col1:
         selected_project = st.selectbox(
             "Select Project",
-            ["All"] + sorted(df["Project"].dropna().astype(str).unique().tolist())
+            ["All"] + sorted(filtered_for_projects["Project"].dropna().astype(str).unique().tolist())
         )
 
-    filtered_for_units = df.copy()
+    filtered_for_units = filtered_for_projects.copy()
     if selected_project != "All":
         filtered_for_units = filtered_for_units[filtered_for_units["Project"].astype(str) == selected_project]
 
@@ -81,6 +98,9 @@ def show_rework_history(conn, cur):
 
     filtered_df = df.copy()
 
+    if selected_quarter != "All":
+        filtered_df = filtered_df[filtered_df["Quarter"].astype(str) == selected_quarter]
+
     if selected_project != "All":
         filtered_df = filtered_df[filtered_df["Project"].astype(str) == selected_project]
 
@@ -101,6 +121,7 @@ def show_rework_history(conn, cur):
         ]
 
     display_df = filtered_df[[
+        "Quarter",
         "Project",
         "Unit",
         "Product",
