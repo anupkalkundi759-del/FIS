@@ -16,6 +16,18 @@ def show_product_tracking(conn, cur):
         "Not Started": 0
     }
 
+    def get_quarters():
+        cur.execute("""
+            SELECT DISTINCT quarter
+            FROM products
+            WHERE quarter IS NOT NULL
+            ORDER BY quarter DESC
+        """)
+        quarters = [q[0] for q in cur.fetchall()]
+        if "2026-Q2" not in quarters:
+            quarters.insert(0, "2026-Q2")
+        return ["All"] + quarters
+
     def get_projects():
         cur.execute("SELECT DISTINCT project_name FROM projects ORDER BY project_name")
         return ["All"] + [p[0] for p in cur.fetchall()]
@@ -49,14 +61,18 @@ def show_product_tracking(conn, cur):
     def get_stages():
         return ["All", "Measurement", "Cutting List", "Production", "Pre Assembly", "Polishing", "Final Assembly", "Dispatch"]
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    quarter_options = get_quarters()
+    default_quarter_index = quarter_options.index("2026-Q2") if "2026-Q2" in quarter_options else 0
 
-    selected_project = col1.selectbox("Select Project", get_projects())
-    selected_unit = col2.selectbox("Select Unit Type", get_units(selected_project))
-    selected_house = col3.selectbox("Select House Number", get_houses(selected_unit))
-    selected_stage = col4.selectbox("Select Stage", get_stages())
-    selected_status = col5.selectbox("Select Status", ["All", "Not Started", "In Progress", "Completed"])
-    search = col6.text_input("Search")
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+
+    selected_quarter = col1.selectbox("Select Quarter", quarter_options, index=default_quarter_index)
+    selected_project = col2.selectbox("Select Project", get_projects())
+    selected_unit = col3.selectbox("Select Unit Type", get_units(selected_project))
+    selected_house = col4.selectbox("Select House Number", get_houses(selected_unit))
+    selected_stage = col5.selectbox("Select Stage", get_stages())
+    selected_status = col6.selectbox("Select Status", ["All", "Not Started", "In Progress", "Completed"])
+    search = col7.text_input("Search")
 
     with st.spinner("Loading data..."):
 
@@ -109,6 +125,10 @@ def show_product_tracking(conn, cur):
         """
 
         params = []
+
+        if selected_quarter != "All":
+            query += " AND p.quarter = %s"
+            params.append(selected_quarter)
 
         if selected_project != "All":
             query += " AND pr.project_name = %s"
@@ -212,10 +232,19 @@ def show_product_tracking(conn, cur):
     st.divider()
     st.subheader("🎯 Breakdown Filters")
 
-    b1, b2 = st.columns(2)
+    b1, b2, b3 = st.columns(3)
 
-    breakdown_project = b1.selectbox("Select Project", get_projects(), key="b_proj")
-    breakdown_unit = b2.selectbox("Select Unit Type", get_units(breakdown_project), key="b_unit")
+    breakdown_quarter_options = get_quarters()
+    breakdown_default_quarter_index = breakdown_quarter_options.index("2026-Q2") if "2026-Q2" in breakdown_quarter_options else 0
+
+    breakdown_quarter = b1.selectbox(
+        "Select Quarter",
+        breakdown_quarter_options,
+        index=breakdown_default_quarter_index,
+        key="b_quarter"
+    )
+    breakdown_project = b2.selectbox("Select Project", get_projects(), key="b_proj")
+    breakdown_unit = b3.selectbox("Select Unit Type", get_units(breakdown_project), key="b_unit")
 
     st.subheader("📊 Product Status Breakdown")
 
@@ -266,6 +295,10 @@ def show_product_tracking(conn, cur):
         """
 
         params2 = []
+
+        if breakdown_quarter != "All":
+            query2 += " AND p.quarter = %s"
+            params2.append(breakdown_quarter)
 
         if breakdown_project != "All":
             query2 += " AND pr.project_name = %s"
