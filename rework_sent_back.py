@@ -47,7 +47,7 @@ def show_rework_history(conn, cur):
 
     with col1:
         selected_project = st.selectbox(
-            "Filter Project",
+            "Select Project",
             ["All"] + sorted(df["Project"].dropna().astype(str).unique().tolist())
         )
 
@@ -57,7 +57,7 @@ def show_rework_history(conn, cur):
 
     with col2:
         selected_unit = st.selectbox(
-            "Filter Unit",
+            "Select Unit Type",
             ["All"] + sorted(filtered_for_units["Unit"].dropna().astype(str).unique().tolist())
         )
 
@@ -67,7 +67,7 @@ def show_rework_history(conn, cur):
 
     with col3:
         selected_house = st.selectbox(
-            "Filter House",
+            "Select House Number",
             ["All"] + sorted(filtered_for_houses["House"].dropna().astype(str).unique().tolist())
         )
 
