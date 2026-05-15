@@ -20,7 +20,28 @@ def run_engine(conn, cur):
     """)
     conn.commit()
 
-    top1, top2, top3 = st.columns(3)
+    top0, top1, top2, top3 = st.columns(4)
+
+    with top0:
+        cur.execute("""
+            SELECT DISTINCT quarter
+            FROM products
+            WHERE quarter IS NOT NULL
+            ORDER BY quarter DESC
+        """)
+        quarters = [q[0] for q in cur.fetchall()]
+
+        if "2026-Q2" not in quarters:
+            quarters.insert(0, "2026-Q2")
+
+        quarter_options = ["ALL"] + quarters
+
+        selected_quarter = st.selectbox(
+            "Select Quarter",
+            quarter_options,
+            index=quarter_options.index("2026-Q2") if "2026-Q2" in quarter_options else 0,
+            key="eng_quarter"
+        )
 
     with top1:
         cur.execute("SELECT project_id, project_name FROM projects ORDER BY project_name")
@@ -42,17 +63,32 @@ def run_engine(conn, cur):
             unit_id = None if selected_unit == "ALL" else unit_dict[selected_unit]
 
     if unit_id is not None:
-        cur.execute("SELECT house_id, house_no FROM houses WHERE unit_id=%s ORDER BY house_no, house_id", (unit_id,))
+        cur.execute("""
+            SELECT DISTINCT h.house_id, h.house_no
+            FROM houses h
+            JOIN products p ON h.house_id = p.house_id
+            WHERE h.unit_id=%s
+            AND (%s = 'ALL' OR p.quarter=%s)
+            ORDER BY h.house_no, h.house_id
+        """, (unit_id, selected_quarter, selected_quarter))
     elif project_id is not None:
         cur.execute("""
-            SELECT h.house_id, h.house_no
+            SELECT DISTINCT h.house_id, h.house_no
             FROM houses h
             JOIN units u ON h.unit_id=u.unit_id
+            JOIN products p ON h.house_id = p.house_id
             WHERE u.project_id=%s
+            AND (%s = 'ALL' OR p.quarter=%s)
             ORDER BY h.house_no, h.house_id
-        """, (project_id,))
+        """, (project_id, selected_quarter, selected_quarter))
     else:
-        cur.execute("SELECT house_id, house_no FROM houses ORDER BY house_no, house_id")
+        cur.execute("""
+            SELECT DISTINCT h.house_id, h.house_no
+            FROM houses h
+            JOIN products p ON h.house_id = p.house_id
+            WHERE (%s = 'ALL' OR p.quarter=%s)
+            ORDER BY h.house_no, h.house_id
+        """, (selected_quarter, selected_quarter))
 
     master_house_rows = cur.fetchall()
     master_house_df = pd.DataFrame(master_house_rows, columns=["house_id", "house_no"])
@@ -230,6 +266,10 @@ def run_engine(conn, cur):
         live_sql += " AND h.house_id=%s" if "WHERE" in live_sql else " WHERE h.house_id=%s"
         params += (selected_house_id,)
 
+    if selected_quarter != "ALL":
+        live_sql += " AND p.quarter=%s" if "WHERE" in live_sql else " WHERE p.quarter=%s"
+        params += (selected_quarter,)
+
     live_sql += " ORDER BY h.house_no, h.house_id"
     cur.execute(live_sql, params)
 
@@ -263,6 +303,10 @@ def run_engine(conn, cur):
         start_sql += " AND h.house_id=%s" if "WHERE" in start_sql else " WHERE h.house_id=%s"
         params += (selected_house_id,)
 
+    if selected_quarter != "ALL":
+        start_sql += " AND p.quarter=%s" if "WHERE" in start_sql else " WHERE p.quarter=%s"
+        params += (selected_quarter,)
+
     start_sql += " GROUP BY h.house_id,h.house_no"
     cur.execute(start_sql, params)
 
@@ -294,6 +338,10 @@ def run_engine(conn, cur):
     if selected_house_id is not None:
         finish_sql += " AND h.house_id=%s" if "WHERE" in finish_sql else " WHERE h.house_id=%s"
         params += (selected_house_id,)
+
+    if selected_quarter != "ALL":
+        finish_sql += " AND p.quarter=%s" if "WHERE" in finish_sql else " WHERE p.quarter=%s"
+        params += (selected_quarter,)
 
     finish_sql += """
         )
@@ -342,6 +390,10 @@ def run_engine(conn, cur):
         evm_live_sql += " WHERE h.unit_id IN (SELECT unit_id FROM units WHERE project_id=%s)"
         evm_params = (project_id,)
 
+    if selected_quarter != "ALL":
+        evm_live_sql += " AND p.quarter=%s" if "WHERE" in evm_live_sql else " WHERE p.quarter=%s"
+        evm_params += (selected_quarter,)
+
     cur.execute(evm_live_sql, evm_params)
     evm_live_df = pd.DataFrame(cur.fetchall(), columns=["stage"])
 
@@ -388,14 +440,25 @@ def run_engine(conn, cur):
     cur.execute("SELECT stage_name, capacity_per_day FROM stage_capacity")
     cap_map = {x[0]: float(x[1]) for x in cur.fetchall()}
 
-    cur.execute("""
+    throughput_sql = """
         SELECT s.stage_name,
                COUNT(*)::float / NULLIF(COUNT(DISTINCT DATE(t.timestamp)),0)
         FROM tracking_log t
         JOIN stages s ON t.stage_id=s.stage_id
+        JOIN products p ON t.product_instance_id=p.product_instance_id
         WHERE t.status='Completed'
+    """
+    throughput_params = ()
+
+    if selected_quarter != "ALL":
+        throughput_sql += " AND p.quarter=%s"
+        throughput_params = (selected_quarter,)
+
+    throughput_sql += """
         GROUP BY s.stage_name
-    """)
+    """
+
+    cur.execute(throughput_sql, throughput_params)
     throughput_map = {x[0]: round(float(x[1]), 2) if x[1] else 0 for x in cur.fetchall()}
 
     bottleneck_rows = []
@@ -594,7 +657,7 @@ def run_engine(conn, cur):
     e9.metric("EAC", f"₹{EAC:,.0f}")
     e10.metric("ETC", f"₹{ETC_COST:,.0f}")
 
-    st.subheader("🏠 Unit Wise Predictive Intelligence")
+    st.subheader("🏠 House Wise Predictive Intelligence")
     display_house_df = house_df.drop(columns=["_house_id"], errors="ignore")
     st.dataframe(display_house_df, use_container_width=True, height=420)
 
