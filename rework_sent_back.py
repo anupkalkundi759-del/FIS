@@ -13,7 +13,7 @@ def show_rework_history(conn, cur):
             r.to_stage,
             r.reason,
             r.note,
-            r.timestamp,
+            r.timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata' AS india_timestamp,
             pr.project_name,
             u.unit_name
         FROM rework_sentback_log r
@@ -40,6 +40,8 @@ def show_rework_history(conn, cur):
         "Project",
         "Unit"
     ])
+
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"]).dt.strftime("%Y-%m-%d %I:%M:%S %p")
 
     col1, col2, col3, col4 = st.columns(4)
 
