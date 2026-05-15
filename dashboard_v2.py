@@ -233,7 +233,7 @@ def show_dashboard_v2(conn, cur):
 
         fig.update_traces(
             textposition="outside",
-            textfont=dict(size=13, color="#111827", family="Arial Black")
+            textfont=dict(size=12, color="#111827", family="Arial Black")
         )
 
         fig.update_layout(
@@ -269,7 +269,7 @@ def show_dashboard_v2(conn, cur):
 
         qfig.update_traces(
             textposition="outside",
-            textfont=dict(size=13, color="#111827", family="Arial Black")
+            textfont=dict(size=12, color="#111827", family="Arial Black")
         )
 
         qfig.update_layout(
