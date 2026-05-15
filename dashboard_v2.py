@@ -6,12 +6,32 @@ def show_dashboard_v2(conn, cur):
     st.title("📌 Production Monitoring Dashboard")
 
     cur.execute("""
-        SELECT pr.project_name, u.unit_name, h.house_no, h.house_id
+        SELECT DISTINCT quarter
+        FROM products
+        WHERE quarter IS NOT NULL
+        ORDER BY quarter DESC
+    """)
+    quarters = [q[0] for q in cur.fetchall()]
+
+    if "2026-Q2" not in quarters:
+        quarters.insert(0, "2026-Q2")
+
+    selected_quarter = st.selectbox(
+        "Select Quarter",
+        options=quarters,
+        index=quarters.index("2026-Q2") if "2026-Q2" in quarters else 0,
+        key="dashboard_quarter"
+    )
+
+    cur.execute("""
+        SELECT DISTINCT pr.project_name, u.unit_name, h.house_no, h.house_id
         FROM houses h
         JOIN units u ON h.unit_id = u.unit_id
         JOIN projects pr ON u.project_id = pr.project_id
+        JOIN products p ON h.house_id = p.house_id
+        WHERE p.quarter = %s
         ORDER BY pr.project_name, u.unit_name, h.house_no
-    """)
+    """, (selected_quarter,))
     house_master_rows = cur.fetchall()
 
     house_master_df = pd.DataFrame(house_master_rows, columns=[
@@ -51,15 +71,16 @@ def show_dashboard_v2(conn, cur):
     FROM houses h
     JOIN units u ON h.unit_id = u.unit_id
     JOIN projects pr ON u.project_id = pr.project_id
-    LEFT JOIN products p ON h.house_id = p.house_id
+    JOIN products p ON h.house_id = p.house_id
     LEFT JOIN products_master pm ON p.product_id = pm.product_id
     LEFT JOIN latest_tracking lt
         ON lt.product_instance_id = p.product_instance_id
         AND lt.rn = 1
+    WHERE p.quarter = %s
     ORDER BY pr.project_name, u.unit_name, h.house_no
     """
 
-    cur.execute(query)
+    cur.execute(query, (selected_quarter,))
     rows = cur.fetchall()
 
     if not rows:
