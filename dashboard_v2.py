@@ -3,8 +3,6 @@ def show_dashboard_v2(conn, cur):
     import pandas as pd
     import plotly.express as px
 
-    st.title("📌 Production Monitoring Dashboard")
-
     cur.execute("""
         SELECT DISTINCT quarter
         FROM products
@@ -16,13 +14,18 @@ def show_dashboard_v2(conn, cur):
     if "2026-Q2" not in quarters:
         quarters.insert(0, "2026-Q2")
 
-    filter_col, blank_col = st.columns([1, 4])
+    quarter_options = ["All"] + quarters
 
-    with filter_col:
+    title_col, quarter_col = st.columns([4, 1])
+
+    with title_col:
+        st.title("📌 Production Monitoring Dashboard")
+
+    with quarter_col:
         selected_quarter = st.selectbox(
-            "Select Quarter",
-            options=["All"] + quarters,
-            index=(["All"] + quarters).index("2026-Q2") if "2026-Q2" in quarters else 0,
+            "Quarter",
+            options=quarter_options,
+            index=quarter_options.index("2026-Q2") if "2026-Q2" in quarter_options else 0,
             key="dashboard_quarter"
         )
 
@@ -194,6 +197,27 @@ def show_dashboard_v2(conn, cur):
 
     chart_col1, chart_col2 = st.columns(2)
 
+    stage_colors = [
+        "#ef4444",
+        "#f97316",
+        "#f59e0b",
+        "#3b82f6",
+        "#8b5cf6",
+        "#ec4899",
+        "#14b8a6",
+        "#22c55e",
+        "#10b981"
+    ]
+
+    quarter_colors = [
+        "#2563eb",
+        "#16a34a",
+        "#f59e0b",
+        "#dc2626",
+        "#7c3aed",
+        "#0891b2"
+    ]
+
     with chart_col1:
         st.markdown("### Stage wise bottleneck")
 
@@ -202,17 +226,27 @@ def show_dashboard_v2(conn, cur):
             x="Stage",
             y="Products",
             text="Products",
-            height=300
+            height=300,
+            color="Stage",
+            color_discrete_sequence=stage_colors
         )
 
-        fig.update_traces(textposition="outside")
+        fig.update_traces(
+            textposition="outside",
+            textfont=dict(size=13, color="#111827", family="Arial Black")
+        )
 
         fig.update_layout(
             margin=dict(l=5, r=5, t=10, b=5),
             xaxis_title="",
             yaxis_title="Products",
-            showlegend=False
+            showlegend=False,
+            uniformtext_minsize=11,
+            uniformtext_mode="show"
         )
+
+        fig.update_xaxes(tickfont=dict(size=10))
+        fig.update_yaxes(tickfont=dict(size=10))
 
         st.plotly_chart(
             fig,
@@ -228,17 +262,27 @@ def show_dashboard_v2(conn, cur):
             x="Quarter",
             y="Products",
             text="Products",
-            height=300
+            height=300,
+            color="Quarter",
+            color_discrete_sequence=quarter_colors
         )
 
-        qfig.update_traces(textposition="outside")
+        qfig.update_traces(
+            textposition="outside",
+            textfont=dict(size=13, color="#111827", family="Arial Black")
+        )
 
         qfig.update_layout(
             margin=dict(l=5, r=5, t=10, b=5),
             xaxis_title="",
             yaxis_title="Products",
-            showlegend=False
+            showlegend=False,
+            uniformtext_minsize=11,
+            uniformtext_mode="show"
         )
+
+        qfig.update_xaxes(tickfont=dict(size=10))
+        qfig.update_yaxes(tickfont=dict(size=10))
 
         st.plotly_chart(
             qfig,
